@@ -1,9 +1,7 @@
+/// <reference types="vite/client" />
 import io from "socket.io-client";
 
-const BACKEND_URL =
-  import.meta.env.MODE === "production"
-    ? "/"
-    : "http://localhost:3001";
+export const BACKEND_URL = import.meta.env.MODE === "production" ? "" : "http://localhost:3001";
 
 export const socket = io(BACKEND_URL, {
   transports: ["websocket"],

@@ -6,7 +6,7 @@ interface Props {
   game: GameState;
   me: Player;
   mode: "discussion" | "investment";
-  projectImages?: Record<number, string>;
+  projectImages?: Record<number, number>;
 }
 
 const ERA_COLORS: Record<string, string> = {
@@ -118,6 +118,8 @@ const StatusBar: React.FC<{
   );
 };
 
+import { BACKEND_URL } from "../socket";
+
 // ——— 项目卡片（含图片上传槽）———
 const ProjectCard: React.FC<{
   project: ActiveProject;
@@ -127,8 +129,8 @@ const ProjectCard: React.FC<{
   remainingEnergy: number;
   eraTheme?: string;
   me: Player;
-  uploadedImage?: string;
-}> = ({ project, myInvest, onChange, disabled, remainingEnergy, eraTheme, me, uploadedImage }) => {
+  uploadedVersion?: number;
+}> = ({ project, myInvest, onChange, disabled, remainingEnergy, eraTheme, me, uploadedVersion }) => {
   const tc = TYPE_COLORS[project.type] || TYPE_COLORS.short;
   const isEraMatch = eraTheme && project.era === eraTheme && project.type !== "risk";
   const myLongStatus = me.longTerm[project.id];
@@ -138,6 +140,10 @@ const ProjectCard: React.FC<{
   const progress = Math.min((project.accumulatedInvested / project.maxEnergy) * 100, 100);
   const myContrib = ((myInvest / project.maxEnergy) * 100);
   const typeName = tc.label;
+
+  const imageUrl = uploadedVersion
+    ? `${BACKEND_URL}/uploads/${project.id}.jpg?v=${uploadedVersion}`
+    : `/images/projects/${project.name}.jpg?v=final2`;
 
 
   return (
@@ -168,49 +174,17 @@ const ProjectCard: React.FC<{
           height: "160px",
           position: "relative",
           overflow: "hidden",
-          background: uploadedImage
-            ? "transparent"
-            : `linear-gradient(135deg, ${tc.bg.replace("0.08", "0.15")} 0%, rgba(0,0,0,0.2) 100%)`,
-          cursor: uploadedImage ? "default" : "not-allowed",
+          background: "transparent",
         }}
-        title={uploadedImage ? "" : "管理员尚未上传图片"}
       >
-        {uploadedImage ? (
-          <img
-            src={uploadedImage}
-            alt={project.name}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          />
-        ) : (
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "0.5rem",
-            }}
-          >
-            <div style={{ fontSize: "2rem", opacity: 0.35 }}>
-              {project.type === "short" ? "📊" : project.type === "long" ? "🌱" : "⚠️"}
-            </div>
-            <div
-              style={{
-                fontSize: "0.7rem",
-                fontWeight: 600,
-                color: "var(--color-text-muted)",
-                letterSpacing: "0.05em",
-                border: "1px dashed rgba(255,255,255,0.15)",
-                borderRadius: "6px",
-                padding: "0.3rem 0.75rem",
-              }}
-            >
-              📷 等待上传
-            </div>
-          </div>
-        )}
+        <img
+          src={imageUrl}
+          alt={project.name}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+          }}
+        />
         {/* (移除悬停遮罩与 input) */}
         {/* 时代契合角标 */}
         {isEraMatch && (
@@ -556,7 +530,7 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
               remainingEnergy={remainingEnergy}
               eraTheme={eraCard?.era}
               me={me}
-              uploadedImage={projectImages[proj.id]}
+              uploadedVersion={projectImages[proj.id]}
             />
           ))}
           {game.activeProjects.length === 0 && (

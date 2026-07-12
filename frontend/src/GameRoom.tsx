@@ -23,7 +23,7 @@ interface GameRoomProps {
   myPlayerId: string;
   isGod?: boolean;
   onExit?: () => void;
-  projectImages?: Record<number, string>;
+  projectImages?: Record<number, number>;
 }
 
 // ——— 拍卖确认弹窗 ———

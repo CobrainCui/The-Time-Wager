@@ -4,7 +4,7 @@ import { togglePlayerReady } from "../state/gameActions.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
 import { applyInvestments } from "../logic/investmentLogic.js"; 
 import { broadcastUpdate } from "./broadcast.js"; 
-import { rooms, globalLeaderboard, globalProjectImages } from "../state/store.js"; 
+import { rooms, customImagesVersions, globalLeaderboard } from "../state/store.js"; 
 import { drawProjectsForEra } from "../state/gameEra.js";
 import { shuffleArray } from "../utils/shuffle.js";
 import { useBuffCard } from "../logic/buffLogic.js";
@@ -22,14 +22,9 @@ function broadcastRoomList(io: Server, socket: Socket) {
 export function registerSocketHandlers(io: Server, socket: Socket) {
   console.log(`🔌 Socket connected: ${socket.id}`);
   
-  // 发送初始全局图片
-  socket.emit("syncProjectImages", globalProjectImages);
-  
-  socket.on("adminUploadProjectImage", ({ id, dataUrl }) => {
-    if (!socket.data.isSuperAdmin) return;
-    globalProjectImages[id] = dataUrl;
-    io.emit("syncProjectImages", globalProjectImages);
-  });
+  // 发送自定义图片版本号
+  socket.emit("syncProjectImages", customImagesVersions);
+
 
   // 1. 加入房间
   socket.on("joinGame", ({ roomId, name }: { roomId: string, name: string }) => {

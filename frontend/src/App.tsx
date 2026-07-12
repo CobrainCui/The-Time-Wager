@@ -10,7 +10,7 @@ function App() {
   const [myPlayerId, setMyPlayerId] = useState<string>("");
   const [isGod, setIsGod] = useState(false);
   const [adminRoomList, setAdminRoomList] = useState<any[]>([]);
-  const [projectImages, setProjectImages] = useState<Record<number, string>>({});
+  const [projectImages, setProjectImages] = useState<Record<number, number>>({});
 
   useEffect(() => {
     const onConnect    = () => setIsConnected(true);
@@ -31,7 +31,7 @@ function App() {
       setGame(null); setMyPlayerId(""); setIsGod(false);
     };
     const onError = (msg: string) => alert(`❌ ${msg}`);
-    const onSyncImages = (images: Record<number, string>) => setProjectImages(images);
+    const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
 
     socket.on("connect",       onConnect);
     socket.on("disconnect",    onDisconnect);

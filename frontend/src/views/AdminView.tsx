@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { GameState } from "../types";
-import { socket } from "../socket";
+import { socket, BACKEND_URL } from "../socket";
 import { TUTORIAL_SLIDES } from "../tutorialData";
 
 const AUCTION_CARDS: Record<number, { id: string; name: string }[]> = {
@@ -29,7 +29,7 @@ const CARD_NAME_MAP: Record<string, string> = {
 interface Props {
   game: GameState;
   onExit?: () => void;
-  projectImages?: Record<number, string>;
+  projectImages?: Record<number, number>;
 }
 
 const PHASE_NAMES: Record<string, string> = {
@@ -82,8 +82,51 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {} })
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      if (ev.target?.result) {
-        socket.emit("adminUploadProjectImage", { id, dataUrl: ev.target.result });
+      if (typeof ev.target?.result === 'string') {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800;
+          const MAX_HEIGHT = 800;
+          let width = img.width;
+          let height = img.height;
+          
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          
+          canvas.toBlob(async (blob) => {
+            if (!blob) return;
+            const formData = new FormData();
+            formData.append("id", id.toString());
+            formData.append("image", blob, `${id}.jpg`);
+            
+            try {
+              const res = await fetch(`${BACKEND_URL}/api/upload-image`, {
+                method: "POST",
+                body: formData
+              });
+              if (!res.ok) alert("上传失败！");
+            } catch (err) {
+              console.error(err);
+              alert("上传出错：" + err);
+            }
+          }, 'image/jpeg', 0.6);
+        };
+        img.src = ev.target.result;
       }
     };
     reader.readAsDataURL(file);
@@ -194,9 +237,11 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {} })
               }}>
                 <div style={{ fontWeight: 700, color: "white", marginBottom: "0.5rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{proj.name}</div>
                 {projectImages[proj.id] ? (
-                  <img src={projectImages[proj.id]} alt={proj.name} style={{ width: "100%", height: "100px", objectFit: "cover", borderRadius: "0.5rem", marginBottom: "0.5rem" }} />
+                  <img src={`${BACKEND_URL}/uploads/${proj.id}.jpg?v=${projectImages[proj.id]}`} alt={proj.name} style={{ width: "100%", height: "100px", objectFit: "cover", borderRadius: "0.5rem", marginBottom: "0.5rem" }} />
                 ) : (
-                  <div style={{ width: "100%", height: "100px", background: "rgba(255,255,255,0.05)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-muted)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>未上传</div>
+                  <div style={{ width: "100%", height: "100px", background: "rgba(255,255,255,0.05)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-muted)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>
+                    <img src={`/images/projects/${proj.name}.jpg?v=final2`} className="w-full h-32 object-cover rounded-md" alt={proj.name} onError={(e) => e.currentTarget.style.display='none'} />
+                  </div>
                 )}
                 <label className="btn btn-sm btn-full" style={{ background: "rgba(16,185,129,0.2)", border: "1px solid #10b981", color: "#34d399", cursor: "pointer", display: "block" }}>
                   上传图片

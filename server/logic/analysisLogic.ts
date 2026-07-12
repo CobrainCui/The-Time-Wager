@@ -1,6 +1,7 @@
 import { GameState, Player, PersonaAnalysis, ActiveProject } from "../state/gameState.js";
 
-export { AnalysisWeights } from "../secrets.js";
+import { AnalysisWeights } from "../secrets.js";
+export { AnalysisWeights };
 
 function calculateLongTermism(player: Player): number {
   if (player.totalEnergyConsumed === 0) return 0;
