@@ -1,10 +1,11 @@
 import React from "react";
 import { GameState, Player } from "../types";
-import { socket } from "../socket";
+import { socket, BACKEND_URL } from "../socket";
 
 interface Props {
   game: GameState;
   me: Player;
+  eraImages?: Record<string, number>;
 }
 
 const ERA_NAMES: Record<number, string> = { 1: "青年", 2: "壮年", 3: "中年", 4: "老年" };
@@ -22,7 +23,7 @@ const ERA_COLORS: Record<string, string> = {
   green: "#10b981", blue: "#3b82f6", red: "#ef4444", orange: "#f97316", yellow: "#a855f7",
 };
 
-export const EraIntro: React.FC<Props> = ({ game, me }) => {
+export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {} }) => {
   const card = game.currentEraCard;
   const eraColor = card ? (ERA_COLORS[card.themeColor] || "#60a5fa") : "#60a5fa";
   const eraGradient = card ? (ERA_GRADIENTS[card.themeColor] || ERA_GRADIENTS.blue) : ERA_GRADIENTS.blue;
@@ -110,11 +111,20 @@ export const EraIntro: React.FC<Props> = ({ game, me }) => {
               color: "var(--color-text-secondary)",
               lineHeight: 1.6,
               border: "1px solid rgba(255,255,255,0.06)",
+              marginBottom: "1.5rem"
             }}
           >
             📢 时代加成：本时代所有{" "}
             <span style={{ color: eraColor, fontWeight: 700 }}>【{card.era}】</span>{" "}
             主题的短期/长期项目，结算时第一名额外奖励财富。
+          </div>
+          
+          <div style={{ width: "100%", maxWidth: "320px", margin: "0 auto", borderRadius: "1rem", overflow: "hidden", boxShadow: `0 10px 30px rgba(0,0,0,0.5)`, border: `2px solid ${eraColor}66` }}>
+            <img 
+              src={eraImages[card.era] ? `${BACKEND_URL}/uploads_eras/${card.era}.jpg?v=${eraImages[card.era]}` : `/images/eras/${card.era}.jpg?v=final1`} 
+              alt={card.era} 
+              style={{ width: "100%", height: "auto", display: "block" }} 
+            />
           </div>
         </div>
       )}

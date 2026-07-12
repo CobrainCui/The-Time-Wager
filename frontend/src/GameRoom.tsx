@@ -18,12 +18,13 @@ const BUFF_NAME_MAP: Record<string, string> = {
   buff_swap: "偷天换日", buff_lottery: "彩票",
 };
 
-interface GameRoomProps {
+interface Props {
   game: GameState;
   myPlayerId: string;
   isGod?: boolean;
   onExit?: () => void;
   projectImages?: Record<number, number>;
+  eraImages?: Record<string, number>;
 }
 
 // ——— 拍卖确认弹窗 ———
@@ -268,9 +269,9 @@ const AuctionWaiting: React.FC = () => (
 );
 
 // ——— 主 GameRoom ———
-export default function GameRoom({ game, myPlayerId, isGod, onExit, projectImages = {} }: GameRoomProps) {
+export default function GameRoom({ game, myPlayerId, isGod, onExit, projectImages = {}, eraImages = {} }: Props) {
   if (isGod) {
-    return <AdminView game={game} onExit={onExit} projectImages={projectImages} />;
+    return <AdminView game={game} onExit={onExit} projectImages={projectImages} eraImages={eraImages} />;
   }
 
   const me = game.players.find((p) => p.id === myPlayerId);
@@ -290,7 +291,7 @@ export default function GameRoom({ game, myPlayerId, isGod, onExit, projectImage
       return <Investment game={game} me={me} mode="investment" projectImages={projectImages} />;
     }
     switch (game.phase) {
-      case "ERA_INTRO":       return <EraIntro game={game} me={me} />;
+      case "ERA_INTRO":       return <EraIntro game={game} me={me} eraImages={eraImages} />;
       case "TUTORIAL":        return <TutorialView game={game} me={me} />;
       case "DRAFTING":        return <Drafting game={game} me={me} />;
       case "BUFF_USAGE":      return <BuffUsage game={game} me={me} />;
@@ -299,7 +300,7 @@ export default function GameRoom({ game, myPlayerId, isGod, onExit, projectImage
       case "AUCTION":         return <AuctionWaiting />;
       case "COMMUNITY_NAMING":return <CommunityNaming game={game} me={me} />;
       case "GAME_OVER":       return <GameOver game={game} me={me} />;
-      default:                return <EraIntro game={game} me={me} />;
+      default:                return <EraIntro game={game} me={me} eraImages={eraImages} />;
     }
   };
 

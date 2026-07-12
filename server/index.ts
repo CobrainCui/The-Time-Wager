@@ -35,7 +35,22 @@ for (const file of existingFiles) {
   }
 }
 
+const uploadErasDir = path.join(__dirname, "../data/uploads_eras");
+if (!fs.existsSync(uploadErasDir)) {
+  fs.mkdirSync(uploadErasDir, { recursive: true });
+}
+
+// Populate customEraImagesVersions
+const existingEraFiles = fs.readdirSync(uploadErasDir);
+for (const file of existingEraFiles) {
+  if (file.endsWith(".jpg")) {
+    const eraName = file.replace(".jpg", "");
+    customEraImagesVersions[eraName] = Date.now();
+  }
+}
+
 app.use("/uploads", express.static(uploadDir));
+app.use("/uploads_eras", express.static(uploadErasDir));
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -57,6 +72,26 @@ app.post("/api/upload-image", upload.single("image"), (req, res) => {
   io.emit("syncProjectImages", customImagesVersions);
   
   res.json({ success: true, timestamp: customImagesVersions[numId] });
+});
+
+const storageEra = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadErasDir),
+  filename: (req, file, cb) => {
+    // Expect era name in body.id (e.g., '科技')
+    cb(null, `${req.body.id}.jpg`);
+  }
+});
+const uploadEra = multer({ storage: storageEra });
+
+app.post("/api/upload-era-image", uploadEra.single("image"), (req, res) => {
+  const { id } = req.body; // id is the era name
+  if (!id) return res.status(400).json({ error: "Missing id" });
+  
+  customEraImagesVersions[id] = Date.now();
+  
+  io.emit("syncEraImages", customEraImagesVersions);
+  
+  res.json({ success: true, timestamp: customEraImagesVersions[id] });
 });
 // -----------------------
 

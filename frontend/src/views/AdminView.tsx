@@ -30,6 +30,7 @@ interface Props {
   game: GameState;
   onExit?: () => void;
   projectImages?: Record<number, number>;
+  eraImages?: Record<string, number>;
 }
 
 const PHASE_NAMES: Record<string, string> = {
@@ -38,9 +39,10 @@ const PHASE_NAMES: Record<string, string> = {
   AUCTION: "拍卖会", GAME_OVER: "游戏结束", COMMUNITY_NAMING: "社区命名",
 };
 
-export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {} }) => {
+export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, eraImages = {} }) => {
   const [timeLeft, setTimeLeft] = useState(0);
   const [auctionCost, setAuctionCost] = useState(0);
+  const [isImagePanelOpen, setIsImagePanelOpen] = useState(false);
 
   useEffect(() => {
     const target = game.investmentEndsAt || game.buffPhaseEndsAt;
@@ -77,7 +79,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {} })
   const secs = (timeLeft % 60).toString().padStart(2, "0");
   const isUrgent = timeLeft < 60 && timeLeft > 0;
 
-  const handleImageUpload = (id: number, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (id: string | number, type: 'project' | 'era', e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -115,7 +117,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {} })
             formData.append("image", blob, `${id}.jpg`);
             
             try {
-              const res = await fetch(`${BACKEND_URL}/api/upload-image`, {
+              const res = await fetch(`${BACKEND_URL}/api/${type === 'era' ? 'upload-era-image' : 'upload-image'}`, {
                 method: "POST",
                 body: formData
               });
@@ -245,7 +247,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {} })
                 )}
                 <label className="btn btn-sm btn-full" style={{ background: "rgba(16,185,129,0.2)", border: "1px solid #10b981", color: "#34d399", cursor: "pointer", display: "block" }}>
                   上传图片
-                  <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => handleImageUpload(proj.id, e)} />
+                  <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => handleImageUpload(proj.id, 'project', e)} />
                 </label>
               </div>
             ))}
@@ -504,7 +506,75 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {} })
               ))}
             </div>
           </div>
+          </div>
         </div>
+
+        {/* 底部：图片上传折叠面板 */}
+        <div style={{ marginTop: "2rem", marginBottom: "2rem", background: "var(--color-bg-card)", borderRadius: "1.25rem", border: "1px solid var(--color-border)", overflow: "hidden" }}>
+          <button
+            onClick={() => setIsImagePanelOpen(!isImagePanelOpen)}
+            style={{ width: "100%", padding: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none", color: "white", cursor: "pointer", fontSize: "1.1rem", fontWeight: 700 }}
+          >
+            <span>🖼 图片上传管理 {isImagePanelOpen ? "▼" : "▶"}</span>
+            <span style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", fontWeight: "normal" }}>点击展开</span>
+          </button>
+          
+          {isImagePanelOpen && (
+            <div style={{ padding: "1.5rem", borderTop: "1px solid var(--color-border)", display: "flex", flexDirection: "column", gap: "2.5rem" }}>
+              
+              {/* 时代图片上传区域 */}
+              <div>
+                <h3 style={{ fontSize: "1rem", color: "#60a5fa", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span>⏳</span> 时代图片上传 (竖版 2:3)
+                </h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "1rem" }}>
+                  {["气候", "科技", "文化", "健康", "心理"].map(eraName => {
+                    const version = eraImages[eraName] || "";
+                    const imgUrl = `${BACKEND_URL}/uploads_eras/${eraName}.jpg${version ? "?v=" + version : ""}`;
+                    return (
+                      <div key={eraName} style={{ background: "rgba(255,255,255,0.03)", borderRadius: "0.75rem", padding: "0.75rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        <div style={{ fontSize: "0.8rem", fontWeight: 700 }}>{eraName}</div>
+                        <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
+                          <div style={{ width: "100%", aspectRatio: "2/3", background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed rgba(255,255,255,0.2)", color: "var(--color-text-muted)", fontSize: "0.75rem", overflow: "hidden", position: "relative" }}>
+                            {version ? <img src={imgUrl} alt={eraName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "上传"}
+                          </div>
+                          <input type="file" accept="image/*" onChange={(e) => handleImageUpload(eraName, 'era', e)} style={{ display: "none" }} />
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 项目图片上传区域 */}
+              <div>
+                <h3 style={{ fontSize: "1rem", color: "#fbbf24", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span>🏢</span> 项目图片上传 (横版 16:9)
+                </h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "1rem" }}>
+                  {game.activeProjects && game.activeProjects.length > 0 ? (
+                    game.activeProjects.map(p => {
+                    const version = projectImages[p.id] || "";
+                    const imgUrl = `${BACKEND_URL}/uploads/${p.id}.jpg${version ? "?v=" + version : ""}`;
+                    return (
+                      <div key={p.id} style={{ background: "rgba(255,255,255,0.03)", borderRadius: "0.75rem", padding: "0.75rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>{p.name}</div>
+                        <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
+                          <div style={{ width: "100%", aspectRatio: "16/9", background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed rgba(255,255,255,0.2)", color: "var(--color-text-muted)", fontSize: "0.75rem", overflow: "hidden", position: "relative" }}>
+                            {version ? <img src={imgUrl} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "上传"}
+                          </div>
+                          <input type="file" accept="image/*" onChange={(e) => handleImageUpload(p.id, 'project', e)} style={{ display: "none" }} />
+                        </label>
+                      </div>
+                    );
+                  })
+                  ) : (
+                    <div style={{ color: "var(--color-text-muted)", fontSize: "0.9rem" }}>当游戏正式开始并抽取项目后，方可上传图片。</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
       </div>
     </div>
   );

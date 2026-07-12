@@ -11,6 +11,7 @@ function App() {
   const [isGod, setIsGod] = useState(false);
   const [adminRoomList, setAdminRoomList] = useState<any[]>([]);
   const [projectImages, setProjectImages] = useState<Record<number, number>>({});
+  const [eraImages, setEraImages] = useState<Record<string, number>>({});
 
   useEffect(() => {
     const onConnect    = () => setIsConnected(true);
@@ -32,6 +33,7 @@ function App() {
     };
     const onError = (msg: string) => alert(`❌ ${msg}`);
     const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
+    const onSyncEraImages = (images: Record<string, number>) => setEraImages(images);
 
     socket.on("connect",       onConnect);
     socket.on("disconnect",    onDisconnect);
@@ -41,6 +43,7 @@ function App() {
     socket.on("roomDissolved", onRoomDissolved);
     socket.on("error",         onError);
     socket.on("syncProjectImages", onSyncImages);
+    socket.on("syncEraImages", onSyncEraImages);
 
     return () => {
       socket.off("connect",       onConnect);
@@ -51,6 +54,7 @@ function App() {
       socket.off("roomDissolved", onRoomDissolved);
       socket.off("error",         onError);
       socket.off("syncProjectImages", onSyncImages);
+      socket.off("syncEraImages", onSyncEraImages);
     };
   }, []);
 
@@ -180,10 +184,11 @@ function App() {
     return (
       <GameRoom
         game={game}
-        myPlayerId={isGod ? "GOD" : myPlayerId}
+        myPlayerId={myPlayerId}
         isGod={isGod}
-        onExit={handleExitRoom}
         projectImages={projectImages}
+        eraImages={eraImages}
+        onExit={handleExitRoom}
       />
     );
   }
