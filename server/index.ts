@@ -4,7 +4,7 @@ import http from "http";
 import { Server } from "socket.io";
 import { registerSocketHandlers } from "./network/socketHandlers.js";
 import { broadcastUpdate } from "./network/broadcast.js";
-import { rooms, customImagesVersions } from "./state/store.js";
+import { rooms, customImagesVersions, customEraImagesVersions } from "./state/store.js";
 import { tryAdvancePhase } from "./state/phaseController.js";
 import multer from "multer";
 import fs from "fs";
