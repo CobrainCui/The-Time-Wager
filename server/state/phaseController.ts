@@ -6,7 +6,7 @@ import {
   resetAllReady 
 } from "./gameActions.js";
 import { settlePhase } from "../logic/projectSettlement.js";
-import { drawProjectsForEra } from "../state/gameEra.js";
+import { drawProjectsForEra, updateEraCard } from "../state/gameEra.js";
 import { shuffleArray } from "../utils/shuffle.js";
 import { eraCards } from "../data/game_data.js";
 import { handleAIPhase } from "../ai/aiOrchestrator.js";
@@ -27,7 +27,6 @@ export function tryAdvancePhase(game: GameState) {
             const shuffledIds = shuffleArray(game.players.map(p => p.id));
             game.players.forEach(p => { p.draftOrder = shuffledIds.indexOf(p.id) + 1; });
             
-            if (!game.currentEraCard) game.currentEraCard = eraCards[0];
             drawProjectsForEra(game); 
           }
           
@@ -150,8 +149,7 @@ function advanceRound(game: GameState) {
     }
 
     // 更新时代卡
-    const cardIndex = (game.currentEra - 1) % game.eraSequence.length;
-    game.currentEraCard = eraCards[cardIndex];
+    updateEraCard(game);
     
     // 换代前插入拍卖阶段
     game.phase = "AUCTION";

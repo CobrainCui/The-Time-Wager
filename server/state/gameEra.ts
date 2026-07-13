@@ -8,34 +8,23 @@ import {
 } from "../data/game_data.js";
 import { shuffleArray } from "../utils/shuffle.js";
 
+export function updateEraCard(game: GameState) {
+    const index = game.currentEra - 1; 
+    if (index < game.eraSequence.length) {
+        const cardId = game.eraSequence[index]; 
+        game.currentEraCard = eraCards.find(c => c.id === (cardId + 1)) || eraCards[0];
+    } else {
+        game.currentEraCard = eraCards[eraCards.length - 1];
+    }
+    game.logs.push(`🌍 时代主题更新：${game.currentEraCard.name} (${game.currentEraCard.era})`);
+}
+
 export function drawProjectsForEra(game: GameState) {
   
   // 1. 换代处理：移除旧时代的风险项目 (保留其他类型未完成的项目)
   if (game.roundInEra === 1 && game.currentEra > 1) {
       game.activeProjects = game.activeProjects.filter(p => p.type !== 'risk');
       game.logs.push(`⚠️ 新时代开始，旧时代的风险项目已移除`);
-  }
-
-  // 2. 更新时代卡 (确保不重复)
-  if (game.roundInEra === 1) {
-      // eraSequence 是在游戏初始化时生成的 [0,1,2,3,4] 的乱序数组
-      // 我们按顺序取，保证不重复
-      const index = game.currentEra - 1; 
-      
-      // 防止越界 (虽然逻辑上不会，做个保护)
-      if (index < game.eraSequence.length) {
-          const cardId = game.eraSequence[index]; 
-          // eraCards 的 ID 是 1-5，而 sequence 是 0-4? 
-          // 检查 createInitialGame: shuffleArray([0, 1, 2, 3, 4]). 
-          // 检查 game_data: eraCards id 是 1,2,3,4,5.
-          // 修正：假设 sequence 对应数组下标
-          game.currentEraCard = eraCards.find(c => c.id === (cardId + 1)) || eraCards[0];
-      } else {
-          // 如果超出了（比如Era 6），默认取最后一个或随机
-          game.currentEraCard = eraCards[eraCards.length - 1];
-      }
-      
-      game.logs.push(`🌍 时代主题更新：${game.currentEraCard.name} (${game.currentEraCard.era})`);
   }
   
   // 仅在每代第一轮发新卡

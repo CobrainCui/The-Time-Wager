@@ -1,4 +1,4 @@
-import { EventCard, EraCard } from "../data/game_data.js";
+import { EventCard, EraCard, eraCards } from "../data/game_data.js";
 import { shuffleArray } from "../utils/shuffle.js"; 
 
 export type Phase =
@@ -216,6 +216,7 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
     globalRound: 1,
     
     eraSequence: initialEraSequence,
+    currentEraCard: eraCards.find(c => c.id === (initialEraSequence[0] + 1)) || eraCards[0],
 
     activeProjects: [],
     uncompletedProjects: [],
