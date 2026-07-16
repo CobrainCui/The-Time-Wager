@@ -241,6 +241,21 @@ const ProjectCard: React.FC<{
           {project.name}
         </h3>
 
+        {project.type === "long" && (
+          <div style={{
+            fontSize: "0.7rem",
+            color: "#fbbf24",
+            marginBottom: "0.5rem",
+            padding: "0.2rem 0.4rem",
+            background: "rgba(251,191,36,0.1)",
+            border: "1px solid rgba(251,191,36,0.3)",
+            borderRadius: "0.25rem",
+            lineHeight: 1.2
+          }}>
+            ⚠️ 提示：长期项目参投后，必须每轮至少投入3格精力，不然视为“放弃”
+          </div>
+        )}
+
         {/* 投入信息 */}
         <div
           style={{
