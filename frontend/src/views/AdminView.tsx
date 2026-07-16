@@ -383,7 +383,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
                 <thead>
                   <tr style={{ background: "rgba(255,255,255,0.02)", color: "var(--color-text-muted)" }}>
-                    {["#", "昵称", "状态", "社交", "手牌", "已用", "⚡", "💰", "操作"].map((h, i) => (
+                    {["#", "昵称", "状态", "社交", "人格", "手牌", "已用", "⚡", "💰", "操作"].map((h, i) => (
                       <th key={i} style={{ padding: "0.75rem 0.875rem", fontWeight: 700, fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", whiteSpace: "nowrap" }}>
                         {h}
                       </th>
@@ -420,6 +420,23 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                               <option key={r} value={r}>{r}</option>
                             ))}
                           </select>
+                        </td>
+                        <td style={{ padding: "0.875rem" }}>
+                          {p.analysisResult ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                              <span style={{ fontSize: "0.7rem", color: "#60a5fa" }}>🎭 {p.analysisResult.primaryPersona}</span>
+                              {p.analysisResult.mbtiPersona && (
+                                <span style={{ fontSize: "0.7rem", color: "#34d399" }}>🧬 {p.analysisResult.mbtiPersona.code}</span>
+                              )}
+                              {game.phase === "GAME_OVER" && (
+                                <span style={{ fontSize: "0.65rem", color: p.personaVote ? "#fbbf24" : "var(--color-text-muted)" }}>
+                                  {p.personaVote === "fate" ? "🗳️选: 命运素描" : p.personaVote === "gene" ? "🗳️选: 决策基因" : p.personaVote === "neither" ? "🗳️选: 都不准" : "⏳未投票"}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>尚未分析</span>
+                          )}
                         </td>
                         <td style={{ padding: "0.875rem" }}>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>

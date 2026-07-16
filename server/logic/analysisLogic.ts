@@ -1,7 +1,9 @@
-import { GameState, Player, PersonaAnalysis, ActiveProject } from "../state/gameState.js";
+import { GameState, Player, PersonaAnalysis, MbtiPersona, ActiveProject } from "../state/gameState.js";
 
 import { AnalysisWeights } from "../secrets.js";
 export { AnalysisWeights };
+
+// ========== 命运素描：原有五维加权系统 ==========
 
 function calculateLongTermism(player: Player): number {
   if (player.totalEnergyConsumed === 0) return 0;
@@ -87,6 +89,68 @@ function calculateResourceConversion(player: Player, game: GameState): number {
   return Math.min(100, rawScore * AnalysisWeights.w_roi_efficiency);
 }
 
+// ========== 决策基因：四轴 MBTI 系统 ==========
+
+// 16 种组合的中文描述名
+const MBTI_LABELS: Record<string, string> = {
+  LCDP: "稳健长线·冷静机师",
+  LCDE: "稳健长线·社区牧者",
+  LCFP: "稳健顺势·精算师",
+  LCFE: "稳健顺势·社区守护者",
+  LRDP: "长线冒险·独行炼金士",
+  LRDE: "长线冒险·布道建筑师",
+  LRFP: "长线激进·隐秘收割者",
+  LRFE: "长线激进·时代共鸣者",
+  SCDP: "短线保守·冷血套利手",
+  SCDE: "短线保守·温情交际家",
+  SCFP: "短线顺势·效率机器",
+  SCFE: "短线顺势·市场随行者",
+  SRDP: "短线冒险·赌徒破坏王",
+  SRDE: "短线冒险·闪电社交家",
+  SRFP: "短线激进·纯粹猎手",
+  SRFE: "短线激进·街头弄潮儿",
+};
+
+function calculateMbtiPersona(player: Player, game: GameState): MbtiPersona {
+  const totalEnergy = player.totalEnergyConsumed || 1;
+
+  // 轴 T：长期精力比 vs 短期精力比（用 investedLongEnergy 和推算出的短期精力）
+  const longRatio = player.investedLongEnergy / totalEnergy;
+  // 推算短期精力：总精力 - 长期 - 风险（剩余基本是短期/现金）
+  const shortEnergyEst = Math.max(0, totalEnergy - player.investedLongEnergy - player.investedRiskEnergy);
+  const shortRatio = shortEnergyEst / totalEnergy;
+  const longShortScore = (longRatio - shortRatio) * 100; // 正=长期，负=短期
+
+  // 轴 R：风险偏好（和原有一致）
+  const riskConservScore = game.totalRiskEnergyAvailable > 0
+    ? Math.min(100, (player.investedRiskEnergy / game.totalRiskEnergyAvailable) * 100 * AnalysisWeights.w_risk_ratio)
+    : 0;
+
+  // 轴 D：规则破坏度（和原有一致）
+  const disruptFollowScore = Math.min(100, player.usedCards.length * AnalysisWeights.w_rule_intervention_per_card);
+
+  // 轴 M：利益 vs 社交（ROI效率得分 - 社交连接得分）
+  const roiScore = calculateResourceConversion(player, game);
+  const socialScore = calculateSocialConnection(player);
+  const profitSocialScore = roiScore - socialScore; // 正=利益导向，负=社交导向
+
+  // 判定四字母
+  const T = longShortScore >= 0 ? "L" : "S";
+  const R = riskConservScore >= 50 ? "R" : "C";
+  const D = disruptFollowScore >= 50 ? "D" : "F";
+  const M = profitSocialScore >= 0 ? "P" : "E";
+  const code = `${T}${R}${D}${M}`;
+
+  return {
+    axes: { T, R, D, M },
+    code,
+    label: MBTI_LABELS[code] || code,
+    axisScores: { longShort: longShortScore, riskConserv: riskConservScore, disruptFollow: disruptFollowScore, profitSocial: profitSocialScore },
+  };
+}
+
+// ========== 主入口 ==========
+
 export function analyzeGamePersona(game: GameState) {
   game.players.forEach(p => {
     const scores = {
@@ -97,8 +161,8 @@ export function analyzeGamePersona(game: GameState) {
       resourceConversion: calculateResourceConversion(p, game)
     };
 
+    // --- 命运素描 ---
     let persona = "随机诗人";
-
     const sCompass = (100 - scores.riskTaking)*0.4 + (100 - scores.ruleIntervention)*0.4 + scores.resourceConversion*0.2;
     const sGardener = scores.longTermism;
     const sTrigger = scores.resourceConversion*0.6 + scores.ruleIntervention*0.2 + scores.riskTaking*0.2;
@@ -120,18 +184,16 @@ export function analyzeGamePersona(game: GameState) {
         }
     }
 
-    // ✅ 保存详细得分以供前端调试
+    // --- 决策基因 ---
+    const mbtiPersona = calculateMbtiPersona(p, game);
+
     p.analysisResult = {
         scores,
-        personaScores: {
-            compass: sCompass,
-            gardener: sGardener,
-            trigger: sTrigger,
-            alchemist: sAlchemist
-        },
-        primaryPersona: persona
+        personaScores: { compass: sCompass, gardener: sGardener, trigger: sTrigger, alchemist: sAlchemist },
+        primaryPersona: persona,
+        mbtiPersona,
     };
     
-    console.log(`📊 玩家 ${p.name} 分析: ${persona}`, p.analysisResult);
+    console.log(`📊 玩家 ${p.name} 命运素描: ${persona} | 决策基因: ${mbtiPersona.code} ${mbtiPersona.label}`);
   });
-}
+}

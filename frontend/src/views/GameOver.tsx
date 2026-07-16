@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { GameState, Player } from "../types";
+import { socket } from "../socket";
 import {
   Chart as ChartJS, RadialLinearScale, PointElement, LineElement,
   Filler, Tooltip, Legend, CategoryScale, LinearScale
@@ -11,15 +12,32 @@ ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, Tooltip, 
 interface Props { game: GameState; me?: Player; }
 
 const PERSONA_COLORS: Record<string, string> = {
-  "罗盘精算师": "#3b82f6", "时荫植者": "#10b981", "涌机触发者": "#f97316", "瞬刻炼金士": "#a855f7", "桥梁架构师": "#ec4899",
+  "罗盘精算师": "#3b82f6", "时荫植者": "#10b981", "涌机触发者": "#f97316",
+  "瞬刻炼金士": "#a855f7", "桥梁架构师": "#ec4899", "随机诗人": "#6b7280",
+};
+
+// 四个轴的中文说明
+const AXIS_LABELS: Record<string, { pos: string; neg: string; desc: string }> = {
+  T: { pos: "长期 L", neg: "短期 S", desc: "时间偏好" },
+  R: { pos: "激进 R", neg: "保守 C", desc: "风险偏好" },
+  D: { pos: "破坏 D", neg: "顺应 F", desc: "规则态度" },
+  M: { pos: "利益 P", neg: "社交 E", desc: "核心动机" },
 };
 
 export const GameOver: React.FC<Props> = ({ game, me }) => {
   const [showDetails, setShowDetails] = useState(false);
+  const [voted, setVoted] = useState<"fate" | "gene" | "neither" | null>(me?.personaVote ?? null);
+
   const sortedPlayers = [...game.players].sort((a, b) => b.wealth - a.wealth);
   const totalWealth = game.players.reduce((s, p) => s + p.wealth, 0);
   const myResult = me?.analysisResult;
   const personaColor = myResult ? (PERSONA_COLORS[myResult.primaryPersona] || "#60a5fa") : "#60a5fa";
+
+  const submitVote = (v: "fate" | "gene" | "neither") => {
+    if (voted) return;
+    setVoted(v);
+    socket.emit("submitPersonaVote", { vote: v });
+  };
 
   const radarData = {
     labels: ["长期主义", "风险倾向", "规则干预", "社交连接", "资源转化"],
@@ -55,6 +73,36 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
     if (i === 1) return { bg: "#94a3b8", color: "#000", text: "🥈" };
     if (i === 2) return { bg: "#cd7c32", color: "#fff", text: "🥉" };
     return { bg: "#1f2937", color: "#6b7280", text: `${i + 1}` };
+  };
+
+  // 投票按钮样式
+  const voteBtn = (v: "fate" | "gene" | "neither", label: string, color: string) => {
+    const isSelected = voted === v;
+    const isDisabled = voted !== null && !isSelected;
+    return (
+      <button
+        onClick={() => submitVote(v)}
+        disabled={!!voted}
+        style={{
+          flex: 1,
+          padding: "0.65rem 0.5rem",
+          borderRadius: "0.75rem",
+          border: isSelected ? `2px solid ${color}` : "2px solid rgba(255,255,255,0.08)",
+          background: isSelected ? `${color}22` : "rgba(255,255,255,0.03)",
+          color: isSelected ? color : isDisabled ? "#374151" : "#9ca3af",
+          fontWeight: 700,
+          fontSize: "0.8rem",
+          cursor: voted ? "not-allowed" : "pointer",
+          transition: "all 0.2s",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "0.3rem",
+        }}
+      >
+        {isSelected ? "✅ " : ""}{label}
+      </button>
+    );
   };
 
   return (
@@ -137,16 +185,11 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                   <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                     <span
                       style={{
-                        width: "1.5rem",
-                        height: "1.5rem",
-                        borderRadius: "50%",
+                        width: "1.5rem", height: "1.5rem", borderRadius: "50%",
                         background: i === 0 ? "#f59e0b" : i === 1 ? "#94a3b8" : i === 2 ? "#cd7c32" : "#1f2937",
                         color: i < 3 ? (i === 0 ? "#000" : "#fff") : "#6b7280",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: "0.65rem",
-                        fontWeight: 800,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: "0.65rem", fontWeight: 800,
                       }}
                     >
                       {i + 1}
@@ -200,19 +243,16 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                     {p.name}
                   </span>
                   {p.analysisResult && (
-                    <span
-                      style={{
-                        fontSize: "0.7rem",
-                        fontWeight: 700,
-                        padding: "0.2rem 0.6rem",
-                        borderRadius: "9999px",
-                        background: `${PERSONA_COLORS[p.analysisResult.primaryPersona] || "#3b82f6"}20`,
-                        color: PERSONA_COLORS[p.analysisResult.primaryPersona] || "#60a5fa",
-                        border: `1px solid ${PERSONA_COLORS[p.analysisResult.primaryPersona] || "#3b82f6"}40`,
-                      }}
-                    >
-                      {p.analysisResult.primaryPersona}
-                    </span>
+                    <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "0.2rem 0.55rem", borderRadius: "9999px", background: `${PERSONA_COLORS[p.analysisResult.primaryPersona] || "#3b82f6"}20`, color: PERSONA_COLORS[p.analysisResult.primaryPersona] || "#60a5fa", border: `1px solid ${PERSONA_COLORS[p.analysisResult.primaryPersona] || "#3b82f6"}40` }}>
+                        🎭 {p.analysisResult.primaryPersona}
+                      </span>
+                      {p.analysisResult.mbtiPersona && (
+                        <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "0.2rem 0.55rem", borderRadius: "9999px", background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }}>
+                          🧬 {p.analysisResult.mbtiPersona.code}
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
                 <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: "1.25rem", color: isMe ? "#fbbf24" : "var(--color-text-secondary)" }}>
@@ -223,52 +263,121 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
           })}
         </div>
 
-        {/* 我的分析图表 */}
+        {/* 我的人格分析 */}
         {me && myResult && (
-          <div
-            style={{
-              background: "var(--color-bg-card)",
-              border: `1px solid ${personaColor}33`,
-              borderRadius: "1.25rem",
-              padding: "1.5rem",
-              marginBottom: "2rem",
-              boxShadow: `0 0 30px ${personaColor}12`,
-            }}
-          >
-            <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
-              <div style={{ fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.375rem" }}>
-                你的决策人格
-              </div>
-              <div style={{ fontSize: "1.75rem", fontWeight: 900, color: personaColor }}>
-                {myResult.primaryPersona}
+          <div style={{ marginBottom: "2rem" }}>
+            {/* 区域标题 */}
+            <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
+              <div style={{ fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>
+                你的人格测试结果
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-              <div style={{ height: "220px" }}>
-                <Radar
-                  data={radarData}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                      r: {
-                        min: 0, max: 100,
-                        ticks: { display: false },
-                        pointLabels: { font: { size: 11 }, color: "#94a3b8" },
-                        grid: { color: "rgba(255,255,255,0.06)" },
-                        angleLines: { color: "rgba(255,255,255,0.06)" },
+
+            {/* 双人格卡片并排 */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+              {/* 命运素描卡 */}
+              <div
+                style={{
+                  background: "var(--color-bg-card)",
+                  border: `1px solid ${personaColor}44`,
+                  borderRadius: "1.25rem",
+                  padding: "1.25rem",
+                  boxShadow: `0 0 24px ${personaColor}10`,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.75rem",
+                }}
+              >
+                <div style={{ fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>
+                  🎭 命运素描
+                </div>
+                <div style={{ fontSize: "1.4rem", fontWeight: 900, color: personaColor, lineHeight: 1.2 }}>
+                  {myResult.primaryPersona}
+                </div>
+                <div style={{ height: "160px" }}>
+                  <Radar
+                    data={radarData}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { display: false } },
+                      scales: {
+                        r: {
+                          min: 0, max: 100,
+                          ticks: { display: false },
+                          pointLabels: { font: { size: 9 }, color: "#94a3b8" },
+                          grid: { color: "rgba(255,255,255,0.06)" },
+                          angleLines: { color: "rgba(255,255,255,0.06)" },
+                        },
                       },
-                    },
-                  }}
-                />
+                    }}
+                  />
+                </div>
               </div>
-              <div style={{ height: "220px" }}>
+
+              {/* 决策基因卡 */}
+              {myResult.mbtiPersona && (() => {
+                const mbti = myResult.mbtiPersona;
+                const axisEntries = Object.entries(mbti.axes) as [string, string][];
+                return (
+                  <div
+                    style={{
+                      background: "var(--color-bg-card)",
+                      border: "1px solid rgba(16,185,129,0.3)",
+                      borderRadius: "1.25rem",
+                      padding: "1.25rem",
+                      boxShadow: "0 0 24px rgba(16,185,129,0.06)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.75rem",
+                    }}
+                  >
+                    <div style={{ fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>
+                      🧬 决策基因
+                    </div>
+                    <div>
+                      <div style={{ fontFamily: "var(--font-mono)", fontSize: "2rem", fontWeight: 900, color: "#34d399", letterSpacing: "0.2em", lineHeight: 1 }}>
+                        {mbti.code}
+                      </div>
+                      <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#6ee7b7", marginTop: "0.25rem" }}>
+                        {mbti.label}
+                      </div>
+                    </div>
+                    {/* 四轴展示 */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                      {axisEntries.map(([axis, letter]) => {
+                        const info = AXIS_LABELS[axis];
+                        const isPosActive = ["L", "R", "D", "P"].includes(letter);
+                        return (
+                          <div key={axis} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                            <div style={{ fontSize: "0.65rem", color: "#6b7280", width: "3rem", flexShrink: 0 }}>{info.desc}</div>
+                            <div style={{ flex: 1, display: "flex", borderRadius: "9999px", overflow: "hidden", height: "18px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.6rem", fontWeight: 700, background: isPosActive ? "rgba(16,185,129,0.3)" : "transparent", color: isPosActive ? "#34d399" : "#374151", transition: "all 0.3s" }}>
+                                {info.pos}
+                              </div>
+                              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.6rem", fontWeight: 700, background: !isPosActive ? "rgba(239,68,68,0.25)" : "transparent", color: !isPosActive ? "#f87171" : "#374151", transition: "all 0.3s" }}>
+                                {info.neg}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* 财富曲线 */}
+            <div style={{ background: "var(--color-bg-card)", border: "1px solid var(--color-border)", borderRadius: "1.25rem", padding: "1.25rem", marginBottom: "1rem" }}>
+              <div style={{ fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.75rem" }}>
+                📈 财富曲线
+              </div>
+              <div style={{ height: "160px" }}>
                 <Line
                   data={lineData}
                   options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
+                    responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { display: false } },
                     scales: {
                       x: { ticks: { color: "#6b7280", font: { size: 10 } }, grid: { display: false } },
@@ -277,6 +386,30 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                   }}
                 />
               </div>
+            </div>
+
+            {/* 投票区 */}
+            <div
+              style={{
+                background: "rgba(255,255,255,0.02)",
+                border: "1px solid rgba(255,255,255,0.07)",
+                borderRadius: "1.25rem",
+                padding: "1.25rem",
+              }}
+            >
+              <div style={{ fontSize: "0.75rem", fontWeight: 700, textAlign: "center", color: "var(--color-text-muted)", marginBottom: "0.875rem", letterSpacing: "0.1em" }}>
+                🗳️ 哪种描述更像你？
+              </div>
+              <div style={{ display: "flex", gap: "0.6rem" }}>
+                {voteBtn("fate", "🎭 命运素描更准", personaColor)}
+                {voteBtn("gene", "🧬 决策基因更准", "#34d399")}
+                {voteBtn("neither", "两个都不准", "#6b7280")}
+              </div>
+              {voted && (
+                <div style={{ textAlign: "center", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "0.625rem" }}>
+                  已投票，感谢你的反馈！
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -297,8 +430,10 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
               <h3 style={{ fontWeight: 700, color: "white", fontSize: "1.1rem" }}>🧐 人格判定数据</h3>
               <button onClick={() => setShowDetails(false)} style={{ background: "none", border: "none", color: "var(--color-text-muted)", fontSize: "1.25rem", cursor: "pointer" }}>×</button>
             </div>
+
+            {/* 命运素描细则 */}
             <div style={{ background: `${personaColor}15`, border: `1px solid ${personaColor}33`, borderRadius: "0.875rem", padding: "1rem", marginBottom: "1rem", textAlign: "center" }}>
-              <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>你的判定结果</div>
+              <div style={{ color: "var(--color-text-muted)", fontSize: "0.7rem", marginBottom: "0.25rem" }}>🎭 命运素描</div>
               <div style={{ fontSize: "1.5rem", fontWeight: 800, color: personaColor }}>{myResult.primaryPersona}</div>
             </div>
             {[
@@ -318,6 +453,34 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                 </span>
               </div>
             ))}
+
+            {/* 决策基因细则 */}
+            {myResult.mbtiPersona && (
+              <>
+                <div style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: "0.875rem", padding: "1rem", marginBottom: "1rem", textAlign: "center", marginTop: "1.25rem" }}>
+                  <div style={{ color: "var(--color-text-muted)", fontSize: "0.7rem", marginBottom: "0.25rem" }}>🧬 决策基因</div>
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: "1.5rem", fontWeight: 800, color: "#34d399", letterSpacing: "0.2em" }}>{myResult.mbtiPersona.code}</div>
+                  <div style={{ fontSize: "0.85rem", color: "#6ee7b7", marginTop: "0.25rem" }}>{myResult.mbtiPersona.label}</div>
+                </div>
+                {[
+                  { label: "⏰ 时间偏好 (T)", value: myResult.mbtiPersona.axisScores.longShort, desc: "正值→长期主义(L)，负值→短期主义(S)", letter: myResult.mbtiPersona.axes.T },
+                  { label: "🎲 风险偏好 (R)", value: myResult.mbtiPersona.axisScores.riskConserv, desc: ">50→激进冒险(R)，<50→保守稳健(C)", letter: myResult.mbtiPersona.axes.R },
+                  { label: "🛠️ 规则态度 (D)", value: myResult.mbtiPersona.axisScores.disruptFollow, desc: ">50→规则破坏(D)，<50→规则顺应(F)", letter: myResult.mbtiPersona.axes.D },
+                  { label: "💡 核心动机 (M)", value: myResult.mbtiPersona.axisScores.profitSocial, desc: "正值→利益极客(P)，负值→社交共情(E)", letter: myResult.mbtiPersona.axes.M },
+                ].map((item) => (
+                  <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.75rem", background: "rgba(255,255,255,0.02)", borderRadius: "0.625rem", border: "1px solid var(--color-border)", marginBottom: "0.5rem" }}>
+                    <div>
+                      <div style={{ fontWeight: 600, color: "var(--color-text-primary)", fontSize: "0.875rem" }}>{item.label}</div>
+                      <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>{item.desc}</div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.2rem" }}>
+                      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#34d399", fontSize: "0.95rem" }}>{item.letter}</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "#6b7280" }}>{item.value.toFixed(1)}</span>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
       )}

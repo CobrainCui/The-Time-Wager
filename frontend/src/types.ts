@@ -67,6 +67,18 @@ export interface LongTermProgress {
   reward?: number;
 }
 
+export interface MbtiPersona {
+  axes: { T: string; R: string; D: string; M: string };
+  code: string;
+  label: string;
+  axisScores: {
+    longShort: number;
+    riskConserv: number;
+    disruptFollow: number;
+    profitSocial: number;
+  };
+}
+
 export interface PersonaAnalysis {
   scores: {
     longTermism: number;    
@@ -81,7 +93,8 @@ export interface PersonaAnalysis {
     trigger: number;
     alchemist: number;
   };
-  primaryPersona: string;   
+  primaryPersona: string;   // 命运素描
+  mbtiPersona: MbtiPersona; // 决策基因
 }
 
 export interface Player {
@@ -110,6 +123,7 @@ export interface Player {
   socialRank: 'A' | 'B' | 'C' | 'D' | 'E' | null; 
   
   analysisResult?: PersonaAnalysis; 
+  personaVote?: "fate" | "gene" | "neither";
 }
 
 export interface EventOption {

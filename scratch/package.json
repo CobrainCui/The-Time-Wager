@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "sharp": "^0.35.3",
+    "string-similarity": "^4.0.4",
+    "tesseract.js": "^7.0.0"
+  }
+}

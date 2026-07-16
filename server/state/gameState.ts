@@ -61,6 +61,18 @@ export interface ActiveBuff {
 }
 
 // ✅ 人格分析详细数据
+export interface MbtiPersona {
+  axes: { T: string; R: string; D: string; M: string }; // 每轴字母，如 {T:"L", R:"C", D:"F", M:"P"}
+  code: string;   // 四字母代码，如 "LCFP"
+  label: string;  // 中文描述名，如 "稳健顺势·精算师"
+  axisScores: {
+    longShort: number;      // 正=偏长期，负=偏短期
+    riskConserv: number;    // 0~100，>50=激进
+    disruptFollow: number;  // 0~100，>50=破坏
+    profitSocial: number;   // 正=利益导向，负=社交导向
+  };
+}
+
 export interface PersonaAnalysis {
   scores: {
     longTermism: number;
@@ -75,7 +87,8 @@ export interface PersonaAnalysis {
     trigger: number;
     alchemist: number;
   };
-  primaryPersona: string;
+  primaryPersona: string;  // 命运素描
+  mbtiPersona: MbtiPersona; // 决策基因
 }
 
 export interface Player {
@@ -115,6 +128,7 @@ export interface Player {
   socialRank: 'A' | 'B' | 'C' | 'D' | 'E' | null;
   
   analysisResult?: PersonaAnalysis;
+  personaVote?: "fate" | "gene" | "neither"; // 命运素描 / 决策基因 / 都不准
 
   // === AI 对弈相关 ===
   isAI?: boolean;

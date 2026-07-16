@@ -461,6 +461,20 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     }
   });
 
+  socket.on("submitPersonaVote", ({ vote }: { vote: "fate" | "gene" | "neither" }) => {
+    const roomId = getRoomId(socket);
+    if (!roomId || !rooms[roomId]) return;
+    const game = rooms[roomId];
+    if (game.phase !== "GAME_OVER") return;
+    const player = game.players.find(p => p.socketId === socket.id);
+    if (player) {
+      player.personaVote = vote;
+      const voteLabel = vote === "fate" ? "命运素描" : vote === "gene" ? "决策基因" : "都不准";
+      game.logs.push(`🗳️ ${player.name} 投票：${voteLabel}`);
+      broadcastUpdate(io, game);
+    }
+  });
+
   socket.on("submitCommunityName", ({ name }) => {
     const roomId = getRoomId(socket);
     if (!roomId || !rooms[roomId]) return;
