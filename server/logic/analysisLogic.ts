@@ -91,25 +91,7 @@ function calculateResourceConversion(player: Player, game: GameState): number {
 
 // ========== 决策基因：四轴 MBTI 系统 ==========
 
-// 16 种组合的中文描述名
-const MBTI_LABELS: Record<string, string> = {
-  LCDP: "稳健长线·冷静机师",
-  LCDE: "稳健长线·社区牧者",
-  LCFP: "稳健顺势·精算师",
-  LCFE: "稳健顺势·社区守护者",
-  LRDP: "长线冒险·独行炼金士",
-  LRDE: "长线冒险·布道建筑师",
-  LRFP: "长线激进·隐秘收割者",
-  LRFE: "长线激进·时代共鸣者",
-  SCDP: "短线保守·冷血套利手",
-  SCDE: "短线保守·温情交际家",
-  SCFP: "短线顺势·效率机器",
-  SCFE: "短线顺势·市场随行者",
-  SRDP: "短线冒险·赌徒破坏王",
-  SRDE: "短线冒险·闪电社交家",
-  SRFP: "短线激进·纯粹猎手",
-  SRFE: "短线激进·街头弄潮儿",
-};
+import { DECISION_GENE_CONFIG, FATE_SKETCH_CONFIG } from "./personaConfig.js";
 
 function calculateMbtiPersona(player: Player, game: GameState): MbtiPersona {
   const totalEnergy = player.totalEnergyConsumed || 1;
@@ -134,17 +116,35 @@ function calculateMbtiPersona(player: Player, game: GameState): MbtiPersona {
   const socialScore = calculateSocialConnection(player);
   const profitSocialScore = roiScore - socialScore; // 正=利益导向，负=社交导向
 
-  // 判定四字母
-  const T = longShortScore >= 0 ? "L" : "S";
-  const R = riskConservScore >= 50 ? "R" : "C";
-  const D = disruptFollowScore >= 50 ? "D" : "F";
-  const M = profitSocialScore >= 0 ? "P" : "E";
-  const code = `${T}${R}${D}${M}`;
+  // 新的判定四字母：
+  // Time: L (长线) / Q (短线)
+  // Risk: A (激进) / G (稳健)
+  // Disruption: D (干预/破坏) / C (顺应)
+  // Motivation: V (利益 Value) / R (社交 Relationship)
+  const T = longShortScore >= 0 ? "L" : "Q";
+  const percentL = Math.min(100, Math.max(0, 50 + longShortScore / 2));
+  
+  const R = riskConservScore >= 50 ? "A" : "G";
+  const percentA = riskConservScore; // riskConservScore 本身就是激进程度 0~100
+  
+  const D_axis = disruptFollowScore >= 50 ? "D" : "C";
+  const percentD = disruptFollowScore;
+  
+  const M = profitSocialScore >= 0 ? "V" : "R";
+  const percentV = Math.min(100, Math.max(0, 50 + profitSocialScore / 2));
+  
+  const code = `${T}${R}${D_axis}${M}`;
 
   return {
-    axes: { T, R, D, M },
+    axes: { 
+      Time: { code: T, percent: T === "L" ? percentL : 100 - percentL }, 
+      Risk: { code: R, percent: R === "A" ? percentA : 100 - percentA }, 
+      Disruption: { code: D_axis, percent: D_axis === "D" ? percentD : 100 - percentD }, 
+      Motivation: { code: M, percent: M === "V" ? percentV : 100 - percentV } 
+    },
     code,
-    label: MBTI_LABELS[code] || code,
+    label: DECISION_GENE_CONFIG[code]?.name || code,
+    desc: DECISION_GENE_CONFIG[code]?.desc || "未知决策基因",
     axisScores: { longShort: longShortScore, riskConserv: riskConservScore, disruptFollow: disruptFollowScore, profitSocial: profitSocialScore },
   };
 }
@@ -191,6 +191,7 @@ export function analyzeGamePersona(game: GameState) {
         scores,
         personaScores: { compass: sCompass, gardener: sGardener, trigger: sTrigger, alchemist: sAlchemist },
         primaryPersona: persona,
+        primaryPersonaDesc: FATE_SKETCH_CONFIG[persona]?.desc || "暂无描述",
         mbtiPersona,
     };
     

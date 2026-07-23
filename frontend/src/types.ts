@@ -67,18 +67,6 @@ export interface LongTermProgress {
   reward?: number;
 }
 
-export interface MbtiPersona {
-  axes: { T: string; R: string; D: string; M: string };
-  code: string;
-  label: string;
-  axisScores: {
-    longShort: number;
-    riskConserv: number;
-    disruptFollow: number;
-    profitSocial: number;
-  };
-}
-
 export interface PersonaAnalysis {
   scores: {
     longTermism: number;    
@@ -94,7 +82,19 @@ export interface PersonaAnalysis {
     alchemist: number;
   };
   primaryPersona: string;   // 命运素描
-  mbtiPersona: MbtiPersona; // 决策基因
+  primaryPersonaDesc: string;
+  mbtiPersona?: {
+    code: string; // e.g., "LADV"
+    label: string; // e.g., "长线激进·创业者"
+    desc: string;
+    axes: {
+      Time: { code: string; percent: number }; // code 'L' or 'Q'
+      Risk: { code: string; percent: number }; // code 'A' or 'G'
+      Disruption: { code: string; percent: number }; // code 'D' or 'C'
+      Motivation: { code: string; percent: number }; // code 'V' or 'R'
+    };
+    axisScores: { longShort: number; riskConserv: number; disruptFollow: number; profitSocial: number };
+  };
 }
 
 export interface Player {
@@ -123,7 +123,8 @@ export interface Player {
   socialRank: 'A' | 'B' | 'C' | 'D' | 'E' | null; 
   
   analysisResult?: PersonaAnalysis; 
-  personaVote?: "fate" | "gene" | "neither";
+  personaVote?: "fate" | "gene" | "neither" | null;
+  longTermStatus?: Record<number, 'investing' | 'abandoned'>;
 }
 
 export interface EventOption {

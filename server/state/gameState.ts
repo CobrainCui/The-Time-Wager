@@ -62,9 +62,15 @@ export interface ActiveBuff {
 
 // ✅ 人格分析详细数据
 export interface MbtiPersona {
-  axes: { T: string; R: string; D: string; M: string }; // 每轴字母，如 {T:"L", R:"C", D:"F", M:"P"}
-  code: string;   // 四字母代码，如 "LCFP"
-  label: string;  // 中文描述名，如 "稳健顺势·精算师"
+  code: string; // e.g., "LADV"
+  label: string; // e.g., "长线激进·创业者"
+  desc: string;
+  axes: {
+    Time: { code: string; percent: number }; // code 'L' or 'Q'
+    Risk: { code: string; percent: number }; // code 'A' or 'G'
+    Disruption: { code: string; percent: number }; // code 'D' or 'C'
+    Motivation: { code: string; percent: number }; // code 'V' or 'R'
+  };
   axisScores: {
     longShort: number;      // 正=偏长期，负=偏短期
     riskConserv: number;    // 0~100，>50=激进
@@ -88,6 +94,7 @@ export interface PersonaAnalysis {
     alchemist: number;
   };
   primaryPersona: string;  // 命运素描
+  primaryPersonaDesc: string;
   mbtiPersona: MbtiPersona; // 决策基因
 }
 
@@ -128,7 +135,8 @@ export interface Player {
   socialRank: 'A' | 'B' | 'C' | 'D' | 'E' | null;
   
   analysisResult?: PersonaAnalysis;
-  personaVote?: "fate" | "gene" | "neither"; // 命运素描 / 决策基因 / 都不准
+  personaVote?: "fate" | "gene" | "neither" | null;
+  longTermStatus?: Record<number, 'investing' | 'abandoned'>;
 
   // === AI 对弈相关 ===
   isAI?: boolean;

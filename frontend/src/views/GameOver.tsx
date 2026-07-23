@@ -1,13 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
 import {
   Chart as ChartJS, RadialLinearScale, PointElement, LineElement,
-  Filler, Tooltip, Legend, CategoryScale, LinearScale
+  Filler, Tooltip, Legend, CategoryScale, LinearScale, Title
 } from "chart.js";
 import { Radar, Line } from "react-chartjs-2";
+import { generateCollectionManual } from "../utils/pdfGenerator";
 
-ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend, CategoryScale, LinearScale);
+ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend, CategoryScale, LinearScale, Title);
 
 interface Props { game: GameState; me?: Player; }
 
@@ -17,16 +18,24 @@ const PERSONA_COLORS: Record<string, string> = {
 };
 
 // 四个轴的中文说明
-const AXIS_LABELS: Record<string, { pos: string; neg: string; desc: string }> = {
-  T: { pos: "长期 L", neg: "短期 S", desc: "时间偏好" },
-  R: { pos: "激进 R", neg: "保守 C", desc: "风险偏好" },
-  D: { pos: "破坏 D", neg: "顺应 F", desc: "规则态度" },
-  M: { pos: "利益 P", neg: "社交 E", desc: "核心动机" },
+const AXIS_LABELS: Record<string, { pos: string; neg: string; desc: string; posCode: string; negCode: string }> = {
+  Time: { pos: "长线 L", neg: "速决 Q", desc: "时间偏好", posCode: "L", negCode: "Q" },
+  Risk: { pos: "进取 A", neg: "防御 G", desc: "风险偏好", posCode: "A", negCode: "G" },
+  Disruption: { pos: "破局 D", neg: "守成 C", desc: "规则态度", posCode: "D", negCode: "C" },
+  Motivation: { pos: "求效 V", neg: "共情 R", desc: "核心动机", posCode: "V", negCode: "R" },
 };
 
 export const GameOver: React.FC<Props> = ({ game, me }) => {
   const [showDetails, setShowDetails] = useState(false);
   const [voted, setVoted] = useState<"fate" | "gene" | "neither" | null>(me?.personaVote ?? null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  useEffect(() => {
+    socket.on("personaVoteResult", (data: { vote: "fate" | "gene" | "neither" }) => {
+      setVoted(data.vote);
+    });
+    return () => { socket.off("personaVoteResult"); };
+  }, []);
 
   const sortedPlayers = [...game.players].sort((a, b) => b.wealth - a.wealth);
   const totalWealth = game.players.reduce((s, p) => s + p.wealth, 0);
@@ -277,6 +286,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
               {/* 命运素描卡 */}
               <div
+                id="radar-chart-container"
                 style={{
                   background: "var(--color-bg-card)",
                   border: `1px solid ${personaColor}44`,
@@ -294,6 +304,11 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                 <div style={{ fontSize: "1.4rem", fontWeight: 900, color: personaColor, lineHeight: 1.2 }}>
                   {myResult.primaryPersona}
                 </div>
+                {myResult.primaryPersonaDesc && (
+                  <div style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)", lineHeight: 1.4 }}>
+                    {myResult.primaryPersonaDesc}
+                  </div>
+                )}
                 <div style={{ height: "160px" }}>
                   <Radar
                     data={radarData}
@@ -318,7 +333,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
               {/* 决策基因卡 */}
               {myResult.mbtiPersona && (() => {
                 const mbti = myResult.mbtiPersona;
-                const axisEntries = Object.entries(mbti.axes) as [string, string][];
+                const axisEntries = Object.entries(mbti.axes) as [string, { code: string; percent: number }][];
                 return (
                   <div
                     style={{
@@ -343,20 +358,29 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                         {mbti.label}
                       </div>
                     </div>
+                    {mbti.desc && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", lineHeight: 1.4, marginBottom: "0.25rem" }}>
+                        {mbti.desc}
+                      </div>
+                    )}
                     {/* 四轴展示 */}
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-                      {axisEntries.map(([axis, letter]) => {
-                        const info = AXIS_LABELS[axis];
-                        const isPosActive = ["L", "R", "D", "P"].includes(letter);
+                      {axisEntries.map(([axisKey, axisData]) => {
+                        const info = AXIS_LABELS[axisKey];
+                        if (!info) return null;
+                        const isPosActive = axisData.code === info.posCode;
+                        const posPercent = isPosActive ? axisData.percent : 100 - axisData.percent;
+                        const negPercent = 100 - posPercent;
+                        
                         return (
-                          <div key={axis} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <div key={axisKey} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                             <div style={{ fontSize: "0.65rem", color: "#6b7280", width: "3rem", flexShrink: 0 }}>{info.desc}</div>
                             <div style={{ flex: 1, display: "flex", borderRadius: "9999px", overflow: "hidden", height: "18px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.6rem", fontWeight: 700, background: isPosActive ? "rgba(16,185,129,0.3)" : "transparent", color: isPosActive ? "#34d399" : "#374151", transition: "all 0.3s" }}>
-                                {info.pos}
+                              <div style={{ width: `${posPercent}%`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.55rem", fontWeight: 700, background: isPosActive ? "rgba(16,185,129,0.3)" : "transparent", color: isPosActive ? "#34d399" : "#374151", transition: "all 0.3s" }}>
+                                {isPosActive ? `${info.pos} ${Math.round(posPercent)}%` : ""}
                               </div>
-                              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.6rem", fontWeight: 700, background: !isPosActive ? "rgba(239,68,68,0.25)" : "transparent", color: !isPosActive ? "#f87171" : "#374151", transition: "all 0.3s" }}>
-                                {info.neg}
+                              <div style={{ width: `${negPercent}%`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.55rem", fontWeight: 700, background: !isPosActive ? "rgba(239,68,68,0.25)" : "transparent", color: !isPosActive ? "#f87171" : "#374151", transition: "all 0.3s" }}>
+                                {!isPosActive ? `${Math.round(negPercent)}% ${info.neg}` : ""}
                               </div>
                             </div>
                           </div>
@@ -419,6 +443,42 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
           <button onClick={() => setShowDetails(true)} className="btn btn-ghost">
             📊 查看评分细则
           </button>
+          
+          {myResult && (
+            <button 
+              onClick={async () => {
+                setIsGeneratingPdf(true);
+                try {
+                  const unfinished = Object.values(me.longTerm || {})
+                    .filter(p => p.status === 'investing')
+                    .map(p => ({
+                      name: game.activeProjects.find(ap => ap.id === p.projectId)?.name || `未命名项目`,
+                      progress: p.progress
+                    }));
+                    
+                  await generateCollectionManual({
+                    playerName: me.name,
+                    persona: myResult.primaryPersona,
+                    totalEnergy: me.energy,
+                    remainingEnergy: me.energy,
+                    unfinishedProjects: unfinished,
+                    chartElementId: 'radar-chart-container'
+                  });
+                } finally {
+                  setIsGeneratingPdf(false);
+                }
+              }}
+              className="btn btn-primary"
+              disabled={isGeneratingPdf}
+              style={{
+                background: "linear-gradient(135deg, #f59e0b, #d97706)",
+                border: "none",
+                color: "white"
+              }}
+            >
+              {isGeneratingPdf ? "生成中..." : "📄 导出《人生决策手册》"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -463,10 +523,10 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                   <div style={{ fontSize: "0.85rem", color: "#6ee7b7", marginTop: "0.25rem" }}>{myResult.mbtiPersona.label}</div>
                 </div>
                 {[
-                  { label: "⏰ 时间偏好 (T)", value: myResult.mbtiPersona.axisScores.longShort, desc: "正值→长期主义(L)，负值→短期主义(S)", letter: myResult.mbtiPersona.axes.T },
-                  { label: "🎲 风险偏好 (R)", value: myResult.mbtiPersona.axisScores.riskConserv, desc: ">50→激进冒险(R)，<50→保守稳健(C)", letter: myResult.mbtiPersona.axes.R },
-                  { label: "🛠️ 规则态度 (D)", value: myResult.mbtiPersona.axisScores.disruptFollow, desc: ">50→规则破坏(D)，<50→规则顺应(F)", letter: myResult.mbtiPersona.axes.D },
-                  { label: "💡 核心动机 (M)", value: myResult.mbtiPersona.axisScores.profitSocial, desc: "正值→利益极客(P)，负值→社交共情(E)", letter: myResult.mbtiPersona.axes.M },
+                  { label: "⏰ 时间偏好", desc: "长线(L) 或 速决(Q)", letter: myResult.mbtiPersona.axes.Time.code, percent: myResult.mbtiPersona.axes.Time.percent },
+                  { label: "🎲 风险偏好", desc: "进取(A) 或 防御(G)", letter: myResult.mbtiPersona.axes.Risk.code, percent: myResult.mbtiPersona.axes.Risk.percent },
+                  { label: "🛠️ 规则态度", desc: "破局(D) 或 守成(C)", letter: myResult.mbtiPersona.axes.Disruption.code, percent: myResult.mbtiPersona.axes.Disruption.percent },
+                  { label: "💡 核心动机", desc: "求效(V) 或 共情(R)", letter: myResult.mbtiPersona.axes.Motivation.code, percent: myResult.mbtiPersona.axes.Motivation.percent },
                 ].map((item) => (
                   <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.75rem", background: "rgba(255,255,255,0.02)", borderRadius: "0.625rem", border: "1px solid var(--color-border)", marginBottom: "0.5rem" }}>
                     <div>
@@ -475,7 +535,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.2rem" }}>
                       <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#34d399", fontSize: "0.95rem" }}>{item.letter}</span>
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "#6b7280" }}>{item.value.toFixed(1)}</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "#6b7280" }}>{Math.round(item.percent)}%</span>
                     </div>
                   </div>
                 ))}

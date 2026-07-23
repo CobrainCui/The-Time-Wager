@@ -355,7 +355,15 @@ const ProjectCard: React.FC<{
               max={myInvest + remainingEnergy}
               value={myInvest}
               disabled={isDisabled}
-              onChange={(e) => onChange(project.id, parseInt(e.target.value))}
+              onChange={(e) => {
+                let val = parseInt(e.target.value) || 0;
+                if (project.type === 'long' && myLongStatus?.status === 'active') {
+                  if (val === 1 || val === 2) {
+                    val = val > myInvest ? 3 : 0;
+                  }
+                }
+                onChange(project.id, val);
+              }}
               style={{
                 flex: 1,
                 height: "6px",
@@ -370,7 +378,11 @@ const ProjectCard: React.FC<{
               max={myInvest + remainingEnergy}
               value={myInvest}
               disabled={isDisabled}
-              onChange={(e) => onChange(project.id, parseInt(e.target.value) || 0)}
+              onChange={(e) => {
+                let val = parseInt(e.target.value) || 0;
+                // Don't snap on number input so user can type, handleSubmit will validate
+                onChange(project.id, val);
+              }}
               style={{
                 width: "3.5rem",
                 background: "rgba(0,0,0,0.3)",
@@ -407,9 +419,34 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
 
   const handleSubmit = () => {
     if (remainingEnergy < 0) { alert("精力分配超限！"); return; }
-    if (window.confirm("确认提交投资方案吗？提交后本轮将无法修改。")) {
-      socket.emit("submitInvestment", { investment: investments });
+
+    const abandonWarnings: string[] = [];
+    for (const proj of game.activeProjects) {
+      if (proj.type === 'long') {
+        const myLongStatus = me.longTerm[proj.id];
+        if (myLongStatus?.status === 'active') {
+           const val = investments[proj.id] || 0;
+           if (val > 0 && val < 3) {
+             alert(`长期项目「${proj.name}」追加投资必须至少 3 格，或者设为 0 彻底放弃。`);
+             return;
+           } else if (val === 0) {
+             abandonWarnings.push(`「${proj.name}」`);
+           }
+        }
+      }
     }
+
+    if (abandonWarnings.length > 0) {
+      if (!window.confirm(`确认提交？注意：你对 ${abandonWarnings.join(", ")} 投入为 0，这将导致你永久退出该项目的分红排名！`)) {
+        return;
+      }
+    } else {
+      if (!window.confirm("确认提交投资方案吗？提交后本轮将无法修改。")) {
+        return;
+      }
+    }
+
+    socket.emit("submitInvestment", { investment: investments });
   };
 
   const handleCoffee = () => {
