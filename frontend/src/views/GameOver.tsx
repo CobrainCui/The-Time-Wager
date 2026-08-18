@@ -450,10 +450,10 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                 setIsGeneratingPdf(true);
                 try {
                   const unfinished = Object.values(me.longTerm || {})
-                    .filter(p => p.status === 'investing')
+                    .filter(p => p.status === 'active')
                     .map(p => ({
                       name: game.activeProjects.find(ap => ap.id === p.projectId)?.name || `未命名项目`,
-                      progress: p.progress
+                      progress: p.totalInvested
                     }));
                     
                   await generateCollectionManual({

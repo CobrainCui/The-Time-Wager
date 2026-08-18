@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+    <style>
+[data-color-mode*='light'], [data-color-mode*='light'] body, .markdown-style[theme*='light'] { --color-prettylights-syntax-comment: #6e7781; --color-prettylights-syntax-constant: #0550ae; --color-prettylights-syntax-entity: #8250df; --color-prettylights-syntax-storage-modifier-import: #24292f; --color-prettylights-syntax-entity-tag: #116329; --color-prettylights-syntax-keyword: #cf222e; --color-prettylights-syntax-string: #0a3069; --color-prettylights-syntax-variable: #953800; --color-prettylights-syntax-brackethighlighter-unmatched: #82071e; --color-prettylights-syntax-invalid-illegal-text: #f6f8fa; --color-prettylights-syntax-invalid-illegal-bg: #82071e; --color-prettylights-syntax-carriage-return-text: #f6f8fa; --color-prettylights-syntax-carriage-return-bg: #cf222e; --color-prettylights-syntax-string-regexp: #116329; --color-prettylights-syntax-markup-list: #3b2300; --color-prettylights-syntax-markup-heading: #0550ae; --color-prettylights-syntax-markup-italic: #24292f; --color-prettylights-syntax-markup-bold: #24292f; --color-prettylights-syntax-markup-deleted-text: #82071e; --color-prettylights-syntax-markup-deleted-bg: #FFEBE9; --color-prettylights-syntax-markup-inserted-text: #116329; --color-prettylights-syntax-markup-inserted-bg: #dafbe1; --color-prettylights-syntax-markup-changed-text: #953800; --color-prettylights-syntax-markup-changed-bg: #ffd8b5; --color-prettylights-syntax-markup-ignored-text: #eaeef2; --color-prettylights-syntax-markup-ignored-bg: #0550ae; --color-prettylights-syntax-meta-diff-range: #8250df; --color-prettylights-syntax-brackethighlighter-angle: #57606a; --color-prettylights-syntax-sublimelinter-gutter-mark: #8c959f; --color-prettylights-syntax-constant-other-reference-link: #0a3069; --color-fg-default: #24292f; --color-fg-muted: #57606a; --color-fg-subtle: #6e7781; --color-canvas-default: #ffffff; --color-canvas-subtle: #f6f8fa; --color-border-default: #d0d7de; --color-border-muted: hsla(210,18%,87%,1); --color-neutral-muted: rgba(175,184,193,0.2); --color-accent-fg: #0969da; --color-accent-emphasis: #0969da; --color-attention-subtle: #fff8c5; --color-danger-fg: #cf222e; }
+[data-color-mode*='dark'], [data-color-mode*='dark'] body, .markdown-style[theme*='dark'] { --color-prettylights-syntax-comment: #8b949e; --color-prettylights-syntax-constant: #79c0ff; --color-prettylights-syntax-entity: #d2a8ff; --color-prettylights-syntax-storage-modifier-import: #c9d1d9; --color-prettylights-syntax-entity-tag: #7ee787; --color-prettylights-syntax-keyword: #ff7b72; --color-prettylights-syntax-string: #a5d6ff; --color-prettylights-syntax-variable: #ffa657; --color-prettylights-syntax-brackethighlighter-unmatched: #f85149; --color-prettylights-syntax-invalid-illegal-text: #f0f6fc; --color-prettylights-syntax-invalid-illegal-bg: #8e1519; --color-prettylights-syntax-carriage-return-text: #f0f6fc; --color-prettylights-syntax-carriage-return-bg: #b62324; --color-prettylights-syntax-string-regexp: #7ee787; --color-prettylights-syntax-markup-list: #f2cc60; --color-prettylights-syntax-markup-heading: #1f6feb; --color-prettylights-syntax-markup-italic: #c9d1d9; --color-prettylights-syntax-markup-bold: #c9d1d9; --color-prettylights-syntax-markup-deleted-text: #ffdcd7; --color-prettylights-syntax-markup-deleted-bg: #67060c; --color-prettylights-syntax-markup-inserted-text: #aff5b4; --color-prettylights-syntax-markup-inserted-bg: #033a16; --color-prettylights-syntax-markup-changed-text: #ffdfb6; --color-prettylights-syntax-markup-changed-bg: #5a1e02; --color-prettylights-syntax-markup-ignored-text: #c9d1d9; --color-prettylights-syntax-markup-ignored-bg: #1158c7; --color-prettylights-syntax-meta-diff-range: #d2a8ff; --color-prettylights-syntax-brackethighlighter-angle: #8b949e; --color-prettylights-syntax-sublimelinter-gutter-mark: #484f58; --color-prettylights-syntax-constant-other-reference-link: #a5d6ff; --color-fg-default: #c9d1d9; --color-fg-muted: #8b949e; --color-fg-subtle: #484f58; --color-canvas-default: #0d1117; --color-canvas-subtle: #161b22; --color-border-default: #30363d; --color-border-muted: #21262d; --color-neutral-muted: rgba(110,118,129,0.4); --color-accent-fg: #58a6ff; --color-accent-emphasis: #1f6feb; --color-attention-subtle: rgba(187,128,9,0.15); --color-danger-fg: #f85149; }
+.markdown-style { display: block; -webkit-text-size-adjust: 100%; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"; font-size: 16px; line-height: 1.5; word-wrap: break-word; color: var(--color-fg-default); background-color: var(--color-canvas-default); } .markdown-style details, .markdown-style figcaption, .markdown-style figure { display: block; } .markdown-style summary { display: list-item; } .markdown-style [hidden] { display: none !important; } .markdown-style a { background-color: transparent; color: var(--color-accent-fg); text-decoration: none; } .markdown-style a:active, .markdown-style a:hover { outline-width: 0; } .markdown-style abbr[title] { border-bottom: none; text-decoration: underline dotted; } .markdown-style b, .markdown-style strong { font-weight: 600; } .markdown-style dfn { font-style: italic; } .markdown-style h1 { margin: .67em 0; font-weight: 600; padding-bottom: .3em; font-size: 2em; border-bottom: 1px solid var(--color-border-muted); } .markdown-style mark { background-color: var(--color-attention-subtle); color: var(--color-text-primary); } .markdown-style small { font-size: 90%; } .markdown-style sub, .markdown-style sup { font-size: 75%; line-height: 0; position: relative; vertical-align: baseline; } .markdown-style sub { bottom: -0.25em; } .markdown-style sup { top: -0.5em; } .markdown-style img { border-style: none; max-width: 100%; box-sizing: content-box; background-color: var(--color-canvas-default); } .markdown-style code, .markdown-style kbd, .markdown-style pre, .markdown-style samp { font-family: monospace,monospace; font-size: 1em; } .markdown-style figure { margin: 1em 40px; } .markdown-style hr { box-sizing: content-box; overflow: hidden; background: transparent; border-bottom: 1px solid var(--color-border-muted); height: .25em; padding: 0; margin: 24px 0; background-color: var(--color-border-default); border: 0; } .markdown-style input { font: inherit; margin: 0; overflow: visible; font-family: inherit; font-size: inherit; line-height: inherit; } .markdown-style [type=button], .markdown-style [type=reset], .markdown-style [type=submit] { -webkit-appearance: button; } .markdown-style [type=button]::-moz-focus-inner, .markdown-style [type=reset]::-moz-focus-inner, .markdown-style [type=submit]::-moz-focus-inner { border-style: none; padding: 0; } .markdown-style [type=button]:-moz-focusring, .markdown-style [type=reset]:-moz-focusring, .markdown-style [type=submit]:-moz-focusring { outline: 1px dotted ButtonText; } .markdown-style [type=checkbox], .markdown-style [type=radio] { box-sizing: border-box; padding: 0; } .markdown-style [type=number]::-webkit-inner-spin-button, .markdown-style [type=number]::-webkit-outer-spin-button { height: auto; } .markdown-style [type=search] { -webkit-appearance: textfield; outline-offset: -2px; } .markdown-style [type=search]::-webkit-search-cancel-button, .markdown-style [type=search]::-webkit-search-decoration { -webkit-appearance: none; } .markdown-style ::-webkit-input-placeholder { color: inherit; opacity: .54; } .markdown-style ::-webkit-file-upload-button { -webkit-appearance: button; font: inherit; } .markdown-style a:hover { text-decoration: underline; } .markdown-style hr::before { display: table; content: ""; } .markdown-style hr::after { display: table; clear: both; content: ""; } .markdown-style table { border-spacing: 0; border-collapse: collapse; display: block; width: max-content; max-width: 100%; overflow: auto; } .markdown-style td, .markdown-style th { padding: 0; } .markdown-style details summary { cursor: pointer; } .markdown-style details:not([open])>*:not(summary) { display: none !important; } .markdown-style kbd { display: inline-block; padding: 3px 5px; font: 11px ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace,Helvetica,Arial,sans-serif; line-height: 10px; color: var(--color-fg-default); vertical-align: middle; background-color: var(--color-canvas-subtle); border: solid 1px var(--color-neutral-muted); border-bottom-color: var(--color-neutral-muted); border-radius: 6px; box-shadow: inset 0 -1px 0 var(--color-neutral-muted); } .markdown-style h1, .markdown-style h2, .markdown-style h3, .markdown-style h4, .markdown-style h5, .markdown-style h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; } .markdown-style h2 { font-weight: 600; padding-bottom: .3em; font-size: 1.5em; border-bottom: 1px solid var(--color-border-muted); } .markdown-style h3 { font-weight: 600; font-size: 1.25em; } .markdown-style h4 { font-weight: 600; font-size: 1em; } .markdown-style h5 { font-weight: 600; font-size: .875em; } .markdown-style h6 { font-weight: 600; font-size: .85em; color: var(--color-fg-muted); } .markdown-style p { margin-top: 0; margin-bottom: 10px; } .markdown-style blockquote { margin: 0; padding: 0 1em; color: var(--color-fg-muted); border-left: .25em solid var(--color-border-default); } .markdown-style ul, .markdown-style ol { margin-top: 0; margin-bottom: 0; padding-left: 2em; } .markdown-style ol ol, .markdown-style ul ol { list-style-type: lower-roman; } .markdown-style ul ul ol, .markdown-style ul ol ol, .markdown-style ol ul ol, .markdown-style ol ol ol { list-style-type: lower-alpha; } .markdown-style dd { margin-left: 0; } .markdown-style tt, .markdown-style code { font-family: ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace,Helvetica,Arial,sans-serif; font-size: 12px; } .markdown-style pre { margin-top: 0; margin-bottom: 0; font-family: ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace,Helvetica,Arial,sans-serif; font-size: 12px; word-wrap: normal; } .markdown-style .octicon { display: inline-block; overflow: visible !important; vertical-align: text-bottom; fill: currentColor; } .markdown-style ::placeholder { color: var(--color-fg-subtle); opacity: 1; } .markdown-style input::-webkit-outer-spin-button, .markdown-style input::-webkit-inner-spin-button { margin: 0; -webkit-appearance: none; appearance: none; }
+.markdown-style .token.comment, .markdown-style .token.prolog, .markdown-style .token.doctype, .markdown-style .token.cdata { color: var(--color-prettylights-syntax-comment); } .markdown-style .token.namespace { opacity: 0.7; } .markdown-style .token.tag, .markdown-style .token.selector, .markdown-style .token.constant, .markdown-style .token.symbol, .markdown-style .token.deleted { color: var(--color-prettylights-syntax-entity-tag); } .markdown-style .token.maybe-class-name { color: var(--color-prettylights-syntax-variable); } .markdown-style .token.property-access, .markdown-style .token.operator, .markdown-style .token.boolean, .markdown-style .token.number, .markdown-style .token.selector .markdown-style .token.class, .markdown-style .token.attr-name, .markdown-style .token.string, .markdown-style .token.char, .markdown-style .token.builtin { color: var(--color-prettylights-syntax-constant); } .markdown-style .token.deleted { color: var(--color-prettylights-syntax-markup-deleted-text); } .markdown-style .token.property { color: var(--color-prettylights-syntax-constant); } .markdown-style .token.punctuation { color: var(--color-prettylights-syntax-markup-bold); } .markdown-style .token.function { color: var(--color-prettylights-syntax-entity); } .markdown-style .code-line .token.deleted { background-color: var(--color-prettylights-syntax-markup-deleted-bg); } .markdown-style .token.inserted { color: var(--color-prettylights-syntax-markup-inserted-text); } .markdown-style .code-line .token.inserted { background-color: var(--color-prettylights-syntax-markup-inserted-bg); } .markdown-style .token.variable { color: var(--color-prettylights-syntax-constant); } .markdown-style .token.entity, .markdown-style .token.url, .language-css .markdown-style .token.string, .style .markdown-style .token.string { color: var(--color-prettylights-syntax-string); } .markdown-style .token.color, .markdown-style .token.atrule, .markdown-style .token.attr-value, .markdown-style .token.function, .markdown-style .token.class-name { color: var(--color-prettylights-syntax-string); } .markdown-style .token.rule, .markdown-style .token.regex, .markdown-style .token.important, .markdown-style .token.keyword { color: var(--color-prettylights-syntax-keyword); } .markdown-style .token.coord { color: var(--color-prettylights-syntax-meta-diff-range); } .markdown-style .token.important, .markdown-style .token.bold { font-weight: bold; } .markdown-style .token.italic { font-style: italic; } .markdown-style .token.entity { cursor: help; }
+.markdown-style [data-catalyst] { display: block; } .markdown-style g-emoji { font-family: "Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol"; font-size: 1em; font-style: normal !important; font-weight: 400; line-height: 1; vertical-align: -0.075em; } .markdown-style g-emoji img { width: 1em; height: 1em; } .markdown-style::before { display: table; content: ""; } .markdown-style::after { display: table; clear: both; content: ""; } .markdown-style>*:first-child { margin-top: 0 !important; } .markdown-style>*:last-child { margin-bottom: 0 !important; } .markdown-style a:not([href]) { color: inherit; text-decoration: none; } .markdown-style .absent { color: var(--color-danger-fg); } .markdown-style a.anchor { float: left; padding-right: 4px; margin-left: -20px; line-height: 1; } .markdown-style a.anchor:focus { outline: none; } .markdown-style p, .markdown-style blockquote, .markdown-style ul, .markdown-style ol, .markdown-style dl, .markdown-style table, .markdown-style pre, .markdown-style details { margin-top: 0; margin-bottom: 16px; } .markdown-style blockquote>:first-child { margin-top: 0; } .markdown-style blockquote>:last-child { margin-bottom: 0; } .markdown-style sup>a::before { content: "["; } .markdown-style sup>a::after { content: "]"; }
+.markdown-style .octicon-video { border: 1px solid #d0d7de !important; border-radius: 6px !important; display: block; } .markdown-style .octicon-video summary { border-bottom: 1px solid #d0d7de !important; padding: 8px 16px !important; cursor: pointer; } .markdown-style .octicon-video > video { display: block !important; max-width: 100% !important; padding: 2px; box-sizing: border-box; border-bottom-right-radius: 6px !important; border-bottom-left-radius: 6px !important; } .markdown-style details.octicon-video:not([open])>*:not(summary) { display: none !important; } .markdown-style details.octicon-video:not([open]) > summary { border-bottom: 0 !important; } .markdown-style h1 .octicon-link, .markdown-style h2 .octicon-link, .markdown-style h3 .octicon-link, .markdown-style h4 .octicon-link, .markdown-style h5 .octicon-link, .markdown-style h6 .octicon-link { color: var(--color-fg-default); vertical-align: middle; visibility: hidden; } .markdown-style h1:hover .anchor, .markdown-style h2:hover .anchor, .markdown-style h3:hover .anchor, .markdown-style h4:hover .anchor, .markdown-style h5:hover .anchor, .markdown-style h6:hover .anchor { text-decoration: none; } .markdown-style h1:hover .anchor .octicon-link, .markdown-style h2:hover .anchor .octicon-link, .markdown-style h3:hover .anchor .octicon-link, .markdown-style h4:hover .anchor .octicon-link, .markdown-style h5:hover .anchor .octicon-link, .markdown-style h6:hover .anchor .octicon-link { visibility: visible; } .markdown-style h1 tt, .markdown-style h1 code, .markdown-style h2 tt, .markdown-style h2 code, .markdown-style h3 tt, .markdown-style h3 code, .markdown-style h4 tt, .markdown-style h4 code, .markdown-style h5 tt, .markdown-style h5 code, .markdown-style h6 tt, .markdown-style h6 code { padding: 0 .2em; font-size: inherit; } .markdown-style ul.no-list, .markdown-style ol.no-list { padding: 0; list-style-type: none; } .markdown-style ol[type="1"] { list-style-type: decimal; } .markdown-style ol[type=a] { list-style-type: lower-alpha; } .markdown-style ol[type=i] { list-style-type: lower-roman; } .markdown-style div>ol:not([type]) { list-style-type: decimal; } .markdown-style ul ul, .markdown-style ul ol, .markdown-style ol ol, .markdown-style ol ul { margin-top: 0; margin-bottom: 0; } .markdown-style li>p { margin-top: 16px; } .markdown-style li+li { margin-top: .25em; } .markdown-style dl { padding: 0; } .markdown-style dl dt { padding: 0; margin-top: 16px; font-size: 1em; font-style: italic; font-weight: 600; } .markdown-style dl dd { padding: 0 16px; margin-bottom: 16px; } .markdown-style table th { font-weight: 600; } .markdown-style table th, .markdown-style table td { padding: 6px 13px; border: 1px solid var(--color-border-default); } .markdown-style table tr { background-color: var(--color-canvas-default); border-top: 1px solid var(--color-border-muted); } .markdown-style table tr:nth-child(2n) { background-color: var(--color-canvas-subtle); } .markdown-style table img { background-color: transparent; vertical-align: middle; } .markdown-style img[align=right] { padding-left: 20px; } .markdown-style img[align=left] { padding-right: 20px; } .markdown-style .emoji { max-width: none; vertical-align: text-top; background-color: transparent; } .markdown-style span.frame { display: block; overflow: hidden; } .markdown-style span.frame>span { display: block; float: left; width: auto; padding: 7px; margin: 13px 0 0; overflow: hidden; border: 1px solid var(--color-border-default); } .markdown-style span.frame span img { display: block; float: left; } .markdown-style span.frame span span { display: block; padding: 5px 0 0; clear: both; color: var(--color-fg-default); } .markdown-style span.align-center { display: block; overflow: hidden; clear: both; } .markdown-style span.align-center>span { display: block; margin: 13px auto 0; overflow: hidden; text-align: center; } .markdown-style span.align-center span img { margin: 0 auto; text-align: center; } .markdown-style span.align-right { display: block; overflow: hidden; clear: both; } .markdown-style span.align-right>span { display: block; margin: 13px 0 0; overflow: hidden; text-align: right; } .markdown-style span.align-right span img { margin: 0; text-align: right; } .markdown-style span.float-left { display: block; float: left; margin-right: 13px; overflow: hidden; } .markdown-style span.float-left span { margin: 13px 0 0; } .markdown-style span.float-right { display: block; float: right; margin-left: 13px; overflow: hidden; } .markdown-style span.float-right>span { display: block; margin: 13px auto 0; overflow: hidden; text-align: right; } .markdown-style code, .markdown-style tt { padding: .2em .4em; margin: 0; font-size: 85%; background-color: var(--color-neutral-muted); border-radius: 6px; } .markdown-style code br, .markdown-style tt br { display: none; } .markdown-style del code { text-decoration: inherit; } .markdown-style pre code { font-size: 100%; } .markdown-style pre>code { padding: 0; margin: 0; word-break: normal; white-space: pre; background: transparent; border: 0; } .markdown-style pre { position: relative; font-size: 85%; line-height: 1.45; background-color: var(--color-canvas-subtle); border-radius: 6px; } .markdown-style pre code, .markdown-style pre tt { display: inline; max-width: auto; padding: 0; margin: 0; overflow: visible; line-height: inherit; word-wrap: normal; background-color: transparent; border: 0; } .markdown-style pre > code { padding: 16px; overflow: auto; display: block; } .markdown-style .csv-data td, .markdown-style .csv-data th { padding: 5px; overflow: hidden; font-size: 12px; line-height: 1; text-align: left; white-space: nowrap; } .markdown-style .csv-data .blob-num { padding: 10px 8px 9px; text-align: right; background: var(--color-canvas-default); border: 0; } .markdown-style .csv-data tr { border-top: 0; } .markdown-style .csv-data th { font-weight: 600; background: var(--color-canvas-subtle); border-top: 0; } .markdown-style .footnotes { font-size: 12px; color: var(--color-fg-muted); border-top: 1px solid var(--color-border-default); } .markdown-style .footnotes ol { padding-left: 16px; } .markdown-style .footnotes li { position: relative; } .markdown-style .footnotes li:target::before { position: absolute; top: -8px; right: -8px; bottom: -8px; left: -24px; pointer-events: none; content: ""; border: 2px solid var(--color-accent-emphasis); border-radius: 6px; } .markdown-style .footnotes li:target { color: var(--color-fg-default); } .markdown-style .footnotes .data-footnote-backref g-emoji { font-family: monospace; } .markdown-style .task-list-item { list-style-type: none; } .markdown-style .task-list-item label { font-weight: 400; } .markdown-style .task-list-item.enabled label { cursor: pointer; } .markdown-style .task-list-item+.task-list-item { margin-top: 3px; } .markdown-style .task-list-item .handle { display: none; } .markdown-style .task-list-item-checkbox, .markdown-style input[type="checkbox"] { margin: 0 .2em .25em -1.6em; vertical-align: middle; } .markdown-style .contains-task-list:dir(rtl) .task-list-item-checkbox, .markdown-style .contains-task-list:dir(rtl) input[type="checkbox"] { margin: 0 -1.6em .25em .2em; } .markdown-style ::-webkit-calendar-picker-indicator { filter: invert(50%); }
+
+/** copy button style **/
+.markdown-style pre .copied {
+  display: flex;
+  position: absolute;
+  cursor: pointer;
+  color: #a5afbb;
+  top: 6px;
+  right: 6px;
+  border-radius: 5px;
+  background: #82828226;
+  padding: 6px;
+  font-size: 12px;
+  transition: all .3s;
+}
+.markdown-style pre .copied:not(.active) { visibility: hidden; }
+.markdown-style pre:hover .copied { visibility: visible; }
+.markdown-style pre:hover .copied:hover { background: #4caf50; color: #fff; }
+.markdown-style pre:hover .copied:active,
+.markdown-style pre .copied.active { background: #2e9b33; color: #fff; }
+.markdown-style pre .copied svg { position: relative; }
+.markdown-style pre .copied .octicon-copy { display: block; }
+.markdown-style pre .copied .octicon-check { display: none; }
+.markdown-style pre .active .octicon-copy { display: none; }
+.markdown-style pre .active .octicon-check { display: block; }
+
+/** octicon style **/
+.markdown-style h1:hover a.anchor .octicon-link:before,
+.markdown-style h2:hover a.anchor .octicon-link:before,
+.markdown-style h3:hover a.anchor .octicon-link:before,
+.markdown-style h4:hover a.anchor .octicon-link:before,
+.markdown-style h5:hover a.anchor .octicon-link:before,
+.markdown-style h6:hover a.anchor .octicon-link:before {
+  width: 16px;
+  height: 16px;
+  content: ' ';
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' version='1.1' aria-hidden='true'><path fill-rule='evenodd' d='M7.775 3.275a.75.75 0 001.06 1.06l1.25-1.25a2 2 0 112.83 2.83l-2.5 2.5a2 2 0 01-2.83 0 .75.75 0 00-1.06 1.06 3.5 3.5 0 004.95 0l2.5-2.5a3.5 3.5 0 00-4.95-4.95l-1.25 1.25zm-4.69 9.64a2 2 0 010-2.83l2.5-2.5a2 2 0 012.83 0 .75.75 0 001.06-1.06 3.5 3.5 0 00-4.95 0l-2.5 2.5a3.5 3.5 0 004.95 4.95l1.25-1.25a.75.75 0 00-1.06-1.06l-1.25 1.25a2 2 0 01-2.83 0z'></path></svg>");
+  mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' version='1.1' aria-hidden='true'><path fill-rule='evenodd' d='M7.775 3.275a.75.75 0 001.06 1.06l1.25-1.25a2 2 0 112.83 2.83l-2.5 2.5a2 2 0 01-2.83 0 .75.75 0 00-1.06 1.06 3.5 3.5 0 004.95 0l2.5-2.5a3.5 3.5 0 00-4.95-4.95l-1.25 1.25zm-4.69 9.64a2 2 0 010-2.83l2.5-2.5a2 2 0 012.83 0 .75.75 0 001.06-1.06 3.5 3.5 0 00-4.95 0l-2.5 2.5a3.5 3.5 0 004.95 4.95l1.25-1.25a.75.75 0 00-1.06-1.06l-1.25 1.25a2 2 0 01-2.83 0z'></path></svg>");
+}
+
+.markdown-style ::-webkit-scrollbar {
+  background: transparent;
+  width: 8px;
+  height: 8px;
+}
+
+.markdown-style ::-webkit-scrollbar-thumb {
+  background: var(--color-fg-muted);
+  border-radius: 10px;
+}
+</style>
+  </head>
+  <body><dark-mode style="position: fixed; top: 8px; left: 10px; z-index: 999;" dark="Dark" light="Light" permanent="true"></dark-mode><script>const t=document;const e="_dark_mode_theme_";const s="permanent";const o="colorschemechange";const i="permanentcolorscheme";const h="light";const r="dark";const n=(t,e,s=e)=>{Object.defineProperty(t,s,{enumerable:true,get(){const t=this.getAttribute(e);return t===null?"":t},set(t){this.setAttribute(e,t)}})};const c=(t,e,s=e)=>{Object.defineProperty(t,s,{enumerable:true,get(){return this.hasAttribute(e)},set(t){if(t){this.setAttribute(e,"")}else{this.removeAttribute(e)}}})};class a extends HTMLElement{static get observedAttributes(){return["mode",h,r,s]}LOCAL_NANE=e;constructor(){super();this.t()}connectedCallback(){n(this,"mode");n(this,r);n(this,h);c(this,s);const a=localStorage.getItem(e);if(a&&[h,r].includes(a)){this.mode=a;this.permanent=true}if(this.permanent&&!a){localStorage.setItem(e,this.mode)}const l=[h,r].includes(a);if(this.permanent&&a){this.o()}else{if(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches){this.mode=r;this.o()}if(window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches){this.mode=h;this.o()}}if(!this.permanent&&!l){window.matchMedia("(prefers-color-scheme: light)").onchange=t=>{this.mode=t.matches?h:r;this.o()};window.matchMedia("(prefers-color-scheme: dark)").onchange=t=>{this.mode=t.matches?r:h;this.o()}}const d=new MutationObserver(((s,h)=>{this.mode=t.documentElement.dataset.colorMode;if(this.permanent&&l){localStorage.setItem(e,this.mode);this.i(i,{permanent:this.permanent})}this.h();this.i(o,{colorScheme:this.mode})}));d.observe(t.documentElement,{attributes:true});this.i(o,{colorScheme:this.mode});this.h()}attributeChangedCallback(t,s,o){if(t==="mode"&&s!==o&&[h,r].includes(o)){const t=localStorage.getItem(e);if(this.mode===t){this.mode=o;this.h();this.o()}else if(this.mode&&this.mode!==t){this.h();this.o()}}else if((t===h||t===r)&&s!==o){this.h()}if(t==="permanent"&&typeof this.permanent==="boolean"){this.permanent?localStorage.setItem(e,this.mode):localStorage.removeItem(e)}}o(){t.documentElement.setAttribute("data-color-mode",this.mode)}h(){this.icon.textContent=this.mode===h?"🌒":"🌞";this.text.textContent=this.mode===h?this.getAttribute(r):this.getAttribute(h);if(!this.text.textContent&&this.text.parentElement&&this.text){this.text.parentElement.removeChild(this.text)}}t(){var s=this.attachShadow({mode:"open"});this.label=t.createElement("span");this.label.setAttribute("class","wrapper");this.label.onclick=()=>{this.mode=this.mode===h?r:h;if(this.permanent){localStorage.setItem(e,this.mode)}this.o();this.h()};s.appendChild(this.label);this.icon=t.createElement("span");this.icon.part="icon";this.label.appendChild(this.icon);this.text=t.createElement("span");this.text.part="text";this.label.appendChild(this.text);const o=`
+[data-color-mode*='dark'], [data-color-mode*='dark'] body {
+  color-scheme: dark;
+  --color-theme-bg: #0d1117;
+  --color-theme-text: #c9d1d9;
+  background-color: var(--color-theme-bg);
+  color: var(--color-theme-text);
+}
+
+[data-color-mode*='light'], [data-color-mode*='light'] body {
+  color-scheme: light;
+  --color-theme-bg: #fff;
+  --color-theme-text: #24292f;
+  background-color: var(--color-theme-bg);
+  color: var(--color-theme-text);
+}`;const i="_dark_mode_style_";const n=t.getElementById(i);if(!n){var c=t.createElement("style");c.id=i;c.textContent=o;t.head.appendChild(c)}var a=t.createElement("style");a.textContent=`
+    .wrapper { cursor: pointer; user-select: none; position: relative; }
+    .wrapper > span + span { margin-left: .4rem; }
+    `;s.appendChild(a)}i(t,e){this.dispatchEvent(new CustomEvent(t,{bubbles:true,composed:true,detail:e}))}}customElements.define("dark-mode",a);</script><div style="max-width: 960px; margin: 0 auto 60px auto; padding: 8px;max-width: 960px;" class="markdown-style">
+    <h1 id="决策基因系统--完整设计文档"><a class="anchor" aria-hidden="true" tabindex="-1" href="#决策基因系统--完整设计文档"><span class="octicon octicon-link"></span></a>决策基因系统 · 完整设计文档</h1>
+    <blockquote>
+      <p>
+        光阴对赌 / The Time Wager — 人格测量模块 v2.0
+        编写时间：2026-07
+      </p>
+    </blockquote>
+    <hr>
+    <h2 id="一总览"><a class="anchor" aria-hidden="true" tabindex="-1" href="#一总览"><span class="octicon octicon-link"></span></a>一、总览</h2>
+    <h3 id="11-核心思想"><a class="anchor" aria-hidden="true" tabindex="-1" href="#11-核心思想"><span class="octicon octicon-link"></span></a>1.1 核心思想</h3>
+    <p>MBTI（Myers-Briggs Type Indicator）的灵感来自荣格的心理类型理论，将人格拆解为若干正交维度，每个维度代表一种认知偏好的方向。这一设计思路极具普适性：它不评判对错，只描述偏向。</p>
+    <p><strong>「决策基因」系统</strong> 借鉴 MBTI 的四维正交框架，结合行为经济学、博弈论、社会心理学的理论依据，将「光阴对赌」游戏中玩家的实际行为抽象为四个独立维度。每个维度由游戏内的真实操作数据驱动，而非自我申报的问卷。</p>
+    <p><strong>核心创新点</strong>：</p>
+    <ol>
+      <li><strong>基于行为，而非申报</strong> — 分析玩家实际投入了什么，而不是他们认为自己是什么</li>
+      <li><strong>概率而非类别</strong> — 每个维度输出的是倾向程度（百分比），而不是非此即彼的标签</li>
+      <li><strong>游戏即测试</strong> — 将社会学实验嵌入娱乐游戏，消除社会期望偏差（Social Desirability Bias）</li>
+    </ol>
+    <hr>
+    <h3 id="12-四维框架总览"><a class="anchor" aria-hidden="true" tabindex="-1" href="#12-四维框架总览"><span class="octicon octicon-link"></span></a>1.2 四维框架总览</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>维度代号</th>
+          <th>名称</th>
+          <th>两极</th>
+          <th>核心问题</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Axis L/Q</strong></td>
+          <td>时间偏好</td>
+          <td>长线 L 速决 Q</td>
+          <td>你愿意等多久？</td>
+        </tr>
+        <tr>
+          <td><strong>Axis A/G</strong></td>
+          <td>风险偏好</td>
+          <td>进取 A 防御 G</td>
+          <td>你敢下多大的注？</td>
+        </tr>
+        <tr>
+          <td><strong>Axis D/C</strong></td>
+          <td>规则态度</td>
+          <td>破局 D 守成 C</td>
+          <td>你遵守规则还是改写规则？</td>
+        </tr>
+        <tr>
+          <td><strong>Axis V/R</strong></td>
+          <td>核心动机</td>
+          <td>求效 V 共情 R</td>
+          <td>你追求的是收益还是关系？</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>四个维度两两独立，理论上可组合出 <strong>16 种人格类型</strong>（L/Q × A/G × D/C × V/R）。</p>
+    <hr>
+    <h3 id="13-44-人格矩阵16格全览"><a class="anchor" aria-hidden="true" tabindex="-1" href="#13-44-人格矩阵16格全览"><span class="octicon octicon-link"></span></a>1.3 4×4 人格矩阵（16格全览）</h3>
+    <p><strong>破局 D 阵营（使用道具干预规则）</strong></p>
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>求效 V</th>
+          <th>共情 R</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>长线+进取 LA</td>
+          <td>LADV 颠覆操盘手</td>
+          <td>LADR 创变布道者</td>
+        </tr>
+        <tr>
+          <td>长线+防御 LG</td>
+          <td>LGDV 破局精算师</td>
+          <td>LGDR 社群架构师</td>
+        </tr>
+        <tr>
+          <td>短线+进取 QA</td>
+          <td>QADV 高频投机客</td>
+          <td>QADR 街头弄潮儿</td>
+        </tr>
+        <tr>
+          <td>短线+防御 QG</td>
+          <td>QGDV 微操破坏王</td>
+          <td>QGDR 游击公关</td>
+        </tr>
+      </tbody>
+    </table>
+    <p><strong>守成 C 阵营（规则框架内运作）</strong></p>
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>求效 V</th>
+          <th>共情 R</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>长线+进取 LA</td>
+          <td>LACV 冷酷寡头</td>
+          <td>LACR 理想领袖</td>
+        </tr>
+        <tr>
+          <td>长线+防御 LG</td>
+          <td>LGCV 隐忍守望者</td>
+          <td>LGCR 温和共建人</td>
+        </tr>
+        <tr>
+          <td>短线+进取 QA</td>
+          <td>QACV 极限套利者</td>
+          <td>QACR 激进交际花</td>
+        </tr>
+        <tr>
+          <td>短线+防御 QG</td>
+          <td>QGCV 无情螺丝钉</td>
+          <td>QGCR 老好人</td>
+        </tr>
+      </tbody>
+    </table>
+    <hr>
+    <h2 id="二四个维度的学术依据"><a class="anchor" aria-hidden="true" tabindex="-1" href="#二四个维度的学术依据"><span class="octicon octicon-link"></span></a>二、四个维度的学术依据</h2>
+    <h3 id="21-axis-lq时间偏好长线-vs-速决"><a class="anchor" aria-hidden="true" tabindex="-1" href="#21-axis-lq时间偏好长线-vs-速决"><span class="octicon octicon-link"></span></a>2.1 Axis L/Q：时间偏好（长线 vs 速决）</h3>
+    <p><strong>对应心理学概念</strong>：时间折现（Temporal Discounting）/ 延迟满足（Delayed Gratification）</p>
+    <p><strong>核心研究依据</strong>：</p>
+    <ul>
+      <li>
+        <p><strong>棉花糖实验（Mischel, 1970s）</strong>：斯坦福大学沃尔特·米歇尔的经典实验，儿童对即时满足的抵制能力与后来的学业、社交、健康结果显著相关。揭示了人的时间偏好存在稳定的个体差异。</p>
+      </li>
+      <li>
+        <p><strong>双曲线折现模型（Hyperbolic Discounting）</strong>：经济学研究发现人类对时间的折现并非指数级（理性），而是双曲线形：对近未来的折现率急剧高于对远未来的折现率。这解释了"知道要存钱却还是消费"的矛盾。</p>
+      </li>
+      <li>
+        <p><strong>神经科学依据</strong>：长远决策激活前额叶皮层（理性、计划），即时奖励激活边缘系统（情绪、冲动）。时间偏好在神经层面对应"冷/热系统"（Cool/Hot System）的博弈。</p>
+      </li>
+      <li>
+        <p><strong>投资学验证</strong>：巴菲特的"20格打孔"原则——一生只做20次投资决策——是L轴极端表达的现实案例；短线日内交易员的高换手率则是Q轴的典型行为模式。</p>
+      </li>
+    </ul>
+    <p><strong>在游戏中的表现</strong>：</p>
+    <ul>
+      <li>L（长线）玩家：优先参投长期项目，甘愿放弃即时短线收益，体现"延迟满足"</li>
+      <li>Q（速决）玩家：倾向做完短平快项目，快速回收精力，体现"时间折现率高"</li>
+    </ul>
+    <hr>
+    <h3 id="22-axis-ag风险偏好进取-vs-防御"><a class="anchor" aria-hidden="true" tabindex="-1" href="#22-axis-ag风险偏好进取-vs-防御"><span class="octicon octicon-link"></span></a>2.2 Axis A/G：风险偏好（进取 vs 防御）</h3>
+    <p><strong>对应心理学/经济学概念</strong>：前景理论（Prospect Theory）/ 损失厌恶（Loss Aversion）</p>
+    <p><strong>核心研究依据</strong>：</p>
+    <ul>
+      <li>
+        <p><strong>前景理论（Kahneman &#x26; Tversky, 1979）</strong>：诺贝尔经济学奖研究发现，人们对损失的痛苦大约是同等收益的快乐的 2倍（Loss Aversion）。风险偏好本质上是个体设定参考点（Reference Point）的方式不同。</p>
+      </li>
+      <li>
+        <p><strong>大五人格中的开放性（Openness to Experience）</strong>：高开放性个体更倾向于新奇刺激、不确定性，与高风险容忍度显著正相关。低神经质（Neuroticism）则与冷静应对风险相关。</p>
+      </li>
+      <li>
+        <p><strong>心理账户理论（Mental Accounting, Thaler）</strong>：风险偏好受"心理账户"影响——已经赚到的钱被放入"安全账户"，人们会对其格外保守；面临确定损失时，人们反而倾向于冒险（Losing Frame Effect）。</p>
+      </li>
+      <li>
+        <p><strong>进化心理学</strong>：在资源匮乏的情境下，冒险是唯一的出路（A轴适应）；在资源充裕时，保护存量才是理性选择（G轴适应）。</p>
+      </li>
+    </ul>
+    <p><strong>在游戏中的表现</strong>：</p>
+    <ul>
+      <li>A（进取）玩家：参投高风险的"风险项目"，使用做空/彩票道具</li>
+      <li>G（防御）玩家：回避风险项目，专注于回报稳定的常规投资</li>
+    </ul>
+    <hr>
+    <h3 id="23-axis-dc规则态度破局-vs-守成"><a class="anchor" aria-hidden="true" tabindex="-1" href="#23-axis-dc规则态度破局-vs-守成"><span class="octicon octicon-link"></span></a>2.3 Axis D/C：规则态度（破局 vs 守成）</h3>
+    <p><strong>对应社会学/心理学概念</strong>：制度颠覆倾向（Institutional Disruption）/ 权威遵从（Obedience to Authority）</p>
+    <p><strong>核心研究依据</strong>：</p>
+    <ul>
+      <li>
+        <p><strong>米尔格拉姆服从实验（Milgram, 1963）</strong>：著名的"电击实验"发现，绝大多数人在权威框架下会选择服从，但仍有约35%的人会在某点拒绝。这揭示了人类对规则的遵从本能，以及打破规则所需的心理成本。</p>
+      </li>
+      <li>
+        <p><strong>熊彼特的创造性破坏（Creative Destruction）</strong>：经济理论认为，颠覆性创新是经济进步的核心引擎。能在规则框架外思考的人是少数，但可以重塑整个赛局。</p>
+      </li>
+      <li>
+        <p><strong>大五人格</strong>：高尽责性（Conscientiousness）与遵守规则（C轴）正相关；高开放性（Openness）与愿意打破惯例（D轴）正相关。</p>
+      </li>
+      <li>
+        <p><strong>结构-能动性辩论（Structure-Agency Debate）</strong>：社会学核心辩题：个体是被社会结构所塑造（守成C），还是能反过来改变结构（破局D）？</p>
+      </li>
+    </ul>
+    <p><strong>在游戏中的表现</strong>：</p>
+    <ul>
+      <li>D（破局）玩家：频繁使用道具卡干预游戏规则，如诅咒、强征、做空等</li>
+      <li>C（守成）玩家：从不或极少使用干预型道具，完全在现有规则框架内运作</li>
+    </ul>
+    <hr>
+    <h3 id="24-axis-vr核心动机求效-vs-共情"><a class="anchor" aria-hidden="true" tabindex="-1" href="#24-axis-vr核心动机求效-vs-共情"><span class="octicon octicon-link"></span></a>2.4 Axis V/R：核心动机（求效 vs 共情）</h3>
+    <p><strong>对应社会心理学概念</strong>：成就动机（Achievement Motivation）/ 社会价值取向（Social Value Orientation）</p>
+    <p><strong>核心研究依据</strong>：</p>
+    <ul>
+      <li>
+        <p><strong>麦克利兰成就需求理论（McClelland's Needs Theory）</strong>：将人类动机分为成就需求（nAch）、亲和需求（nAff）、权力需求（nPow）。V轴对应高成就需求（结果导向），R轴对应高亲和需求（关系导向）。</p>
+      </li>
+      <li>
+        <p><strong>社会价值取向理论（SVO, Van Lange, 1999）</strong>：将个体对社会资源分配的偏好分为：竞争者（Competitor）、个人主义者（Individualist）、亲社会者（Prosocial）、合作者（Cooperator）。V玩家偏向竞争/个人，R玩家偏向亲社会/合作。</p>
+      </li>
+      <li>
+        <p><strong>囚徒困境实验</strong>：在经济博弈中，V倾向的个体倾向于选择背叛（获得绝对利益），R倾向的个体更倾向于选择合作（维护关系稳定）。</p>
+      </li>
+      <li>
+        <p><strong>自我决定理论（SDT, Deci &#x26; Ryan）</strong>：外部动机（金钱、排名）vs 内在动机（关系、意义）。V轴为外部成效导向，R轴为内在意义/关系导向。</p>
+      </li>
+    </ul>
+    <p><strong>在游戏中的表现</strong>：</p>
+    <ul>
+      <li>V（求效）玩家：ROI效率高，追求每格精力的最大回报，上帝评分较低</li>
+      <li>R（共情）玩家：ROI效率较低，但上帝评分高，注重社交资本积累</li>
+    </ul>
+    <hr>
+    <h2 id="三16种人格详细描述"><a class="anchor" aria-hidden="true" tabindex="-1" href="#三16种人格详细描述"><span class="octicon octicon-link"></span></a>三、16种人格详细描述</h2>
+    <blockquote>
+      <p>
+        <strong>代号说明</strong>：L=长线 Q=速决 A=进取 G=防御 D=破局 C=守成 V=求效 R=共情
+        <strong>图片风格统一要求</strong>：ink wash painting with watercolor accents, character portrait with cinematic composition, dramatic directional lighting, highly detailed symbolic background, A4 portrait orientation
+      </p>
+    </blockquote>
+    <hr>
+    <h3 id="31-ladv--长线激进颠覆操盘手"><a class="anchor" aria-hidden="true" tabindex="-1" href="#31-ladv--长线激进颠覆操盘手"><span class="octicon octicon-link"></span></a>3.1 LADV · 长线激进·颠覆操盘手</h3>
+    <p>
+      <strong>核心特质</strong>：高风险、长周期、打破规则、利益优先
+      <strong>现实原型</strong>：对冲基金经理、颠覆性创业者、激进投资人
+      <strong>现实人物参照</strong>：早期马斯克、乔治·索罗斯
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你是这个游戏里最危险的玩家。你从不在乎单轮的得失，你把每一局都看作一盘长棋。你敢于把全部筹码押在别人不敢碰的高风险项目上，同时毫不犹豫地用道具卡重写规则——不是为了破坏而破坏，而是因为你清楚：规则的制定者比遵守者更有主动权。你对"关系维护"没有太大兴趣，你的社交目的是为了交换价值，而不是经营感情。当游戏结束时，你要么站在财富榜顶端，要么在某轮豪赌中灰飞烟灭。但无论如何，你不会选择另一种活法。
+    </p>
+    <p>
+      <strong>优势</strong>：最大化期望收益、擅长主动创造有利局面
+      <strong>风险</strong>：过于激进可能全盘皆输、忽视关系导致联盟失败
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A sharp-eyed businessman in his late 30s, wearing a dark tailored suit without a tie. He stands in a glass-walled skyscraper at night, overlooking a city glowing with financial data and stock tickers projected on windows. His posture is dominant and forward-leaning, one hand pressing on a holographic chessboard. His expression is cold, calculated, and utterly confident. Cinematic lighting, dramatic shadows, dark gold and deep navy color palette, ink wash painting with watercolor accents, character portrait with cinematic composition, highly detailed symbolic background elements.
+</span></code><div onclick="copied(this)" data-code="A sharp-eyed businessman in his late 30s, wearing a dark tailored suit without a tie. He stands in a glass-walled skyscraper at night, overlooking a city glowing with financial data and stock tickers projected on windows. His posture is dominant and forward-leaning, one hand pressing on a holographic chessboard. His expression is cold, calculated, and utterly confident. Cinematic lighting, dramatic shadows, dark gold and deep navy color palette, ink wash painting with watercolor accents, character portrait with cinematic composition, highly detailed symbolic background elements.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="32-ladr--长线激进创变布道者"><a class="anchor" aria-hidden="true" tabindex="-1" href="#32-ladr--长线激进创变布道者"><span class="octicon octicon-link"></span></a>3.2 LADR · 长线激进·创变布道者</h3>
+    <p>
+      <strong>核心特质</strong>：高风险、长周期、打破规则、关系优先
+      <strong>现实原型</strong>：社会企业家、改革派政治家、颠覆性NGO领袖
+      <strong>现实人物参照</strong>：马丁·路德·金、早期阶段的雷军
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你相信改变系统不是靠一个人，而是靠一群被点燃的人。你愿意在长期高风险的道路上奔跑，但你跑向的不只是财富，而是影响力。你善用道具打破格局，但每一次出手都带着目的：扩大你的社交版图，把更多人纳入你的轨道。你是那种"先亏三年、再赢十年"的人，你亏的是精力，赢的是信任和资源网络。当你成功时，周围的人不只说"他赚到了"，而是说"因为他，我们都赚到了"。
+    </p>
+    <p>
+      <strong>优势</strong>：具备长远战略眼光、善于积累社会资本、有感召力
+      <strong>风险</strong>：高风险叠加社交成本，精力消耗巨大
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A charismatic woman in her early 40s, wearing a structured blazer in deep burgundy, standing at a crossroads under a stormy but dramatically lit sky. She holds an open book in one hand and a burning torch in the other. Around her, ghostly figures of a crowd follow her gaze toward the horizon. Her expression radiates conviction and warmth. Ink wash painting with watercolor accents, warm amber and midnight blue palette, character portrait with cinematic composition, highly detailed symbolic background.
+</span></code><div onclick="copied(this)" data-code="A charismatic woman in her early 40s, wearing a structured blazer in deep burgundy, standing at a crossroads under a stormy but dramatically lit sky. She holds an open book in one hand and a burning torch in the other. Around her, ghostly figures of a crowd follow her gaze toward the horizon. Her expression radiates conviction and warmth. Ink wash painting with watercolor accents, warm amber and midnight blue palette, character portrait with cinematic composition, highly detailed symbolic background.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="33-lacv--长线顺势冷酷寡头"><a class="anchor" aria-hidden="true" tabindex="-1" href="#33-lacv--长线顺势冷酷寡头"><span class="octicon octicon-link"></span></a>3.3 LACV · 长线顺势·冷酷寡头</h3>
+    <p>
+      <strong>核心特质</strong>：高风险、长周期、遵守规则、利益优先
+      <strong>现实原型</strong>：传统金融大鳄、寡头企业家、体制内的精明收割者
+      <strong>现实人物参照</strong>：李嘉诚早期、传统金融机构掌舵人
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你从不做任何多余的事。你完全在规则允许的范围内运作，但在这个范围内，你的胆子比所有人都大。你善于利用制度红利，找到规则内最大的套利空间，一次性下重注。你既不需要破坏规则（那样太显眼），也不需要靠感情维系关系（那样太浪费）。你是那种安静地赚到最多的人。当别人还在争论道德与策略时，你已经把结果装进了口袋。
+    </p>
+    <p>
+      <strong>优势</strong>：执行力极强、风险可控、收益稳定可复制
+      <strong>风险</strong>：缺乏灵活性，规则一旦变化可能反应迟钝
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A silver-haired man in his 50s, wearing a perfectly pressed white shirt with no jacket, sitting alone at the head of a long conference table. The room is empty, spotlit from above, with a massive window showing a sunrise city skyline. His hands are folded, his gaze is distant and calculating. Everything about him is controlled and deliberate. Cool gray and champagne gold palette, ink wash painting with watercolor accents, character portrait in cinematic style with graphic novel shading.
+</span></code><div onclick="copied(this)" data-code="A silver-haired man in his 50s, wearing a perfectly pressed white shirt with no jacket, sitting alone at the head of a long conference table. The room is empty, spotlit from above, with a massive window showing a sunrise city skyline. His hands are folded, his gaze is distant and calculating. Everything about him is controlled and deliberate. Cool gray and champagne gold palette, ink wash painting with watercolor accents, character portrait in cinematic style with graphic novel shading.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="34-lacr--长线顺势理想领袖"><a class="anchor" aria-hidden="true" tabindex="-1" href="#34-lacr--长线顺势理想领袖"><span class="octicon octicon-link"></span></a>3.4 LACR · 长线顺势·理想领袖</h3>
+    <p>
+      <strong>核心特质</strong>：高风险、长周期、遵守规则、关系优先
+      <strong>现实原型</strong>：传统政治领袖、大型机构掌舵人、有理想的公司董事长
+      <strong>现实人物参照</strong>：默克尔、任正非
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你相信制度是好的，而你是有能力让它变得更好的人。你不是破坏者，你是改良者。你愿意承担长期高风险，但你的底线是：绝不越线。你的力量来自于你的信誉——因为人们知道你不会突然做出任何出格的事。当你持续赢得他人信任，你的社交资本最终会转化为商业或政治资本。你是那种"做好事也赚大钱"的人，尽管这条路非常慢。
+    </p>
+    <p>
+      <strong>优势</strong>：高可信度、强社会资本积累、制度内上升路径清晰
+      <strong>风险</strong>：速度慢，容易被更灵活的对手超越
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A dignified man in his late 40s, wearing a classic navy suit, standing in front of a grand institution at dusk. He is surrounded by a small crowd who look up to him with genuine trust. His expression is earnest and calm, one hand holding a scroll with a blueprint. Warm amber and deep blue color scheme, ink wash painting with watercolor accents, character portrait in editorial reportage style, symbolic and poetic composition.
+</span></code><div onclick="copied(this)" data-code="A dignified man in his late 40s, wearing a classic navy suit, standing in front of a grand institution at dusk. He is surrounded by a small crowd who look up to him with genuine trust. His expression is earnest and calm, one hand holding a scroll with a blueprint. Warm amber and deep blue color scheme, ink wash painting with watercolor accents, character portrait in editorial reportage style, symbolic and poetic composition.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="35-lgdv--长线稳健破局精算师"><a class="anchor" aria-hidden="true" tabindex="-1" href="#35-lgdv--长线稳健破局精算师"><span class="octicon octicon-link"></span></a>3.5 LGDV · 长线稳健·破局精算师</h3>
+    <p>
+      <strong>核心特质</strong>：低风险、长周期、打破规则、利益优先
+      <strong>现实原型</strong>：量化策略分析师、利用漏洞的专业投资者、黑客精神的金融工程师
+      <strong>现实人物参照</strong>：文艺复兴科技量化团队核心成员
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你不冒险，但你会破坏。这个组合让大多数人感到意外——通常人们认为"保守"和"破坏规则"是矛盾的。但对你来说，破坏规则本身就是一种降低风险的策略：你在别人的规则体系里找漏洞，用系统的弱点来保护自己的稳定收益。你的每一步都经过精密计算，道具卡是你的手术刀，而不是武器。你很少在一项投资里亏损，但你也不会等待高风险赌注——你相信聪明就已经足够了。
+    </p>
+    <p>
+      <strong>优势</strong>：系统性挖掘制度漏洞、风险极低的超额收益
+      <strong>风险</strong>：过于依赖规则漏洞，漏洞消失后可能迷失
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A focused woman in her 30s, surrounded by floating mathematical equations and network diagrams in a dimly lit analytical workspace. She holds a magnifying glass pointed at a glowing rule book, and cracks are forming in the book's spine, revealing light within. Sharp, analytical eyes. Deep teal and amber light accents, ink wash painting with watercolor accents, technical illustration meets character portrait, highly detailed background elements, cinematic lighting.
+</span></code><div onclick="copied(this)" data-code="A focused woman in her 30s, surrounded by floating mathematical equations and network diagrams in a dimly lit analytical workspace. She holds a magnifying glass pointed at a glowing rule book, and cracks are forming in the book&#x27;s spine, revealing light within. Sharp, analytical eyes. Deep teal and amber light accents, ink wash painting with watercolor accents, technical illustration meets character portrait, highly detailed background elements, cinematic lighting.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="36-lgdr--长线稳健社群架构师"><a class="anchor" aria-hidden="true" tabindex="-1" href="#36-lgdr--长线稳健社群架构师"><span class="octicon octicon-link"></span></a>3.6 LGDR · 长线稳健·社群架构师</h3>
+    <p>
+      <strong>核心特质</strong>：低风险、长周期、打破规则、关系优先
+      <strong>现实原型</strong>：社区组织者、平台创业者、以关系为护城河的变革者
+      <strong>现实人物参照</strong>：扎克伯格（Facebook早期）、滴滴程维
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你的武器是网络，不是刀。你花时间建立一个庞大的社交网络，这个网络本身就是你的核心资产。你不冒财务风险，但你愿意打破社会规则——比如打破行业的信息壁垒、重组既有的权力分配。你用道具不是为了伤害别人，而是为了给你的网络创造机会。当你的网络足够庞大，你就成了规则制定者的一员——通过关系，而不是通过暴力。
+    </p>
+    <p>
+      <strong>优势</strong>：社交资本极强、打造强黏性生态
+      <strong>风险</strong>：初期积累慢，容易被急功近利的对手超越
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A warm and approachable woman in her late 30s, sitting in the center of a web of glowing threads connecting dozens of portraits around her, each thread a relationship. She holds scissors in one hand and is stitching together two broken threads with the other. Her workspace is a cozy yet organized community hub with maps and networks on the walls. Muted warm tones with gold accents, ink wash painting with watercolor accents, community-themed character portrait, cinematic composition.
+</span></code><div onclick="copied(this)" data-code="A warm and approachable woman in her late 30s, sitting in the center of a web of glowing threads connecting dozens of portraits around her, each thread a relationship. She holds scissors in one hand and is stitching together two broken threads with the other. Her workspace is a cozy yet organized community hub with maps and networks on the walls. Muted warm tones with gold accents, ink wash painting with watercolor accents, community-themed character portrait, cinematic composition.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="37-lgcv--长线稳健隐忍守望者"><a class="anchor" aria-hidden="true" tabindex="-1" href="#37-lgcv--长线稳健隐忍守望者"><span class="octicon octicon-link"></span></a>3.7 LGCV · 长线稳健·隐忍守望者</h3>
+    <p>
+      <strong>核心特质</strong>：低风险、长周期、遵守规则、利益优先
+      <strong>现实原型</strong>：指数基金长期投资者、"慢公司"建设者、延迟满足的极端执行者
+      <strong>现实人物参照</strong>：沃伦·巴菲特、查理·芒格
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你相信时间是最好的朋友，复利是最公正的裁判。你从不打破规则，因为你知道规则最终会奖励那些最有耐心的人。你不冒险，不浪费社交精力，你只做一件事：不断积累，等待收割。当别人在前三年收了三次小钱，你在第五年突然拿走了所有人的大钱。别人觉得你很无聊，但你知道：你才是最后站着的那个。
+    </p>
+    <p>
+      <strong>优势</strong>：最高的长期复利潜力、风险极低
+      <strong>风险</strong>：短期排名落后、规则变化时适应力最弱
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">An older man in his 60s, sitting beneath an ancient oak tree, watching a city grow from farmland across different time eras in the background — a layered visual metaphor of patience across generations. He holds a single acorn in his palm. His eyes are calm, deep, and certain. Autumn color palette with deep green and amber, ink wash painting with watercolor accents, symbolic and poetic character portrait composition, cinematic atmospheric depth.
+</span></code><div onclick="copied(this)" data-code="An older man in his 60s, sitting beneath an ancient oak tree, watching a city grow from farmland across different time eras in the background — a layered visual metaphor of patience across generations. He holds a single acorn in his palm. His eyes are calm, deep, and certain. Autumn color palette with deep green and amber, ink wash painting with watercolor accents, symbolic and poetic character portrait composition, cinematic atmospheric depth.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="38-lgcr--长线稳健温和共建人"><a class="anchor" aria-hidden="true" tabindex="-1" href="#38-lgcr--长线稳健温和共建人"><span class="octicon octicon-link"></span></a>3.8 LGCR · 长线稳健·温和共建人</h3>
+    <p>
+      <strong>核心特质</strong>：低风险、长周期、遵守规则、关系优先
+      <strong>现实原型</strong>：可靠的团队长期合伙人、传统合作社领袖、家族企业温和守护者
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你是最让人放心的那种人。你不会突然做出任何出格的事，你永远守规矩，你的承诺可以被信任。你的目标不是成为最富有的人，而是和所有人一起变好。你的收益来自于"共赢"——当你帮助别人拿到了收益，你也总能分到一杯羹。在高压、高焦虑的竞争游戏中，你是一股清流，也是那个最终被所有人感谢的人。
+    </p>
+    <p>
+      <strong>优势</strong>：最受信任的盟友、高上帝评分
+      <strong>风险</strong>：过度关系导向，可能被博弈中的理性自利玩家利用
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A gentle and steady person in their 40s, with a kind expression, extending both hands to connect two groups of people across a stone bridge at dawn. Wildflowers grow at the bridge edges. Simple, honest, quietly confident. Soft morning light with earthy greens and warm wheat tones, ink wash painting with watercolor accents, folk art illustration meets realistic character portrait, symbolic background, cinematic composition.
+</span></code><div onclick="copied(this)" data-code="A gentle and steady person in their 40s, with a kind expression, extending both hands to connect two groups of people across a stone bridge at dawn. Wildflowers grow at the bridge edges. Simple, honest, quietly confident. Soft morning light with earthy greens and warm wheat tones, ink wash painting with watercolor accents, folk art illustration meets realistic character portrait, symbolic background, cinematic composition.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="39-qadv--短线激进高频投机客"><a class="anchor" aria-hidden="true" tabindex="-1" href="#39-qadv--短线激进高频投机客"><span class="octicon octicon-link"></span></a>3.9 QADV · 短线激进·高频投机客</h3>
+    <p>
+      <strong>核心特质</strong>：高风险、短周期、打破规则、利益优先
+      <strong>现实原型</strong>：加密货币炒手、高频交易员、极端短线投机者
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你的时间单位是"这一轮"，不是"这一年"。你每一轮都把资源往最高风险、最高回报的地方砸，中了就走，不中就再来。你不在乎规则，也不在乎别人怎么看你，你只看数字。你是这个游戏里节奏最快、波动最大的玩家。你的最大优势是：你对亏损几乎没有感觉，因为你把每一轮都当作独立实验。高风险不是你的恐惧，而是你的氧气。
+    </p>
+    <p>
+      <strong>优势</strong>：极高的短期爆发收益
+      <strong>风险</strong>：高度波动，成为最先淘汰的概率也最高
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A young man in his late 20s, in a neon-lit trading room, multiple screens flashing red and green around him. He is half-standing from his chair, eyes wild and bright, one hand on a keyboard, an energy drink tipped over nearby. The atmosphere is electric, chaotic, and vivid. Cyberpunk neon color scheme — electric blue and hot red, ink wash painting with watercolor accents, urban illustration style with kinetic energy, character portrait in cinematic composition.
+</span></code><div onclick="copied(this)" data-code="A young man in his late 20s, in a neon-lit trading room, multiple screens flashing red and green around him. He is half-standing from his chair, eyes wild and bright, one hand on a keyboard, an energy drink tipped over nearby. The atmosphere is electric, chaotic, and vivid. Cyberpunk neon color scheme — electric blue and hot red, ink wash painting with watercolor accents, urban illustration style with kinetic energy, character portrait in cinematic composition.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="310-qadr--短线激进街头弄潮儿"><a class="anchor" aria-hidden="true" tabindex="-1" href="#310-qadr--短线激进街头弄潮儿"><span class="octicon octicon-link"></span></a>3.10 QADR · 短线激进·街头弄潮儿</h3>
+    <p>
+      <strong>核心特质</strong>：高风险、短周期、打破规则、关系优先
+      <strong>现实原型</strong>：网红创业者、街头文化领袖、快速建立影响力的社交操盘手
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你的财富来自于你的名字，不是你的资产。你在短时间内聚集关注度和社交资本，用道具打破竞争格局，让更多人知道你。你的每一步都有人看，你需要这种感觉。你不一定有最好的策略，但你有最快的反应速度和最强的势能。当机会窗口打开时，你已经冲进去了，其他人还在评估风险。
+    </p>
+    <p>
+      <strong>优势</strong>：极高的社交影响力和存在感
+      <strong>风险</strong>：短期势能消散快，容易陷入"持续曝光焦虑"
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A stylish young person in bold streetwear, surrounded by a crowd of followers on an urban rooftop at sunset. They are mid-speech, totally in command of the moment. Their energy is magnetic and their outfit is loud. Graffiti murals in the background. Vibrant sunset orange and electric purple palette, ink wash painting with watercolor accents, street-art meets character portrait, cinematic composition, highly detailed.
+</span></code><div onclick="copied(this)" data-code="A stylish young person in bold streetwear, surrounded by a crowd of followers on an urban rooftop at sunset. They are mid-speech, totally in command of the moment. Their energy is magnetic and their outfit is loud. Graffiti murals in the background. Vibrant sunset orange and electric purple palette, ink wash painting with watercolor accents, street-art meets character portrait, cinematic composition, highly detailed.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="311-qacv--短线顺势极限套利者"><a class="anchor" aria-hidden="true" tabindex="-1" href="#311-qacv--短线顺势极限套利者"><span class="octicon octicon-link"></span></a>3.11 QACV · 短线顺势·极限套利者</h3>
+    <p>
+      <strong>核心特质</strong>：高风险、短周期、遵守规则、利益优先
+      <strong>现实原型</strong>：规则内的赌徒、彩票专业玩家、竞技游戏的套路猎手
+      <strong>现实人物参照</strong>：MIT"21点团队"、体育博彩职业玩家
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你玩的是规则给你留的每一个空间。你从来不破坏规则——因为你知道，在规则允许的范围内，你已经可以做到极限。你在每一轮都寻找那个最高赔率的合法赌注，然后全力下注。你的收益曲线是脉冲式的：某一轮赚到别人几倍，某一轮也可能什么都没有。但你不在意，因为你知道期望值是正的。
+    </p>
+    <p>
+      <strong>优势</strong>：在规则框架内的极限操作
+      <strong>风险</strong>：高方差，耐受力差时容易放弃策略
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A lean, sharp-featured person sitting across a sleek modern table, but instead of cards, holographic financial contracts float in the air. Their expression is completely neutral — processing, not feeling. Understated business casual attire. The scene is high-stakes but perfectly controlled. Dark velvet green and gold palette, ink wash painting with watercolor accents, casino noir illustration style meets character portrait.
+</span></code><div onclick="copied(this)" data-code="A lean, sharp-featured person sitting across a sleek modern table, but instead of cards, holographic financial contracts float in the air. Their expression is completely neutral — processing, not feeling. Understated business casual attire. The scene is high-stakes but perfectly controlled. Dark velvet green and gold palette, ink wash painting with watercolor accents, casino noir illustration style meets character portrait.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="312-qacr--短线顺势激进交际花"><a class="anchor" aria-hidden="true" tabindex="-1" href="#312-qacr--短线顺势激进交际花"><span class="octicon octicon-link"></span></a>3.12 QACR · 短线顺势·激进交际花</h3>
+    <p>
+      <strong>核心特质</strong>：高风险、短周期、遵守规则、关系优先
+      <strong>现实原型</strong>：快速扩展人脉的短线社交者、活动型KOL、工作型社交达人
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你在每一个场合都能认识最重要的人，而且你让他们喜欢你。你的风险偏好很高，但你冒的不是钱的风险，而是社交押注——你快速押注某段关系会带来价值，然后全力跟进。你每轮都在快速扩展你的关系网络，你的回报是信息、机会和社会认可。你极少打破规则，因为你知道社交资本是靠信誉建立的。
+    </p>
+    <p>
+      <strong>优势</strong>：快速积累多元社交资本
+      <strong>风险</strong>：关系浅，难以建立深度信任
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A charming and polished person at a sophisticated networking event, surrounded by animated conversation partners. Their face is lit with genuine enthusiasm, business cards floating in the air around them like confetti. Background is a cocktail party in a high-rise with city lights. Warm jewel tones, ink wash painting with watercolor accents, graphic novel flair meets character portrait, cinematic composition.
+</span></code><div onclick="copied(this)" data-code="A charming and polished person at a sophisticated networking event, surrounded by animated conversation partners. Their face is lit with genuine enthusiasm, business cards floating in the air around them like confetti. Background is a cocktail party in a high-rise with city lights. Warm jewel tones, ink wash painting with watercolor accents, graphic novel flair meets character portrait, cinematic composition.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="313-qgdv--短线稳健微操破坏王"><a class="anchor" aria-hidden="true" tabindex="-1" href="#313-qgdv--短线稳健微操破坏王"><span class="octicon octicon-link"></span></a>3.13 QGDV · 短线稳健·微操破坏王</h3>
+    <p>
+      <strong>核心特质</strong>：低风险、短周期、打破规则、利益优先
+      <strong>现实原型</strong>：商业策略的"搅局者"、以低成本手段获取竞争优势的精明玩家
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你的风格是：保守地赚钱，同时出手让别人更难赚。你自己不冒险，但你会用道具打断别人最有利可图的布局。你是那种"自己稳稳收租，顺手给竞争对手挖坑"的人。你的策略核心是：进攻是最好的防守——不是进攻机会，而是进攻竞争对手。你的存在让所有人都变得不那么舒服，但你自己总是笑到最后。
+    </p>
+    <p>
+      <strong>优势</strong>：极低风险下的超额竞争优势
+      <strong>风险</strong>：树敌多，容易遭到联合打击
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A shrewd-looking person in casual but neat clothing, sitting at a chess table where all the opponent's major pieces have been quietly removed while theirs remain intact. They are casually sipping tea, looking completely unimpressed. The background extends into an infinite game board. Muted earth tones with a single accent of deep red, ink wash painting with watercolor accents, minimalist illustration style with wry intelligence.
+</span></code><div onclick="copied(this)" data-code="A shrewd-looking person in casual but neat clothing, sitting at a chess table where all the opponent&#x27;s major pieces have been quietly removed while theirs remain intact. They are casually sipping tea, looking completely unimpressed. The background extends into an infinite game board. Muted earth tones with a single accent of deep red, ink wash painting with watercolor accents, minimalist illustration style with wry intelligence.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="314-qgdr--短线稳健游击公关"><a class="anchor" aria-hidden="true" tabindex="-1" href="#314-qgdr--短线稳健游击公关"><span class="octicon octicon-link"></span></a>3.14 QGDR · 短线稳健·游击公关</h3>
+    <p>
+      <strong>核心特质</strong>：低风险、短周期、打破规则、关系优先
+      <strong>现实原型</strong>：危机公关专家、非常规社会运动组织者、小范围话语权操控者
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你用关系保护自己，用道具保护关系。你的每一步都在维护一个小而精的社交安全网，当威胁来临时，你手里的道具让你可以重置局面，但你从不乱用——每一张牌都是为了你的核心盟友服务的。你的收益不一定最高，但你的安全感最强。你是个优秀的"政治存活者"。
+    </p>
+    <p>
+      <strong>优势</strong>：高度安全、强社会保护网
+      <strong>风险</strong>：收益上限低，难以大规模扩张
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A nimble figure in urban camouflage attire, moving between city buildings at dusk, connecting different small groups with a communication device. They look strategic and resourceful, always one step ahead of the situation. The city environment is complex and layered. Cool blue and dark olive palette, ink wash painting with watercolor accents, urban guerrilla illustration meets character portrait, kinetic cinematic composition.
+</span></code><div onclick="copied(this)" data-code="A nimble figure in urban camouflage attire, moving between city buildings at dusk, connecting different small groups with a communication device. They look strategic and resourceful, always one step ahead of the situation. The city environment is complex and layered. Cool blue and dark olive palette, ink wash painting with watercolor accents, urban guerrilla illustration meets character portrait, kinetic cinematic composition.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="315-qgcv--短线顺应无情螺丝钉"><a class="anchor" aria-hidden="true" tabindex="-1" href="#315-qgcv--短线顺应无情螺丝钉"><span class="octicon octicon-link"></span></a>3.15 QGCV · 短线顺应·无情螺丝钉</h3>
+    <p>
+      <strong>核心特质</strong>：低风险、短周期、遵守规则、利益优先
+      <strong>现实原型</strong>：KPI导向的执行者、完全理性的"打工人"、系统的精密齿轮
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你完成任务，你拿走应得的报酬，你不关心大局，你不关心别人。你是系统里最稳定的一颗螺丝钉——可靠、精准、没有废话。你不冒险，不破坏，不建立无谓的社交关系。你只追踪一件事：我这一轮拿到了多少？你的收益轨迹是直线——没有暴涨，但也没有暴跌。这种稳定，在某些游戏生态里，就是最大的竞争优势。
+    </p>
+    <p>
+      <strong>优势</strong>：极度稳定可预测
+      <strong>风险</strong>：缺乏上行弹性，大局变化时最没有适应能力
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A precise person in uniform clothing, standing in a perfectly organized workspace filled with checklists, every item ticked. The background is a vast mechanical system of gears, perfectly synchronized and in motion. No visible emotion, just efficiency. Cold steel blue and functional gray palette, ink wash painting with watercolor accents, technical blueprint illustration style meets character portrait.
+</span></code><div onclick="copied(this)" data-code="A precise person in uniform clothing, standing in a perfectly organized workspace filled with checklists, every item ticked. The background is a vast mechanical system of gears, perfectly synchronized and in motion. No visible emotion, just efficiency. Cold steel blue and functional gray palette, ink wash painting with watercolor accents, technical blueprint illustration style meets character portrait.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h3 id="316-qgcr--短线顺应老好人"><a class="anchor" aria-hidden="true" tabindex="-1" href="#316-qgcr--短线顺应老好人"><span class="octicon octicon-link"></span></a>3.16 QGCR · 短线顺应·老好人</h3>
+    <p>
+      <strong>核心特质</strong>：低风险、短周期、遵守规则、关系优先
+      <strong>现实原型</strong>：周围人眼中最好的同事、维和式社交者、团队黏合剂
+    </p>
+    <p>
+      <strong>详细描述</strong>：
+      你是那种所有人都喜欢的人。你不抢，不争，不破坏，不算计。你的游戏目标不是赢，而是让大家都高兴。你总是把和谐放在首位，有时候甚至在不需要的时候做出让步。你的收益可能不高，但你的上帝评分几乎是最高的。你赢的不是钱，赢的是"这个人真好"。这种评价在现实中有时候是最宝贵的货币。
+    </p>
+    <p>
+      <strong>优势</strong>：极高的人际信任、上帝评分冠军候选
+      <strong>风险</strong>：容易被人利用、收益最低
+    </p>
+    <p><strong>画像生成提示词</strong>：</p>
+    <pre><code class="code-highlight"><span class="code-line line-number" line="1">A warm, approachable person with a gentle smile, sitting at a communal kitchen table where everyone around them looks relaxed and content. They are serving food and listening attentively to someone across the table. The scene radiates belonging and safety. Soft pastel palette with warm light, ink wash painting with watercolor accents, hand-drawn folk illustration style with rounded gentle linework, character portrait in cinematic composition.
+</span></code><div onclick="copied(this)" data-code="A warm, approachable person with a gentle smile, sitting at a communal kitchen table where everyone around them looks relaxed and content. They are serving food and listening attentively to someone across the table. The scene radiates belonging and safety. Soft pastel palette with warm light, ink wash painting with watercolor accents, hand-drawn folk illustration style with rounded gentle linework, character portrait in cinematic composition.
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <hr>
+    <h2 id="四指标追踪与计算方法"><a class="anchor" aria-hidden="true" tabindex="-1" href="#四指标追踪与计算方法"><span class="octicon octicon-link"></span></a>四、指标追踪与计算方法</h2>
+    <h3 id="41-axis-lq时间偏好长线-vs-速决"><a class="anchor" aria-hidden="true" tabindex="-1" href="#41-axis-lq时间偏好长线-vs-速决"><span class="octicon octicon-link"></span></a>4.1 Axis L/Q：时间偏好（长线 vs 速决）</h3>
+    <p><strong>数据来源</strong>：<code>player.investedLongEnergy</code>、<code>player.totalEnergyConsumed</code>、<code>player.investedRiskEnergy</code></p>
+    <pre class="language-typescript"><code class="language-typescript code-highlight"><span class="code-line line-number" line="1"><span class="token comment">// 长期精力占比</span>
+</span><span class="code-line line-number" line="2"><span class="token keyword">const</span> longRatio <span class="token operator">=</span> investedLongEnergy <span class="token operator">/</span> totalEnergy<span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="3">
+</span><span class="code-line line-number" line="4"><span class="token comment">// 短期精力估算（总精力 - 长期 - 风险）</span>
+</span><span class="code-line line-number" line="5"><span class="token keyword">const</span> shortEnergyEst <span class="token operator">=</span> Math<span class="token punctuation">.</span><span class="token function">max</span><span class="token punctuation">(</span><span class="token number">0</span><span class="token punctuation">,</span> totalEnergy <span class="token operator">-</span> investedLongEnergy <span class="token operator">-</span> investedRiskEnergy<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="6"><span class="token keyword">const</span> shortRatio <span class="token operator">=</span> shortEnergyEst <span class="token operator">/</span> totalEnergy<span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="7">
+</span><span class="code-line line-number" line="8"><span class="token comment">// 方向得分（正=长线倾向，负=速决倾向）</span>
+</span><span class="code-line line-number" line="9"><span class="token keyword">const</span> longShortScore <span class="token operator">=</span> <span class="token punctuation">(</span>longRatio <span class="token operator">-</span> shortRatio<span class="token punctuation">)</span> <span class="token operator">*</span> <span class="token number">100</span><span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="10">
+</span><span class="code-line line-number" line="11"><span class="token comment">// 判定方向与百分比</span>
+</span><span class="code-line line-number" line="12"><span class="token keyword">const</span> code <span class="token operator">=</span> longShortScore <span class="token operator">>=</span> <span class="token number">0</span> <span class="token operator">?</span> <span class="token string">"L"</span> <span class="token operator">:</span> <span class="token string">"Q"</span><span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="13"><span class="token keyword">const</span> percent <span class="token operator">=</span> Math<span class="token punctuation">.</span><span class="token function">min</span><span class="token punctuation">(</span><span class="token number">100</span><span class="token punctuation">,</span> Math<span class="token punctuation">.</span><span class="token function">max</span><span class="token punctuation">(</span><span class="token number">0</span><span class="token punctuation">,</span> <span class="token number">50</span> <span class="token operator">+</span> longShortScore <span class="token operator">/</span> <span class="token number">2</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+</span></code><div onclick="copied(this)" data-code="// 长期精力占比
+const longRatio = investedLongEnergy / totalEnergy;
+
+// 短期精力估算（总精力 - 长期 - 风险）
+const shortEnergyEst = Math.max(0, totalEnergy - investedLongEnergy - investedRiskEnergy);
+const shortRatio = shortEnergyEst / totalEnergy;
+
+// 方向得分（正=长线倾向，负=速决倾向）
+const longShortScore = (longRatio - shortRatio) * 100;
+
+// 判定方向与百分比
+const code = longShortScore >= 0 ? &#x22;L&#x22; : &#x22;Q&#x22;;
+const percent = Math.min(100, Math.max(0, 50 + longShortScore / 2));
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <p><strong>解读阈值</strong>：</p>
+    <ul>
+      <li>得分 > 20：明显 L（长线）倾向，percent > 60%</li>
+      <li>-20 ~ 20：倾向模糊（接近 50/50）</li>
+      <li>得分 &#x3C; -20：明显 Q（速决）倾向，percent > 60%</li>
+    </ul>
+    <hr>
+    <h3 id="42-axis-ag风险偏好进取-vs-防御"><a class="anchor" aria-hidden="true" tabindex="-1" href="#42-axis-ag风险偏好进取-vs-防御"><span class="octicon octicon-link"></span></a>4.2 Axis A/G：风险偏好（进取 vs 防御）</h3>
+    <p><strong>数据来源</strong>：<code>player.investedRiskEnergy</code>、<code>game.totalRiskEnergyAvailable</code></p>
+    <pre class="language-typescript"><code class="language-typescript code-highlight"><span class="code-line line-number" line="1"><span class="token comment">// 风险参与率 × 权重系数</span>
+</span><span class="code-line line-number" line="2"><span class="token keyword">const</span> riskConservScore <span class="token operator">=</span> totalRiskEnergyAvailable <span class="token operator">></span> <span class="token number">0</span>
+</span><span class="code-line line-number" line="3">  <span class="token operator">?</span> Math<span class="token punctuation">.</span><span class="token function">min</span><span class="token punctuation">(</span><span class="token number">100</span><span class="token punctuation">,</span> <span class="token punctuation">(</span>investedRiskEnergy <span class="token operator">/</span> totalRiskEnergyAvailable<span class="token punctuation">)</span> <span class="token operator">*</span> <span class="token number">100</span> <span class="token operator">*</span> w_risk_ratio<span class="token punctuation">)</span>
+</span><span class="code-line line-number" line="4">  <span class="token operator">:</span> <span class="token number">0</span><span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="5">
+</span><span class="code-line line-number" line="6"><span class="token comment">// 判定方向（50 为中性阈值）</span>
+</span><span class="code-line line-number" line="7"><span class="token keyword">const</span> code <span class="token operator">=</span> riskConservScore <span class="token operator">>=</span> <span class="token number">50</span> <span class="token operator">?</span> <span class="token string">"A"</span> <span class="token operator">:</span> <span class="token string">"G"</span><span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="8"><span class="token comment">// A 的强度百分比即 riskConservScore，G = 100 - riskConservScore</span>
+</span></code><div onclick="copied(this)" data-code="// 风险参与率 × 权重系数
+const riskConservScore = totalRiskEnergyAvailable > 0
+  ? Math.min(100, (investedRiskEnergy / totalRiskEnergyAvailable) * 100 * w_risk_ratio)
+  : 0;
+
+// 判定方向（50 为中性阈值）
+const code = riskConservScore >= 50 ? &#x22;A&#x22; : &#x22;G&#x22;;
+// A 的强度百分比即 riskConservScore，G = 100 - riskConservScore
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <p><strong>可补充指标</strong>：</p>
+    <ul>
+      <li>使用「彩票」道具 → 额外加分 +10</li>
+      <li>使用「做空」道具 → 额外加分 +15</li>
+    </ul>
+    <hr>
+    <h3 id="43-axis-dc规则态度破局-vs-守成"><a class="anchor" aria-hidden="true" tabindex="-1" href="#43-axis-dc规则态度破局-vs-守成"><span class="octicon octicon-link"></span></a>4.3 Axis D/C：规则态度（破局 vs 守成）</h3>
+    <p><strong>数据来源</strong>：<code>player.usedCards</code>（道具使用记录列表）</p>
+    <pre class="language-typescript"><code class="language-typescript code-highlight"><span class="code-line line-number" line="1"><span class="token comment">// 每张道具卡计 12.5 分，上限 100</span>
+</span><span class="code-line line-number" line="2"><span class="token keyword">const</span> disruptFollowScore <span class="token operator">=</span> Math<span class="token punctuation">.</span><span class="token function">min</span><span class="token punctuation">(</span><span class="token number">100</span><span class="token punctuation">,</span> usedCards<span class="token punctuation">.</span>length <span class="token operator">*</span> <span class="token number">12.5</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="3"><span class="token comment">// 即：使用 4 张以上道具 → 完全破局倾向(100分)</span>
+</span><span class="code-line line-number" line="4">
+</span><span class="code-line line-number" line="5"><span class="token comment">// 判定方向</span>
+</span><span class="code-line line-number" line="6"><span class="token keyword">const</span> code <span class="token operator">=</span> disruptFollowScore <span class="token operator">>=</span> <span class="token number">50</span> <span class="token operator">?</span> <span class="token string">"D"</span> <span class="token operator">:</span> <span class="token string">"C"</span><span class="token punctuation">;</span>
+</span></code><div onclick="copied(this)" data-code="// 每张道具卡计 12.5 分，上限 100
+const disruptFollowScore = Math.min(100, usedCards.length * 12.5);
+// 即：使用 4 张以上道具 → 完全破局倾向(100分)
+
+// 判定方向
+const code = disruptFollowScore >= 50 ? &#x22;D&#x22; : &#x22;C&#x22;;
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <p><strong>解读</strong>：</p>
+    <ul>
+      <li>0 张道具：守成 C，0%</li>
+      <li>1-3 张道具：轻度破局，12.5%-37.5%</li>
+      <li>4+ 张道具：重度破局 D，50%-100%</li>
+    </ul>
+    <p><strong>可改进</strong>：按道具类型差异化赋分（主动攻击型诅咒/强征 > 辅助型彩票/延迟型）</p>
+    <hr>
+    <h3 id="44-axis-vr核心动机求效-vs-共情"><a class="anchor" aria-hidden="true" tabindex="-1" href="#44-axis-vr核心动机求效-vs-共情"><span class="octicon octicon-link"></span></a>4.4 Axis V/R：核心动机（求效 vs 共情）</h3>
+    <p><strong>数据来源</strong>：<code>resourceConversion</code>（ROI效率得分 0<del>100）、<code>socialConnection</code>（上帝评分 0</del>100）</p>
+    <pre class="language-typescript"><code class="language-typescript code-highlight"><span class="code-line line-number" line="1"><span class="token comment">// 利益 vs 社交的净差值</span>
+</span><span class="code-line line-number" line="2"><span class="token keyword">const</span> profitSocialScore <span class="token operator">=</span> roiScore <span class="token operator">-</span> socialScore<span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="3"><span class="token comment">// 正值 → V（求效），负值 → R（共情）</span>
+</span><span class="code-line line-number" line="4">
+</span><span class="code-line line-number" line="5"><span class="token keyword">const</span> code <span class="token operator">=</span> profitSocialScore <span class="token operator">>=</span> <span class="token number">0</span> <span class="token operator">?</span> <span class="token string">"V"</span> <span class="token operator">:</span> <span class="token string">"R"</span><span class="token punctuation">;</span>
+</span><span class="code-line line-number" line="6"><span class="token keyword">const</span> percent <span class="token operator">=</span> Math<span class="token punctuation">.</span><span class="token function">min</span><span class="token punctuation">(</span><span class="token number">100</span><span class="token punctuation">,</span> Math<span class="token punctuation">.</span><span class="token function">max</span><span class="token punctuation">(</span><span class="token number">0</span><span class="token punctuation">,</span> <span class="token number">50</span> <span class="token operator">+</span> profitSocialScore <span class="token operator">/</span> <span class="token number">2</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+</span></code><div onclick="copied(this)" data-code="// 利益 vs 社交的净差值
+const profitSocialScore = roiScore - socialScore;
+// 正值 → V（求效），负值 → R（共情）
+
+const code = profitSocialScore >= 0 ? &#x22;V&#x22; : &#x22;R&#x22;;
+const percent = Math.min(100, Math.max(0, 50 + profitSocialScore / 2));
+" class="copied"><svg class="octicon-copy" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg><svg class="octicon-check" aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" height="12" width="12"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg></div></pre>
+    <p><strong>解读阈值</strong>：</p>
+    <ul>
+      <li>得分 > 30：明显 V（求效）型</li>
+      <li>-30 ~ 30：两者较均衡</li>
+      <li>得分 &#x3C; -30：明显 R（共情）型</li>
+    </ul>
+    <hr>
+    <h2 id="五报告补充建议"><a class="anchor" aria-hidden="true" tabindex="-1" href="#五报告补充建议"><span class="octicon octicon-link"></span></a>五、报告补充建议</h2>
+    <h3 id="a-时间线叙事behavioral-narrative"><a class="anchor" aria-hidden="true" tabindex="-1" href="#a-时间线叙事behavioral-narrative"><span class="octicon octicon-link"></span></a>A. 时间线叙事（Behavioral Narrative）</h3>
+    <p>当前缺失：只有最终截面分析，没有过程故事</p>
+    <p>建议增加"决策轨迹"模块：</p>
+    <ul>
+      <li>第几轮开始参投长期项目？</li>
+      <li>财富曲线的转折点在哪里（哪一轮带来最大变化）？</li>
+      <li>哪一轮的决策对最终排名影响最大？</li>
+    </ul>
+    <hr>
+    <h3 id="b-玩家间横向对比comparative-profile"><a class="anchor" aria-hidden="true" tabindex="-1" href="#b-玩家间横向对比comparative-profile"><span class="octicon octicon-link"></span></a>B. 玩家间横向对比（Comparative Profile）</h3>
+    <p>当前缺失：只有个人维度分析</p>
+    <p>建议增加：</p>
+    <ul>
+      <li>"你在本场玩家中的百分位"（如：你的风险偏好高于本场 87% 的玩家）</li>
+      <li>与最终财富冠军的四轴决策路径对比雷达图</li>
+    </ul>
+    <hr>
+    <h3 id="c-反事实分析counterfactual-analysis"><a class="anchor" aria-hidden="true" tabindex="-1" href="#c-反事实分析counterfactual-analysis"><span class="octicon octicon-link"></span></a>C. 反事实分析（Counterfactual Analysis）</h3>
+    <p>高级功能，需要模拟</p>
+    <p>
+      示例提示语：
+      "如果你在第3轮没有放弃长期项目，你的预估最终排名可能从 #3 升至 #1。"
+    </p>
+    <hr>
+    <h3 id="d-现实人物映射archetype-mapping"><a class="anchor" aria-hidden="true" tabindex="-1" href="#d-现实人物映射archetype-mapping"><span class="octicon octicon-link"></span></a>D. 现实人物映射（Archetype Mapping）</h3>
+    <p>建议在每种人格卡片中附上真实历史人物或公众人物参照，加强代入感：</p>
+    <ul>
+      <li>LGCV · 隐忍守望者 → 沃伦·巴菲特</li>
+      <li>LADV · 颠覆操盘手 → 早期马斯克</li>
+      <li>LACR · 理想领袖 → 默克尔、任正非</li>
+      <li>LGDR · 社群架构师 → 扎克伯格（Facebook早期）</li>
+    </ul>
+    <hr>
+    <h3 id="e-行为一致性得分consistency-score"><a class="anchor" aria-hidden="true" tabindex="-1" href="#e-行为一致性得分consistency-score"><span class="octicon octicon-link"></span></a>E. 行为一致性得分（Consistency Score）</h3>
+    <p>是否每一轮的选择都符合你的整体人格？</p>
+    <p>
+      高一致性 = 策略清晰、心智成熟；
+      低一致性 = 应激式决策、受环境干扰大。
+    </p>
+    <p>两者各有含义，可作为单独维度输出，在报告末尾附上说明。</p>
+    <hr>
+    <h3 id="f-人格历史胜率统计archetype-win-rate"><a class="anchor" aria-hidden="true" tabindex="-1" href="#f-人格历史胜率统计archetype-win-rate"><span class="octicon octicon-link"></span></a>F. 人格历史胜率统计（Archetype Win Rate）</h3>
+    <p>需要积累多场数据后实现</p>
+    <p>展示本类型人格在所有历史局中的：</p>
+    <ul>
+      <li>平均最终财富排名</li>
+      <li>平均 ROI</li>
+      <li>最常见的"克星人格"（与哪种人格交手时最吃亏）</li>
+    </ul>
+    <hr>
+    <h2 id="六图片风格统一规范"><a class="anchor" aria-hidden="true" tabindex="-1" href="#六图片风格统一规范"><span class="octicon octicon-link"></span></a>六、图片风格统一规范</h2>
+    <p>参照现有的「时荫植者」「罗盘精算师」等已有人格图片，所有决策基因人格画像须遵循以下风格约束：</p>
+    <table>
+      <thead>
+        <tr>
+          <th>要素</th>
+          <th>规范</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>技法</td>
+          <td>ink wash painting with watercolor accents</td>
+        </tr>
+        <tr>
+          <td>构图</td>
+          <td>character portrait with cinematic composition</td>
+        </tr>
+        <tr>
+          <td>背景</td>
+          <td>highly detailed, symbolic background elements</td>
+        </tr>
+        <tr>
+          <td>光线</td>
+          <td>dramatic directional lighting with atmospheric depth</td>
+        </tr>
+        <tr>
+          <td>版式</td>
+          <td>single character dominant, A4 portrait orientation</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>禁用风格：AI感过强的卡通/动漫风格、纯照片写实、扁平图标插画。</p>
+    <hr>
+    <p>
+      文档版本：v1.0 · 光阴对赌新新新 / The Time Wager
+      描述文案修改入口：server/logic/personaConfig.ts
+      指标计算修改入口：server/logic/analysisLogic.ts
+    </p>
+    <script>/*! @uiw/copy-to-clipboard v1.0.12 | MIT (c) 2021 Kenny Wang | https://github.com/uiwjs/copy-to-clipboard.git */
+!function(e,t){"object"==typeof exports&&"undefined"!=typeof module?module.exports=t():"function"==typeof define&&define.amd?define(t):(e="undefined"!=typeof globalThis?globalThis:e||self).copyTextToClipboard=t()}(this,(function(){"use strict";return function(e,t){const o=document.createElement("textarea");o.value=e,o.setAttribute("readonly",""),o.style={position:"absolute",left:"-9999px"},document.body.appendChild(o);const n=document.getSelection().rangeCount>0&&document.getSelection().getRangeAt(0);o.select();let c=!1;try{c=!!document.execCommand("copy")}catch(e){c=!1}document.body.removeChild(o),n&&document.getSelection&&(document.getSelection().removeAllRanges(),document.getSelection().addRange(n)),t&&t(c)}}));
+
+function copied(target, str) {
+  target.classList.add('active');
+  copyTextToClipboard(target.dataset.code, function() {
+    setTimeout(() => {
+      target.classList.remove('active');
+    }, 2000);
+  });
+}</script>
+  </div></body>
+</html>
