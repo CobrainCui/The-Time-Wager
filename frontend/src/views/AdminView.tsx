@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { GameState } from "../types";
 import { socket, BACKEND_URL } from "../socket";
 import { TUTORIAL_SLIDES } from "../tutorialData";
+import { ALL_PROJECTS } from "../config/projects";
 
 const AUCTION_CARDS: Record<number, { id: string; name: string }[]> = {
   1: [
@@ -52,6 +53,20 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
   }, [game.investmentEndsAt, game.buffPhaseEndsAt]);
 
   const emit = (event: string, extra?: object) => socket.emit(event, { roomId: game.roomId, ...extra });
+
+  const handleDeleteImage = async (id: number | string, type: 'project' | 'era', event: React.MouseEvent) => {
+    event.preventDefault();
+    if (!window.confirm("确定要删除这张图片吗？")) return;
+    try {
+      await fetch(`${BACKEND_URL}/api/${type === 'era' ? 'delete-era-image' : 'delete-image'}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: String(id) }),
+      });
+    } catch (err) {
+      console.error("Delete failed", err);
+    }
+  };
 
   const handleProposeBuff = (playerId: string, cardId: string) => {
     if (game.phase !== "AUCTION") { alert("只能在拍卖阶段发卡"); return; }
@@ -557,6 +572,9 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                           </div>
                           <input type="file" accept="image/*" onChange={(e) => handleImageUpload(eraName, 'era', e)} style={{ display: "none" }} />
                         </label>
+                        {version ? (
+                          <button onClick={(e) => handleDeleteImage(eraName, 'era', e)} style={{ width: "100%", padding: "0.4rem", background: "rgba(239,68,68,0.2)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "0.5rem", fontSize: "0.75rem", cursor: "pointer", marginTop: "0.25rem" }}>删除图片</button>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -569,25 +587,24 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                   <span>🏢</span> 项目图片上传 (横版 16:9)
                 </h3>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "1rem" }}>
-                  {game.activeProjects && game.activeProjects.length > 0 ? (
-                    game.activeProjects.map(p => {
+                  {ALL_PROJECTS.map(p => {
                     const version = projectImages[p.id] || "";
                     const imgUrl = `${BACKEND_URL}/uploads/${p.id}.jpg${version ? "?v=" + version : ""}`;
                     return (
                       <div key={p.id} style={{ background: "rgba(255,255,255,0.03)", borderRadius: "0.75rem", padding: "0.75rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>{p.name}</div>
+                        <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }} title={p.name}>[{p.era}] {p.name}</div>
                         <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
                           <div style={{ width: "100%", aspectRatio: "16/9", background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed rgba(255,255,255,0.2)", color: "var(--color-text-muted)", fontSize: "0.75rem", overflow: "hidden", position: "relative" }}>
                             {version ? <img src={imgUrl} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "上传"}
                           </div>
                           <input type="file" accept="image/*" onChange={(e) => handleImageUpload(p.id, 'project', e)} style={{ display: "none" }} />
                         </label>
+                        {version ? (
+                          <button onClick={(e) => handleDeleteImage(p.id, 'project', e)} style={{ width: "100%", padding: "0.4rem", background: "rgba(239,68,68,0.2)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "0.5rem", fontSize: "0.75rem", cursor: "pointer", marginTop: "0.25rem" }}>删除图片</button>
+                        ) : null}
                       </div>
                     );
-                  })
-                  ) : (
-                    <div style={{ color: "var(--color-text-muted)", fontSize: "0.9rem" }}>当游戏正式开始并抽取项目后，方可上传图片。</div>
-                  )}
+                  })}
                 </div>
               </div>
             </div>
