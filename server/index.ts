@@ -93,6 +93,34 @@ app.post("/api/upload-era-image", uploadEra.single("image"), (req, res) => {
   
   res.json({ success: true, timestamp: customEraImagesVersions[id] });
 });
+app.post("/api/delete-image", express.json(), (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: "Missing id" });
+  
+  const numId = parseInt(id);
+  const filePath = path.join(uploadDir, `${numId}.jpg`);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+  
+  customImagesVersions[numId] = 0; // 0 means deleted
+  io.emit("syncProjectImages", customImagesVersions);
+  res.json({ success: true, timestamp: 0 });
+});
+
+app.post("/api/delete-era-image", express.json(), (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: "Missing id" });
+  
+  const filePath = path.join(uploadErasDir, `${id}.jpg`);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+  
+  customEraImagesVersions[id] = 0;
+  io.emit("syncEraImages", customEraImagesVersions);
+  res.json({ success: true, timestamp: 0 });
+});
 // -----------------------
 
 const server = http.createServer(app);
