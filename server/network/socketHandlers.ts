@@ -4,7 +4,7 @@ import { togglePlayerReady } from "../state/gameActions.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
 import { applyInvestments } from "../logic/investmentLogic.js"; 
 import { broadcastUpdate } from "./broadcast.js"; 
-import { rooms, customImagesVersions, globalLeaderboard } from "../state/store.js"; 
+import { rooms, customImagesVersions, customEraImagesVersions, globalLeaderboard } from "../state/store.js"; 
 import { drawProjectsForEra } from "../state/gameEra.js";
 import { shuffleArray } from "../utils/shuffle.js";
 import { useBuffCard } from "../logic/buffLogic.js";
@@ -24,6 +24,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
   
   // 发送自定义图片版本号
   socket.emit("syncProjectImages", customImagesVersions);
+  socket.emit("syncEraImages", customEraImagesVersions);
 
 
   // 1. 加入房间
