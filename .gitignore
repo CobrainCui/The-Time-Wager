@@ -16,8 +16,7 @@ build/
 coverage/
 
 # Secrets and Game Data
-server/secrets.ts
-server/data/game_data.ts
+# (Removed from gitignore so GitHub Actions can build and deploy them)
 
 # Environment variables
 .env
