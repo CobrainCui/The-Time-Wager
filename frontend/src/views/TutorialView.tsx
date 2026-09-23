@@ -1,14 +1,28 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { TUTORIAL_SLIDES } from "../tutorialData";
+import { TutorialDemoShell } from "../tutorial/TutorialDemoShell";
+import { TUTORIAL_DEMO_BY_KEY } from "../tutorial/tutorialDemos";
 
-interface Props { game: GameState; me: Player; }
+interface Props {
+  game: GameState;
+  me: Player;
+}
 
-export const TutorialView: React.FC<Props> = ({ game }) => {
-  const step = game.tutorialStep || 0;
-  const slide = TUTORIAL_SLIDES[step] || TUTORIAL_SLIDES[0];
+export const TutorialView: React.FC<Props> = ({ game, me }) => {
   const total = TUTORIAL_SLIDES.length;
+  const rawStep = game.tutorialStep ?? 0;
+  const step = Math.min(Math.max(rawStep, 0), total - 1);
+  const slide = TUTORIAL_SLIDES[step];
   const progress = ((step + 1) / total) * 100;
+  const [demoResetKey, setDemoResetKey] = useState(0);
+
+  useEffect(() => {
+    setDemoResetKey(0);
+  }, [step]);
+
+  const DemoComponent = slide.demoKey ? TUTORIAL_DEMO_BY_KEY[slide.demoKey] : undefined;
 
   return (
     <div
@@ -21,7 +35,7 @@ export const TutorialView: React.FC<Props> = ({ game }) => {
     >
       <div
         style={{
-          maxWidth: "760px",
+          maxWidth: "1000px",
           width: "100%",
           background: "var(--color-bg-card)",
           border: "1px solid var(--color-border)",
@@ -31,7 +45,6 @@ export const TutorialView: React.FC<Props> = ({ game }) => {
         }}
         className="animate-scaleIn"
       >
-        {/* 进度条 */}
         <div style={{ width: "100%", height: "3px", background: "rgba(255,255,255,0.06)" }}>
           <div
             style={{
@@ -43,37 +56,34 @@ export const TutorialView: React.FC<Props> = ({ game }) => {
           />
         </div>
 
-        <div style={{ padding: "3rem 2.5rem", textAlign: "center" }}>
-          {/* 图标 */}
-          <div style={{ fontSize: "4.5rem", marginBottom: "1.5rem", animation: "float 3s ease-in-out infinite" }}>
+        <div style={{ padding: "2.5rem 2rem", textAlign: "center" }}>
+          <div style={{ fontSize: "4rem", marginBottom: "1.25rem", animation: "float 3s ease-in-out infinite" }}>
             {slide.icon}
           </div>
 
-          {/* 标题 */}
           <h1
             style={{
-              fontSize: "2.5rem",
+              fontSize: "2.25rem",
               fontWeight: 900,
               background: "linear-gradient(135deg, #60a5fa, #a78bfa)",
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent",
               backgroundClip: "text",
-              marginBottom: "2rem",
+              marginBottom: "1.5rem",
               lineHeight: 1.2,
             }}
           >
             {slide.title}
           </h1>
 
-          {/* 内容 */}
           <div
             style={{
               background: "rgba(0,0,0,0.25)",
               border: "1px solid rgba(255,255,255,0.06)",
               borderRadius: "1rem",
-              padding: "1.5rem",
+              padding: "1.25rem",
               textAlign: "left",
-              marginBottom: "2rem",
+              marginBottom: "0.5rem",
             }}
           >
             {slide.content.map((line, i) => (
@@ -88,13 +98,20 @@ export const TutorialView: React.FC<Props> = ({ game }) => {
                 }}
               >
                 <span style={{ color: "#60a5fa", fontWeight: 700, flexShrink: 0, marginTop: "0.1rem" }}>•</span>
-                <span style={{ color: "var(--color-text-secondary)", fontSize: "1rem", lineHeight: 1.6 }}>{line}</span>
+                <span style={{ color: "var(--color-text-secondary)", fontSize: uiRem(1), lineHeight: 1.6 }}>{line}</span>
               </div>
             ))}
           </div>
 
-          {/* 底部进度 */}
-          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "0.5rem" }}>
+          {DemoComponent && (
+            <TutorialDemoShell onReset={() => setDemoResetKey((k) => k + 1)}>
+              <div key={`${step}-${demoResetKey}`}>
+                <DemoComponent playerName={me.name} />
+              </div>
+            </TutorialDemoShell>
+          )}
+
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "0.5rem", marginTop: "1.5rem" }}>
             {Array.from({ length: total }).map((_, i) => (
               <div
                 key={i}
@@ -109,7 +126,7 @@ export const TutorialView: React.FC<Props> = ({ game }) => {
             ))}
           </div>
 
-          <div style={{ marginTop: "1rem", fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+          <div style={{ marginTop: "1rem", fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>
             请听主持人讲解 · {step + 1} / {total}
           </div>
         </div>

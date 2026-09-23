@@ -1,4 +1,5 @@
 import { GameState, Player, ActiveProject, SettlementProjectResult, GainBreakdown } from "../state/gameState.js";
+import { appendSettlementRound } from "../state/sessionTelemetry.js";
 
 // 辅助：创建零收益对象
 const zeroGain = (): GainBreakdown => ({ total: 0, base: 0, rank: 0, era: 0 });
@@ -54,6 +55,7 @@ export function settlePhase(game: GameState) {
     round: game.globalRound,
     results: snapshot
   };
+  appendSettlementRound(game, snapshot);
   game.logs.push(...logs);
 
   game.players.forEach(p => {

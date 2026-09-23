@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
 import {
@@ -29,6 +30,10 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
   const [showDetails, setShowDetails] = useState(false);
   const [voted, setVoted] = useState<"fate" | "gene" | "neither" | null>(me?.personaVote ?? null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  useEffect(() => {
+    setVoted(me?.personaVote ?? null);
+  }, [me?.personaVote]);
 
   useEffect(() => {
     socket.on("personaVoteResult", (data: { vote: "fate" | "gene" | "neither" }) => {
@@ -100,7 +105,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
           background: isSelected ? `${color}22` : "rgba(255,255,255,0.03)",
           color: isSelected ? color : isDisabled ? "#374151" : "#9ca3af",
           fontWeight: 700,
-          fontSize: "0.8rem",
+          fontSize: uiRem(0.8),
           cursor: voted ? "not-allowed" : "pointer",
           transition: "all 0.2s",
           display: "flex",
@@ -154,7 +159,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
             boxShadow: "0 0 40px rgba(245,158,11,0.1)",
           }}
         >
-          <div style={{ fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.2em", color: "var(--color-text-muted)", marginBottom: "0.75rem" }}>
+          <div style={{ fontSize: uiRem(0.75), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.2em", color: "var(--color-text-muted)", marginBottom: "0.75rem" }}>
             本社区总财富
           </div>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: "4rem", fontWeight: 900, color: "#fbbf24", lineHeight: 1 }}>
@@ -174,7 +179,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
             }}
           >
             <div style={{ padding: "1rem 1.5rem", borderBottom: "1px solid rgba(168,85,247,0.15)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <h3 style={{ fontWeight: 700, color: "#c084fc", fontSize: "1rem" }}>🌍 社区排行榜</h3>
+              <h3 style={{ fontWeight: 700, color: "#c084fc", fontSize: uiRem(1) }}>🌍 社区排行榜</h3>
             </div>
             <div style={{ padding: "0.75rem 1rem" }}>
               {game.globalLeaderboard.map((rec, i) => (
@@ -198,16 +203,16 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                         background: i === 0 ? "#f59e0b" : i === 1 ? "#94a3b8" : i === 2 ? "#cd7c32" : "#1f2937",
                         color: i < 3 ? (i === 0 ? "#000" : "#fff") : "#6b7280",
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: "0.65rem", fontWeight: 800,
+                        fontSize: uiRem(0.65), fontWeight: 800,
                       }}
                     >
                       {i + 1}
                     </span>
-                    <span style={{ color: "var(--color-text-primary)", fontWeight: rec.name === game.communityName ? 700 : 400, fontSize: "0.9rem" }}>
+                    <span style={{ color: "var(--color-text-primary)", fontWeight: rec.name === game.communityName ? 700 : 400, fontSize: uiRem(0.9) }}>
                       {rec.name === game.communityName ? "▶ " : ""}【{rec.name}】
                     </span>
                   </div>
-                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "#fbbf24", fontSize: "0.95rem" }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "#fbbf24", fontSize: uiRem(0.95) }}>
                     {rec.score}
                   </span>
                 </div>
@@ -227,7 +232,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
           }}
         >
           <div style={{ padding: "1rem 1.5rem", borderBottom: "1px solid var(--color-border)" }}>
-            <h3 style={{ fontWeight: 700, color: "white", fontSize: "1rem" }}>🏆 个人排行榜</h3>
+            <h3 style={{ fontWeight: 700, color: "white", fontSize: uiRem(1) }}>🏆 个人排行榜</h3>
           </div>
           {sortedPlayers.map((p, i) => {
             const badge = rankBadge(i);
@@ -245,26 +250,26 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-                  <span style={{ width: "2rem", height: "2rem", borderRadius: "50%", background: badge.bg, color: badge.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.85rem", fontWeight: 800, flexShrink: 0 }}>
+                  <span style={{ width: "2rem", height: "2rem", borderRadius: "50%", background: badge.bg, color: badge.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: uiRem(0.85), fontWeight: 800, flexShrink: 0 }}>
                     {badge.text}
                   </span>
-                  <span style={{ fontWeight: isMe ? 700 : 500, fontSize: "1rem", color: isMe ? "#fbbf24" : "white" }}>
+                  <span style={{ fontWeight: isMe ? 700 : 500, fontSize: uiRem(1), color: isMe ? "#fbbf24" : "white" }}>
                     {p.name}
                   </span>
                   {p.analysisResult && (
                     <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                      <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "0.2rem 0.55rem", borderRadius: "9999px", background: `${PERSONA_COLORS[p.analysisResult.primaryPersona] || "#3b82f6"}20`, color: PERSONA_COLORS[p.analysisResult.primaryPersona] || "#60a5fa", border: `1px solid ${PERSONA_COLORS[p.analysisResult.primaryPersona] || "#3b82f6"}40` }}>
+                      <span style={{ fontSize: uiRem(0.68), fontWeight: 700, padding: "0.2rem 0.55rem", borderRadius: "9999px", background: `${PERSONA_COLORS[p.analysisResult.primaryPersona] || "#3b82f6"}20`, color: PERSONA_COLORS[p.analysisResult.primaryPersona] || "#60a5fa", border: `1px solid ${PERSONA_COLORS[p.analysisResult.primaryPersona] || "#3b82f6"}40` }}>
                         🎭 {p.analysisResult.primaryPersona}
                       </span>
                       {p.analysisResult.mbtiPersona && (
-                        <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "0.2rem 0.55rem", borderRadius: "9999px", background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }}>
+                        <span style={{ fontSize: uiRem(0.68), fontWeight: 700, padding: "0.2rem 0.55rem", borderRadius: "9999px", background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }}>
                           🧬 {p.analysisResult.mbtiPersona.code}
                         </span>
                       )}
                     </div>
                   )}
                 </div>
-                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: "1.25rem", color: isMe ? "#fbbf24" : "var(--color-text-secondary)" }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, fontSize: uiRem(1.25), color: isMe ? "#fbbf24" : "var(--color-text-secondary)" }}>
                   {p.wealth}
                 </span>
               </div>
@@ -277,7 +282,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
           <div style={{ marginBottom: "2rem" }}>
             {/* 区域标题 */}
             <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
-              <div style={{ fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>
+              <div style={{ fontSize: uiRem(0.7), fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>
                 你的人格测试结果
               </div>
             </div>
@@ -298,14 +303,14 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                   gap: "0.75rem",
                 }}
               >
-                <div style={{ fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>
+                <div style={{ fontSize: uiRem(0.65), fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>
                   🎭 命运素描
                 </div>
                 <div style={{ fontSize: "1.4rem", fontWeight: 900, color: personaColor, lineHeight: 1.2 }}>
                   {myResult.primaryPersona}
                 </div>
                 {myResult.primaryPersonaDesc && (
-                  <div style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)", lineHeight: 1.4 }}>
+                  <div style={{ fontSize: uiRem(0.8), color: "var(--color-text-secondary)", lineHeight: 1.4 }}>
                     {myResult.primaryPersonaDesc}
                   </div>
                 )}
@@ -347,19 +352,19 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                       gap: "0.75rem",
                     }}
                   >
-                    <div style={{ fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>
+                    <div style={{ fontSize: uiRem(0.65), fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)" }}>
                       🧬 决策基因
                     </div>
                     <div>
                       <div style={{ fontFamily: "var(--font-mono)", fontSize: "2rem", fontWeight: 900, color: "#34d399", letterSpacing: "0.2em", lineHeight: 1 }}>
                         {mbti.code}
                       </div>
-                      <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#6ee7b7", marginTop: "0.25rem" }}>
+                      <div style={{ fontSize: uiRem(0.8), fontWeight: 600, color: "#6ee7b7", marginTop: "0.25rem" }}>
                         {mbti.label}
                       </div>
                     </div>
                     {mbti.desc && (
-                      <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", lineHeight: 1.4, marginBottom: "0.25rem" }}>
+                      <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-secondary)", lineHeight: 1.4, marginBottom: "0.25rem" }}>
                         {mbti.desc}
                       </div>
                     )}
@@ -374,12 +379,12 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                         
                         return (
                           <div key={axisKey} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                            <div style={{ fontSize: "0.65rem", color: "#6b7280", width: "3rem", flexShrink: 0 }}>{info.desc}</div>
+                            <div style={{ fontSize: uiRem(0.65), color: "#6b7280", width: "3rem", flexShrink: 0 }}>{info.desc}</div>
                             <div style={{ flex: 1, display: "flex", borderRadius: "9999px", overflow: "hidden", height: "18px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                              <div style={{ width: `${posPercent}%`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.55rem", fontWeight: 700, background: isPosActive ? "rgba(16,185,129,0.3)" : "transparent", color: isPosActive ? "#34d399" : "#374151", transition: "all 0.3s" }}>
+                              <div style={{ width: `${posPercent}%`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: uiRem(0.55), fontWeight: 700, background: isPosActive ? "rgba(16,185,129,0.3)" : "transparent", color: isPosActive ? "#34d399" : "#374151", transition: "all 0.3s" }}>
                                 {isPosActive ? `${info.pos} ${Math.round(posPercent)}%` : ""}
                               </div>
-                              <div style={{ width: `${negPercent}%`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.55rem", fontWeight: 700, background: !isPosActive ? "rgba(239,68,68,0.25)" : "transparent", color: !isPosActive ? "#f87171" : "#374151", transition: "all 0.3s" }}>
+                              <div style={{ width: `${negPercent}%`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: uiRem(0.55), fontWeight: 700, background: !isPosActive ? "rgba(239,68,68,0.25)" : "transparent", color: !isPosActive ? "#f87171" : "#374151", transition: "all 0.3s" }}>
                                 {!isPosActive ? `${Math.round(negPercent)}% ${info.neg}` : ""}
                               </div>
                             </div>
@@ -394,7 +399,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
 
             {/* 财富曲线 */}
             <div style={{ background: "var(--color-bg-card)", border: "1px solid var(--color-border)", borderRadius: "1.25rem", padding: "1.25rem", marginBottom: "1rem" }}>
-              <div style={{ fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.75rem" }}>
+              <div style={{ fontSize: uiRem(0.7), fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.75rem" }}>
                 📈 财富曲线
               </div>
               <div style={{ height: "160px" }}>
@@ -421,7 +426,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                 padding: "1.25rem",
               }}
             >
-              <div style={{ fontSize: "0.75rem", fontWeight: 700, textAlign: "center", color: "var(--color-text-muted)", marginBottom: "0.875rem", letterSpacing: "0.1em" }}>
+              <div style={{ fontSize: uiRem(0.75), fontWeight: 700, textAlign: "center", color: "var(--color-text-muted)", marginBottom: "0.875rem", letterSpacing: "0.1em" }}>
                 🗳️ 哪种描述更像你？
               </div>
               <div style={{ display: "flex", gap: "0.6rem" }}>
@@ -430,7 +435,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                 {voteBtn("neither", "两个都不准", "#6b7280")}
               </div>
               {voted && (
-                <div style={{ textAlign: "center", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "0.625rem" }}>
+                <div style={{ textAlign: "center", fontSize: uiRem(0.72), color: "var(--color-text-muted)", marginTop: "0.625rem" }}>
                   已投票，感谢你的反馈！
                 </div>
               )}
@@ -487,13 +492,13 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
         <div className="modal-overlay" onClick={() => setShowDetails(false)}>
           <div className="modal-box" style={{ maxWidth: "600px", maxHeight: "85vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
-              <h3 style={{ fontWeight: 700, color: "white", fontSize: "1.1rem" }}>🧐 人格判定数据</h3>
-              <button onClick={() => setShowDetails(false)} style={{ background: "none", border: "none", color: "var(--color-text-muted)", fontSize: "1.25rem", cursor: "pointer" }}>×</button>
+              <h3 style={{ fontWeight: 700, color: "white", fontSize: uiRem(1.1) }}>🧐 人格判定数据</h3>
+              <button onClick={() => setShowDetails(false)} style={{ background: "none", border: "none", color: "var(--color-text-muted)", fontSize: uiRem(1.25), cursor: "pointer" }}>×</button>
             </div>
 
             {/* 命运素描细则 */}
             <div style={{ background: `${personaColor}15`, border: `1px solid ${personaColor}33`, borderRadius: "0.875rem", padding: "1rem", marginBottom: "1rem", textAlign: "center" }}>
-              <div style={{ color: "var(--color-text-muted)", fontSize: "0.7rem", marginBottom: "0.25rem" }}>🎭 命运素描</div>
+              <div style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.7), marginBottom: "0.25rem" }}>🎭 命运素描</div>
               <div style={{ fontSize: "1.5rem", fontWeight: 800, color: personaColor }}>{myResult.primaryPersona}</div>
             </div>
             {[
@@ -505,10 +510,10 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
             ].map((item) => (
               <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.75rem", background: "rgba(255,255,255,0.02)", borderRadius: "0.625rem", border: "1px solid var(--color-border)", marginBottom: "0.5rem" }}>
                 <div>
-                  <div style={{ fontWeight: 600, color: "var(--color-text-primary)", fontSize: "0.875rem" }}>{item.label}</div>
-                  <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>{item.desc}</div>
+                  <div style={{ fontWeight: 600, color: "var(--color-text-primary)", fontSize: uiRem(0.875) }}>{item.label}</div>
+                  <div style={{ fontSize: uiRem(0.72), color: "var(--color-text-muted)" }}>{item.desc}</div>
                 </div>
-                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#fbbf24", fontSize: "1.1rem", marginLeft: "1rem" }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#fbbf24", fontSize: uiRem(1.1), marginLeft: "1rem" }}>
                   {item.value.toFixed(1)}
                 </span>
               </div>
@@ -518,9 +523,9 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
             {myResult.mbtiPersona && (
               <>
                 <div style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: "0.875rem", padding: "1rem", marginBottom: "1rem", textAlign: "center", marginTop: "1.25rem" }}>
-                  <div style={{ color: "var(--color-text-muted)", fontSize: "0.7rem", marginBottom: "0.25rem" }}>🧬 决策基因</div>
+                  <div style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.7), marginBottom: "0.25rem" }}>🧬 决策基因</div>
                   <div style={{ fontFamily: "var(--font-mono)", fontSize: "1.5rem", fontWeight: 800, color: "#34d399", letterSpacing: "0.2em" }}>{myResult.mbtiPersona.code}</div>
-                  <div style={{ fontSize: "0.85rem", color: "#6ee7b7", marginTop: "0.25rem" }}>{myResult.mbtiPersona.label}</div>
+                  <div style={{ fontSize: uiRem(0.85), color: "#6ee7b7", marginTop: "0.25rem" }}>{myResult.mbtiPersona.label}</div>
                 </div>
                 {[
                   { label: "⏰ 时间偏好", desc: "长线(L) 或 速决(Q)", letter: myResult.mbtiPersona.axes.Time.code, percent: myResult.mbtiPersona.axes.Time.percent },
@@ -530,12 +535,12 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                 ].map((item) => (
                   <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.75rem", background: "rgba(255,255,255,0.02)", borderRadius: "0.625rem", border: "1px solid var(--color-border)", marginBottom: "0.5rem" }}>
                     <div>
-                      <div style={{ fontWeight: 600, color: "var(--color-text-primary)", fontSize: "0.875rem" }}>{item.label}</div>
-                      <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>{item.desc}</div>
+                      <div style={{ fontWeight: 600, color: "var(--color-text-primary)", fontSize: uiRem(0.875) }}>{item.label}</div>
+                      <div style={{ fontSize: uiRem(0.72), color: "var(--color-text-muted)" }}>{item.desc}</div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.2rem" }}>
-                      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#34d399", fontSize: "0.95rem" }}>{item.letter}</span>
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "#6b7280" }}>{Math.round(item.percent)}%</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#34d399", fontSize: uiRem(0.95) }}>{item.letter}</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: uiRem(0.75), color: "#6b7280" }}>{Math.round(item.percent)}%</span>
                     </div>
                   </div>
                 ))}

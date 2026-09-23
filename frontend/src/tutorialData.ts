@@ -1,8 +1,11 @@
+import type { TutorialDemoKey } from "./tutorial/demoKeys";
+
 export interface TutorialSlide {
     title: string;
-    content: string[]; 
-    hostNotes: string; 
+    content: string[];
+    hostNotes: string;
     icon: string;
+    demoKey?: TutorialDemoKey;
 }
 
 export const TUTORIAL_SLIDES: TutorialSlide[] = [
@@ -14,7 +17,8 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
             "在接下来的旅程中，你们将度过青年、壮年、中年、老年四个阶段。",
             "每一个决定，都将塑造独一无二的人生轨迹。"
         ],
-        hostNotes: "欢迎大家。现在我们开始讲解规则。"
+        hostNotes: "欢迎大家。现在我们开始讲解规则。",
+        demoKey: "gameStructure",
     },
     {
         title: "认识你的核心资源",
@@ -23,7 +27,8 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
             "⚡ 精力：用精力投资项目，以换取财富。每个轮次重置。",
             "💰 财富：游戏的最终胜利条件，首富可以为社区命名。所有投资的终极目标。"
         ],
-        hostNotes: "重点解释精力是有限的，且每轮清空，鼓励大家花完。财富是胜利条件。"
+        hostNotes: "重点解释精力是有限的，且每轮清空，鼓励大家花完。财富是胜利条件。",
+        demoKey: "resources",
     },
     {
         title: "投资项目类型",
@@ -33,7 +38,8 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
             "🟪 长期项目：高回报，但需要持续投入。如果你中间断供（少于3精力），前期投入全部作废！",
             "⬛ 风险项目：超高回报，但如果总投入超过上限，不仅本轮白干，还要倒扣历史收益！"
         ],
-        hostNotes: "着重强调长期项目的'断供风险'和风险项目的'倒扣机制'。这是游戏最刺激的地方。"
+        hostNotes: "着重强调长期项目的'断供风险'和风险项目的'倒扣机制'。这是游戏最刺激的地方。",
+        demoKey: "projectTypes",
     },
     {
         title: "选座与抢位机制",
@@ -43,7 +49,8 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
             "财富越少，越能优先选择行动顺位。",
             "顺位的作用：在长期项目中，如果总投入超过上限，顺位靠前的人先占坑，顺位靠后的人挤不进去（投入了也没收益）。"
         ],
-        hostNotes: "解释这是游戏的平衡机制。穷人有优先占坑权，富人虽然钱多但可能在长期项目中被挤掉。"
+        hostNotes: "解释这是游戏的平衡机制。穷人有优先占坑权，富人虽然钱多但可能在长期项目中被挤掉。",
+        demoKey: "drafting",
     },
     {
         title: "时代主题与加成",
@@ -52,16 +59,30 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
             "每个时代都有一个主题（如气候、科技、文化）。",
             "如果你投资的项目契合当前时代主题，该项目投资的第一名将在项目完成/爆掉时获得额外奖励！"
         ],
-        hostNotes: "提醒大家关注屏幕上方的时代Banner，顺势而为能获得额外收益。"
+        hostNotes: "提醒大家关注屏幕上方的时代Banner，顺势而为能获得额外收益。",
+        demoKey: "eraTheme",
     },
     {
-        title: "商店与交易",
-        icon: "🏪",
+        title: "拍卖会",
+        icon: "🔨",
         content: [
-            "💰 财富用途：购买【扰动因子卡】（Buff），例如“本轮次财富收益*1.5”。",
-            "🤝 自由交易：你们可以私下通过系统转账功能进行财富转移（结盟、贿赂等）。"
+            "每个时代开始前会进入【拍卖会】阶段。",
+            "主持人将扰动因子卡（Buff）交由玩家竞拍，例如“本轮回报 ×1.5”的点石成金。",
+            "成交后卡牌进入你的手牌，在之后的【道具阶段】使用。"
         ],
-        hostNotes: "这是增加互动性的环节。简单举例Buff卡的效果，鼓励大家进行私下交易。"
+        hostNotes: "说明拍卖由主持人控盘，强调 Buff 是改变局势的关键道具。",
+        demoKey: "auction",
+    },
+    {
+        title: "转账与私信",
+        icon: "💬",
+        content: [
+            "🤝 转账：屏幕右侧每位玩家独立对话框（一对一），填写金额发送；仅对方能在与你的会话里看到并接收或退回。",
+            "💬 私信：不填金额（或填 0）并留言，即为仅对方可见的私信（不扣财富）。",
+            "可用于结盟、议价、传递情报等；不会发给多名玩家。"
+        ],
+        hostNotes: "演示右侧折叠对话框；可试玩「插入待收转账」；私信可不填金额、只写留言。",
+        demoKey: "transferAndMessage",
     },
     {
         title: "准备出发",
@@ -71,6 +92,7 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
             "每一轮结束都会结算。",
             "祝各位在光阴的博弈中，此生无悔。"
         ],
-        hostNotes: "规则讲解结束。主持人点击'结束教程'以进入游戏第一轮。"
+        hostNotes: "规则讲解结束。主持人点击'结束教程'以进入游戏第一轮。",
+        demoKey: "readyChecklist",
     }
 ];

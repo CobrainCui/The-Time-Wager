@@ -1,5 +1,6 @@
 import { GameState, ActiveBuff } from "../state/gameState.js";
 import { buffCards } from "../data/game_data.js";
+import { appendSessionEvent } from "../state/sessionTelemetry.js";
 
 /**
  * 玩家使用道具卡的主逻辑
@@ -97,16 +98,27 @@ export function useBuffCard(
     // --- 偷天换日 (交换顺位) ---
     else if (cardId === 'buff_swap') {
         const target = game.players.find(p => p.id === params.targetPlayerId);
-        if (target) {
-            const myOrder = player.draftOrder;
-            const targetOrder = target.draftOrder;
-            
-            // ✅ 修复：直接交换 draftOrder
-            player.draftOrder = targetOrder;
-            target.draftOrder = myOrder;
+        if (!target) return { success: false, msg: "未指定目标" };
 
-            game.logs.push(`🔀 ${player.name} 使用【偷天换日】，与 ${target.name} 互换了结算顺位 (#${myOrder} <-> #${targetOrder})`);
-        }
+        const myOrder = player.draftOrder;
+        const targetOrder = target.draftOrder;
+
+        player.draftOrder = targetOrder;
+        target.draftOrder = myOrder;
+
+        game.logs.push(`🔀 ${player.name} 使用【偷天换日】，与 ${target.name} 互换了结算顺位 (#${myOrder} <-> #${targetOrder})`);
+
+        appendSessionEvent(
+          game,
+          "draft_order_swapped",
+          {
+            playerIdA: player.id,
+            playerIdB: target.id,
+            orderBefore: { [player.id]: myOrder, [target.id]: targetOrder },
+            orderAfter: { [player.id]: targetOrder, [target.id]: myOrder },
+          },
+          playerId
+        );
     }
 
     // --- 延迟生效类 ---
@@ -119,6 +131,18 @@ export function useBuffCard(
     
     // 5. 加入已激活列表
     player.activeBuffs.push(buff);
+
+    appendSessionEvent(
+      game,
+      "buff_used",
+      {
+        cardId,
+        targetPlayerId: params.targetPlayerId ?? null,
+        targetProjectId: params.targetProjectId ?? null,
+        success: true,
+      },
+      playerId
+    );
 
     return { success: true, msg: "使用成功" };
 }

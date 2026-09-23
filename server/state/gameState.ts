@@ -1,5 +1,6 @@
 import { EventCard, EraCard, eraCards } from "../data/game_data.js";
-import { shuffleArray } from "../utils/shuffle.js"; 
+import { shuffleArray } from "../utils/shuffle.js";
+import { emptySessionTelemetry, SessionTelemetry } from "./sessionTelemetry.js";
 
 export type Phase =
   | "ERA_INTRO"
@@ -113,6 +114,8 @@ export interface Player {
   draftOrder?: number; 
 
   investment: Record<number, number>;
+  /** 讨论/投资阶段本地预填，倒计时结束时服务端据此自动提交 */
+  investmentDraft?: Record<number, number>;
   longTerm: Record<number, { 
     totalInvested: number; 
     status: "active"|"completed"|"abandoned";
@@ -212,6 +215,15 @@ export interface GameState {
 
   communityName?: string;
   globalLeaderboard?: { name: string; score: number }[];
+  /** 本轮拍卖已成功成交的道具卡 id */
+  auctionDistributedCardIds?: string[];
+  /** 进入 TUTORIAL 前的阶段，用于教程结束后判断是否全量 reset */
+  tutorialEntryPhase?: Phase;
+
+  /** 本局开始时间（首次正式开局） */
+  sessionStartedAt?: number;
+  /** 行为流水与结算历史（不广播给玩家客户端） */
+  sessionTelemetry?: SessionTelemetry;
 }
 
 export function createInitialGame(roomId: string, _playerNames: string[]): GameState {
@@ -255,6 +267,116 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
     playerLogs: {},
 
     investmentEndsAt: undefined,
-    tutorialStep: 0
+    tutorialStep: 0,
+
+    sessionTelemetry: emptySessionTelemetry(),
   };
+}
+
+function freshPlayerFromIdentity(
+  meta: Pick<Player, "id" | "name" | "socketId" | "connected" | "isAI" | "aiPersona">
+): Player {
+  return {
+    id: meta.id,
+    name: meta.name,
+    socketId: meta.socketId,
+    connected: meta.connected,
+    isAI: meta.isAI,
+    aiPersona: meta.aiPersona,
+    ready: false,
+    energy: 15,
+    wealth: 0,
+    rank: 0,
+    investment: {},
+    longTerm: {},
+    riskGains: {},
+    inventory: [],
+    usedCards: [],
+    activeBuffs: [],
+    slackedBy: [],
+    totalEnergyConsumed: 15,
+    wealthHistory: [0],
+    investedRiskEnergy: 0,
+    investedLongEnergy: 0,
+    socialRank: null,
+  };
+}
+
+/** 同一房间新开一局：保留玩家身份，其余对齐 createInitialGame */
+export function resetGameSession(game: GameState): void {
+  const preserved = game.players.map((p) => ({
+    id: p.id,
+    name: p.name,
+    socketId: p.socketId,
+    connected: p.connected,
+    isAI: p.isAI,
+    aiPersona: p.aiPersona,
+  }));
+
+  const fresh = createInitialGame(game.roomId, []);
+  fresh.players = preserved.map(freshPlayerFromIdentity);
+  fresh.logs.push("🔄 新一局已开始，状态已重置");
+
+  game.players = fresh.players;
+  game.phase = fresh.phase;
+  game.phaseFinished = fresh.phaseFinished;
+  game.readyPlayers = fresh.readyPlayers;
+  game.draftingState = fresh.draftingState;
+  game.transactions = fresh.transactions;
+  game.currentEra = fresh.currentEra;
+  game.roundInEra = fresh.roundInEra;
+  game.globalRound = fresh.globalRound;
+  game.eraSequence = fresh.eraSequence;
+  game.lastEraRanking = undefined;
+  game.activeProjects = fresh.activeProjects;
+  game.uncompletedProjects = fresh.uncompletedProjects;
+  game.completedProjects = fresh.completedProjects;
+  game.drawnProjects = fresh.drawnProjects;
+  game.totalRiskEnergyAvailable = fresh.totalRiskEnergyAvailable;
+  game.currentEraCard = fresh.currentEraCard;
+  game.pendingEvents = fresh.pendingEvents;
+  game.eventCards = fresh.eventCards;
+  game.eventChoices = fresh.eventChoices;
+  game.logs = fresh.logs;
+  game.playerLogs = fresh.playerLogs;
+  game.investmentEndsAt = undefined;
+  game.buffPhaseEndsAt = undefined;
+  game.discussionEndsAt = undefined;
+  game.tutorialStep = 0;
+  game.tutorialEntryPhase = undefined;
+  game.lastSettlement = undefined;
+  game.communityName = undefined;
+  game.globalLeaderboard = undefined;
+  game.auctionDistributedCardIds = undefined;
+  game.sessionStartedAt = undefined;
+  game.sessionTelemetry = emptySessionTelemetry();
+}
+
+export function needsSessionReset(game: GameState): boolean {
+  if (game.phase === "GAME_OVER" || game.phase === "COMMUNITY_NAMING") return true;
+  if (game.communityName) return true;
+  if (game.players.some((p) => p.analysisResult)) return true;
+  return false;
+}
+
+/** 教程结束（或从教程直接开局）时：必要时全量 reset，否则回到开局前 ERA_INTRO */
+export function finishTutorialExit(game: GameState): void {
+  if (shouldResetAfterTutorial(game)) {
+    resetGameSession(game);
+  } else {
+    game.phase = "ERA_INTRO";
+    game.tutorialStep = 0;
+    game.tutorialEntryPhase = undefined;
+  }
+}
+
+export function shouldResetAfterTutorial(game: GameState): boolean {
+  const entry = game.tutorialEntryPhase;
+  if (!entry) return false;
+  if (entry !== "ERA_INTRO" && entry !== "TUTORIAL") return true;
+  if (game.currentEra > 1 || game.roundInEra > 1 || game.globalRound > 1) return true;
+  if (game.lastSettlement) return true;
+  if (game.activeProjects.length > 0) return true;
+  if (game.players.some((p) => p.wealth > 0 || (p.inventory?.length ?? 0) > 0)) return true;
+  return false;
 }

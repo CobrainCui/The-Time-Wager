@@ -1,21 +1,17 @@
 import React, { useState, useEffect } from "react";
+import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
 
-const BUFF_DEFS: Record<string, { name: string; desc: string; icon: string; color: string }> = {
-  buff_gold:      { name: "点石成金", desc: "本轮回报 ×1.5",            icon: "💰", color: "#f59e0b" },
-  buff_short:     { name: "项目做空", desc: "猜测项目状态赢取奖励",      icon: "📉", color: "#3b82f6" },
-  buff_slack:     { name: "摸鱼传染", desc: "对手精力 -5",               icon: "😴", color: "#ef4444" },
-  buff_rebound:   { name: "反弹琵琶", desc: "主动开启护盾，反弹攻击",     icon: "🎸", color: "#10b981" },
-  buff_insurance: { name: "保险",     desc: "被动防爆，获赔 100",         icon: "🛡️", color: "#6366f1" },
-  buff_spirit:    { name: "精神老伙", desc: "精力 +5",                   icon: "🔥", color: "#f97316" },
-  buff_swap:      { name: "偷天换日", desc: "选座时与对手互换顺位",        icon: "🔄", color: "#a855f7" },
-  buff_lottery:   { name: "彩票",     desc: "投 20 面骰子赌运气",         icon: "🎲", color: "#ec4899" },
-};
+import { BUFF_DEFS } from "../data/buffDefs";
 
-interface Props { game: GameState; me: Player; }
+interface Props {
+  game: GameState;
+  me: Player;
+  onOpenInvestmentPrefill?: () => void;
+}
 
-export const BuffUsage: React.FC<Props> = ({ game, me }) => {
+export const BuffUsage: React.FC<Props> = ({ game, me, onOpenInvestmentPrefill }) => {
   const [timeLeft, setTimeLeft] = useState(0);
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [targetPlayer, setTargetPlayer] = useState("");
@@ -71,7 +67,7 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
           >
             🔮 道具与策略
           </h1>
-          <p style={{ color: "var(--color-text-secondary)", fontSize: "0.9rem" }}>
+          <p style={{ color: "var(--color-text-secondary)", fontSize: uiRem(0.9) }}>
             合理使用手牌改变战局，或保留至下一轮
           </p>
           {/* 倒计时 */}
@@ -94,14 +90,14 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
           {/* 左：手牌 */}
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
-              <h3 style={{ fontWeight: 700, fontSize: "1rem", color: "white" }}>📦 我的手牌</h3>
+              <h3 style={{ fontWeight: 700, fontSize: uiRem(1), color: "white" }}>📦 我的手牌</h3>
               <span
                 style={{
                   background: "rgba(255,255,255,0.06)",
                   border: "1px solid var(--color-border)",
                   borderRadius: "9999px",
                   padding: "0.125rem 0.625rem",
-                  fontSize: "0.75rem",
+                  fontSize: uiRem(0.75),
                   color: "var(--color-text-muted)",
                 }}
               >
@@ -160,14 +156,24 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <span style={{ fontSize: "1.75rem" }}>{def.icon}</span>
-                        {isSelected && <span style={{ color: def.color, fontSize: "1rem" }}>✓</span>}
-                        {isUsed && <span style={{ fontSize: "0.65rem", color: "var(--color-text-muted)" }}>已用</span>}
+                        {isSelected && <span style={{ color: def.color, fontSize: uiRem(1) }}>✓</span>}
+                        {isUsed && <span style={{ fontSize: uiRem(0.65), color: "var(--color-text-muted)" }}>已用</span>}
                       </div>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: "0.9rem", color: isSelected ? def.color : "white", marginBottom: "0.25rem" }}>
+                        <div style={{ fontWeight: 700, fontSize: uiRem(0.9), color: isSelected ? def.color : "white", marginBottom: "0.25rem" }}>
                           {def.name}
                         </div>
-                        <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", lineHeight: 1.4 }}>
+                        <div
+                          style={{
+                            fontSize: uiRem(0.72),
+                            color: "var(--color-text-muted)",
+                            lineHeight: 1.35,
+                            overflow: "hidden",
+                            display: "-webkit-box",
+                            WebkitLineClamp: 3,
+                            WebkitBoxOrient: "vertical",
+                          }}
+                        >
                           {def.desc}
                         </div>
                       </div>
@@ -192,7 +198,7 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
                 boxShadow: selectedDef ? `0 0 20px ${selectedDef.color}18` : undefined,
               }}
             >
-              <h4 style={{ fontWeight: 700, color: selectedDef ? selectedDef.color : "var(--color-text-muted)", marginBottom: "1rem", fontSize: "0.95rem" }}>
+              <h4 style={{ fontWeight: 700, color: selectedDef ? selectedDef.color : "var(--color-text-muted)", marginBottom: "1rem", fontSize: uiRem(0.95) }}>
                 {selectedDef ? `⚡ ${selectedDef.name}` : "请先选择卡牌"}
               </h4>
 
@@ -204,7 +210,7 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
                     alignItems: "center",
                     justifyContent: "center",
                     color: "var(--color-text-muted)",
-                    fontSize: "0.875rem",
+                    fontSize: uiRem(0.875),
                   }}
                 >
                   👈 点击左侧卡牌激活
@@ -214,14 +220,14 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
                   {/* 目标玩家 */}
                   {(selectedCard === "buff_slack" || selectedCard === "buff_swap") && (
                     <div>
-                      <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+                      <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
                         目标玩家
                       </label>
                       <select
                         className="input"
                         value={targetPlayer}
                         onChange={(e) => setTargetPlayer(e.target.value)}
-                        style={{ fontSize: "0.9rem" }}
+                        style={{ fontSize: uiRem(0.9) }}
                       >
                         <option value="">-- 选择目标 --</option>
                         {game.players.filter((p) => p.id !== me.id).map((p) => (
@@ -235,15 +241,15 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
                   {selectedCard === "buff_short" && (
                     <>
                       <div>
-                        <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>目标项目</label>
-                        <select className="input" value={targetProject} onChange={(e) => setTargetProject(Number(e.target.value))} style={{ fontSize: "0.9rem" }}>
+                        <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>目标项目</label>
+                        <select className="input" value={targetProject} onChange={(e) => setTargetProject(Number(e.target.value))}>
                           <option value="">-- 选择项目 --</option>
                           {game.activeProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
                       </div>
                       <div>
-                        <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>预测结果</label>
-                        <select className="input" value={extraData} onChange={(e) => setExtraData(e.target.value)} style={{ fontSize: "0.9rem" }}>
+                        <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>预测结果</label>
+                        <select className="input" value={extraData} onChange={(e) => setExtraData(e.target.value)}>
                           <option value="">-- 选择预测 --</option>
                           <option value="empty">无人投资 (赢+200)</option>
                           <option value="full">恰好完成 (赢+150)</option>
@@ -254,7 +260,7 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
 
                   {/* 反弹琵琶说明 */}
                   {selectedCard === "buff_rebound" && (
-                    <div style={{ fontSize: "0.825rem", color: "var(--color-text-secondary)", lineHeight: 1.6, background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "0.625rem", padding: "0.75rem" }}>
+                    <div style={{ fontSize: uiRem(0.825), color: "var(--color-text-secondary)", lineHeight: 1.6, background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "0.625rem", padding: "0.75rem" }}>
                       开启后，本轮受到【摸鱼传染】时自动反弹，精力+10而非-5。
                     </div>
                   )}
@@ -263,7 +269,7 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
                   <button onClick={handleUse} className="btn btn-purple btn-full" style={{ background: selectedDef ? `linear-gradient(135deg, ${selectedDef.color}, ${selectedDef.color}bb)` : undefined }}>
                     ✨ 立即发动
                   </button>
-                  <button onClick={() => setSelectedCard(null)} className="btn btn-ghost btn-full" style={{ fontSize: "0.85rem" }}>
+                  <button onClick={() => setSelectedCard(null)} className="btn btn-ghost btn-full">
                     取消
                   </button>
                 </div>
@@ -302,9 +308,27 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
               padding: "1.5rem",
               display: "flex",
               justifyContent: "center",
+              gap: "0.75rem",
+              flexWrap: "wrap",
               background: "linear-gradient(to top, rgba(10,11,16,0.98) 60%, transparent)",
             }}
           >
+            {onOpenInvestmentPrefill && (
+              <button
+                type="button"
+                onClick={onOpenInvestmentPrefill}
+                className="btn btn-sm"
+                style={{
+                  border: "1px solid rgba(59,130,246,0.45)",
+                  color: "#93c5fd",
+                  background: "rgba(59,130,246,0.12)",
+                  padding: "0.75rem 1.5rem",
+                  fontWeight: 600,
+                }}
+              >
+                📋 讨论并预填投资
+              </button>
+            )}
             <button
               onClick={() => socket.emit("playerReady")}
               style={{
@@ -313,7 +337,7 @@ export const BuffUsage: React.FC<Props> = ({ game, me }) => {
                 borderRadius: "9999px",
                 color: "var(--color-text-secondary)",
                 cursor: "pointer",
-                fontSize: "1.05rem",
+                fontSize: uiRem(1.05),
                 fontWeight: 600,
                 padding: "0.75rem 2rem",
                 letterSpacing: "0.03em",

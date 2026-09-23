@@ -1,37 +1,31 @@
+import { uiRem } from "../utils/typography";
 import React, { useState, useEffect } from "react";
-import { GameState } from "../types";
+import { GameState, Player } from "../types";
 import { socket, BACKEND_URL } from "../socket";
+import { adminApiUrl, adminAuthHeaders } from "../admin/adminFetch";
 import { TUTORIAL_SLIDES } from "../tutorialData";
 import { ALL_PROJECTS } from "../config/projects";
+import { getAuctionCardsForEra, getAuctionRound, BUFF_CARD_DEFS } from "../config/buffCards";
+import { BuffCardArt } from "../components/BuffCardArt";
 
-const AUCTION_CARDS: Record<number, { id: string; name: string }[]> = {
-  1: [
-    { id: "buff_gold", name: "点石成金" },
-    { id: "buff_short", name: "项目做空" },
-  ],
-  2: [
-    { id: "buff_slack", name: "摸鱼传染" },
-    { id: "buff_rebound", name: "反弹琵琶" },
-    { id: "buff_insurance", name: "保险" },
-  ],
-  3: [
-    { id: "buff_spirit", name: "精神老伙" },
-    { id: "buff_swap", name: "偷天换日" },
-    { id: "buff_lottery", name: "彩票" },
-  ],
-};
-
-const CARD_NAME_MAP: Record<string, string> = {
-  buff_gold: "点石成金", buff_short: "项目做空", buff_slack: "摸鱼传染",
-  buff_rebound: "反弹琵琶", buff_insurance: "保险", buff_spirit: "精神老伙",
-  buff_swap: "偷天换日", buff_lottery: "彩票",
-};
+const CARD_NAME_MAP: Record<string, string> = Object.fromEntries(
+  Object.entries(BUFF_CARD_DEFS).map(([id, d]) => [id, d.name])
+);
 
 interface Props {
   game: GameState;
   onExit?: () => void;
   projectImages?: Record<number, number>;
   eraImages?: Record<string, number>;
+  buffImages?: Record<string, number>;
+}
+
+function isAiPlayer(p: Player): boolean {
+  if (p.isAI) return true;
+  if (p.name.startsWith("🤖") || p.name.startsWith("AI_")) return true;
+  if (p.id.startsWith("ai_")) return true;
+  if (/^AI\d+$/i.test(p.id) || /^AI\d+$/i.test(p.name)) return true;
+  return false;
 }
 
 const PHASE_NAMES: Record<string, string> = {
@@ -40,10 +34,11 @@ const PHASE_NAMES: Record<string, string> = {
   AUCTION: "拍卖会", GAME_OVER: "游戏结束", COMMUNITY_NAMING: "社区命名",
 };
 
-export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, eraImages = {} }) => {
+export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, eraImages = {}, buffImages = {} }) => {
   const [timeLeft, setTimeLeft] = useState(0);
   const [auctionCost, setAuctionCost] = useState(0);
   const [isImagePanelOpen, setIsImagePanelOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const target = game.investmentEndsAt || game.buffPhaseEndsAt;
@@ -54,15 +49,19 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
 
   const emit = (event: string, extra?: object) => socket.emit(event, { roomId: game.roomId, ...extra });
 
-  const handleDeleteImage = async (id: number | string, type: 'project' | 'era', event: React.MouseEvent) => {
+  const handleDeleteImage = async (id: number | string, type: 'project' | 'era' | 'buff', event: React.MouseEvent) => {
     event.preventDefault();
     if (!window.confirm("确定要删除这张图片吗？")) return;
+    const path =
+      type === "era" ? "delete-era-image" : type === "buff" ? "delete-buff-image" : "delete-image";
     try {
-      await fetch(`${BACKEND_URL}/api/${type === 'era' ? 'delete-era-image' : 'delete-image'}`, {
+      const res = await fetch(adminApiUrl(`/api/${path}`), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...adminAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ id: String(id) }),
       });
+      if (res.status === 401) alert("未授权：请重新登录管理后台");
+      else if (!res.ok) alert("删除失败");
     } catch (err) {
       console.error("Delete failed", err);
     }
@@ -84,17 +83,80 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
     if (amount !== null) emit("adminSettleLottery", { targetPlayerId: playerId, amount: Number(amount) });
   };
 
-  const sortedPlayers = [...game.players].sort((a, b) => b.wealth - a.wealth);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportData = async () => {
+    if (exporting) return;
+    if (
+      game.phase !== "GAME_OVER" &&
+      game.phase !== "COMMUNITY_NAMING" &&
+      !window.confirm("本局尚未结束，导出数据可能不完整。是否继续？")
+    ) {
+      return;
+    }
+    setExporting(true);
+    const base = game.roomId.replace(/[^\w\u4e00-\u9fa5-]+/g, "_").slice(0, 64) || "room";
+    const q = `roomId=${encodeURIComponent(game.roomId)}`;
+    try {
+      const expectedType =
+        (format: "json" | "xlsx") =>
+          format === "json"
+            ? "application/json"
+            : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+      for (const [format, ext] of [["json", "json"], ["xlsx", "xlsx"]] as const) {
+        const res = await fetch(adminApiUrl(`/api/session-export?${q}&format=${format}`), {
+          headers: adminAuthHeaders(),
+        });
+        if (res.status === 401) {
+          alert("未授权：请重新登录管理后台");
+          return;
+        }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(`导出失败 (${format}): ${(err as { error?: string }).error ?? res.statusText}`);
+          return;
+        }
+        const ct = res.headers.get("Content-Type") ?? "";
+        if (!ct.includes(expectedType(format))) {
+          alert(`导出失败 (${format})：服务器返回了非预期类型，请检查登录状态或房间是否仍存在`);
+          return;
+        }
+        const blob = await res.blob();
+        downloadBlob(blob, `${base}_session.${ext}`);
+        if (format === "json") await sleep(400);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("导出出错，请检查网络与服务器状态");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const humanPlayers = [...game.players]
+    .filter((p) => !isAiPlayer(p))
+    .sort((a, b) => b.wealth - a.wealth);
   const currentStep = game.tutorialStep || 0;
   const isLastStep = currentStep >= TUTORIAL_SLIDES.length - 1;
-  const auctionRound = Math.max(1, Math.min(game.currentEra - 1, 3)) as 1 | 2 | 3;
-  const currentAuctionCards = AUCTION_CARDS[auctionRound] || AUCTION_CARDS[1];
+  const auctionRound = getAuctionRound(game.currentEra);
+  const currentAuctionCards = getAuctionCardsForEra(game.currentEra);
+  const distributedSet = new Set(game.auctionDistributedCardIds || []);
 
   const mins = Math.floor(timeLeft / 60);
   const secs = (timeLeft % 60).toString().padStart(2, "0");
   const isUrgent = timeLeft < 60 && timeLeft > 0;
 
-  const handleImageUpload = (id: string | number, type: 'project' | 'era', e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (id: string | number, type: 'project' | 'era' | 'buff', e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -132,11 +194,15 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
             formData.append("image", blob, `${id}.jpg`);
             
             try {
-              const res = await fetch(`${BACKEND_URL}/api/${type === 'era' ? 'upload-era-image' : 'upload-image'}`, {
+              const res = await fetch(adminApiUrl(
+                `/api/${type === "era" ? "upload-era-image" : type === "buff" ? "upload-buff-image" : "upload-image"}`
+              ), {
                 method: "POST",
-                body: formData
+                headers: adminAuthHeaders(),
+                body: formData,
               });
-              if (!res.ok) alert("上传失败！");
+              if (res.status === 401) alert("未授权：请重新登录管理后台");
+              else if (!res.ok) alert("上传失败！");
             } catch (err) {
               console.error(err);
               alert("上传出错：" + err);
@@ -150,7 +216,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#070b14", color: "white", fontFamily: "var(--font-sans)" }}>
+    <div className="admin-view" style={{ minHeight: "100vh", background: "#070b14", color: "white", fontFamily: "var(--font-sans)" }}>
       {/* 顶部控制栏 */}
       <div
         style={{
@@ -171,11 +237,11 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
             <h1 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#fbbf24" }}>👑 上帝控制台</h1>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>
               Room: {game.roomId}
             </span>
           </div>
-          <div style={{ display: "flex", gap: "1rem", alignItems: "center", marginTop: "0.25rem", flexWrap: "wrap", fontSize: "0.8rem" }}>
+          <div style={{ display: "flex", gap: "1rem", alignItems: "center", marginTop: "0.25rem", flexWrap: "wrap", fontSize: uiRem(0.8) }}>
             <span>
               阶段:{" "}
               <span style={{ color: "#60a5fa", fontWeight: 700 }}>
@@ -201,7 +267,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: "0.625rem", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
           {game.phase === "ERA_INTRO" && (
             <>
               <button className="btn btn-primary btn-sm" onClick={() => emit("adminStartTutorial")}>🎓 教程</button>
@@ -211,7 +277,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
           {game.phase === "TUTORIAL" && (
             <>
               <button className="btn btn-ghost btn-sm" onClick={() => emit("adminTutorialPrev")} disabled={currentStep === 0}>←</button>
-              <span style={{ padding: "0.3rem 0.5rem", fontSize: "0.8rem", color: "var(--color-text-muted)" }}>{currentStep + 1}/{TUTORIAL_SLIDES.length}</span>
+              <span style={{ padding: "0.3rem 0.5rem", fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>{currentStep + 1}/{TUTORIAL_SLIDES.length}</span>
               {isLastStep
                 ? <button className="btn btn-success btn-sm" onClick={() => emit("adminEndTutorial")}>✓ 完成</button>
                 : <button className="btn btn-primary btn-sm" onClick={() => emit("adminTutorialNext")}>→</button>
@@ -226,104 +292,21 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
           {game.phase !== "ERA_INTRO" && game.phase !== "TUTORIAL" && (
             <button className="btn btn-sm" style={{ background: "rgba(249,115,22,0.15)", border: "1px solid rgba(249,115,22,0.35)", color: "#fb923c" }} onClick={() => { if (confirm(`跳过 [${game.phase}]？`)) emit("adminSkipPhase"); }}>⏭ 跳过</button>
           )}
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.4)", color: "#93c5fd" }}
+            onClick={handleExportData}
+            disabled={exporting}
+          >
+            {exporting ? "导出中…" : "📥 导出数据"}
+          </button>
           <button className="btn btn-danger btn-sm" onClick={() => { if (confirm("警告：解散房间？")) emit("adminDissolveRoom"); }}>💣 解散</button>
           <button className="btn btn-ghost btn-sm" onClick={onExit}>← 返回</button>
         </div>
       </div>
 
       <div style={{ padding: "1.5rem", maxWidth: "1400px", margin: "0 auto" }}>
-        
-        {/* 项目图片管理 */}
-        <div
-          style={{
-            background: "rgba(16,185,129,0.08)",
-            border: "2px solid rgba(16,185,129,0.4)",
-            borderRadius: "1.25rem",
-            padding: "1.5rem",
-            marginBottom: "1.5rem",
-          }}
-        >
-          <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#34d399", marginBottom: "1rem" }}>
-            🖼️ 游戏项目图片全局管理
-          </h2>
-          <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-            {game.activeProjects.map(proj => (
-              <div key={proj.id} style={{
-                background: "rgba(0,0,0,0.3)", border: "1px solid rgba(16,185,129,0.25)",
-                borderRadius: "0.875rem", padding: "1rem", width: "200px", textAlign: "center"
-              }}>
-                <div style={{ fontWeight: 700, color: "white", marginBottom: "0.5rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{proj.name}</div>
-                {projectImages[proj.id] ? (
-                  <img src={`${BACKEND_URL}/uploads/${proj.id}.jpg?v=${projectImages[proj.id]}`} alt={proj.name} style={{ width: "100%", height: "100px", objectFit: "cover", borderRadius: "0.5rem", marginBottom: "0.5rem" }} />
-                ) : (
-                  <div style={{ width: "100%", height: "100px", background: "rgba(255,255,255,0.05)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-muted)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>
-                    <img src={`/images/projects/${proj.name}.jpg?v=final2`} className="w-full h-32 object-cover rounded-md" alt={proj.name} onError={(e) => e.currentTarget.style.display='none'} />
-                  </div>
-                )}
-                <label className="btn btn-sm btn-full" style={{ background: "rgba(16,185,129,0.2)", border: "1px solid #10b981", color: "#34d399", cursor: "pointer", display: "block" }}>
-                  上传图片
-                  <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => handleImageUpload(proj.id, 'project', e)} />
-                </label>
-              </div>
-            ))}
-            {game.activeProjects.length === 0 && (
-              <div style={{ color: "var(--color-text-muted)" }}>当游戏正式开始并抽取项目后，方可上传图片。</div>
-            )}
-          </div>
-        </div>
-
-        {/* AI 与自动调优控制台 */}
-        <div
-          style={{
-            background: "rgba(59,130,246,0.08)",
-            border: "2px solid rgba(59,130,246,0.4)",
-            borderRadius: "1.25rem",
-            padding: "1.5rem",
-            marginBottom: "1.5rem",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: "1rem"
-          }}
-        >
-          <div>
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#60a5fa", marginBottom: "0.5rem" }}>🤖 AI 调优控制台</h2>
-            <div style={{ color: "var(--color-text-muted)", fontSize: "0.8rem" }}>通过加入具备特定性格设定的大模型玩家，自动进行游戏以调优参数权重。</div>
-          </div>
-          <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <select id="aiPersonaSelect" className="input" style={{ fontSize: "0.85rem" }}>
-                <option value="罗盘精算师">罗盘精算师 (理智/算计)</option>
-                <option value="时荫植者">时荫植者 (长线/蛰伏)</option>
-                <option value="涌机触发者">涌机触发者 (高风险/攻击)</option>
-                <option value="瞬刻炼金士">瞬刻炼金士 (短线/机会主义)</option>
-              </select>
-              <button 
-                className="btn btn-sm" 
-                style={{ background: "rgba(59,130,246,0.2)", border: "1px solid #3b82f6", color: "#60a5fa" }}
-                onClick={() => {
-                  const sel = document.getElementById("aiPersonaSelect") as HTMLSelectElement;
-                  if (sel) emit("adminAddAI", { persona: sel.value });
-                }}
-              >+ 添加 AI 玩家</button>
-            </div>
-            <div style={{ width: "1px", height: "30px", background: "rgba(255,255,255,0.1)" }}></div>
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <input id="autoTuneIterations" type="number" defaultValue={5} className="input" style={{ width: "4rem", textAlign: "center" }} title="迭代次数" />
-              <button 
-                className="btn btn-danger btn-sm" 
-                onClick={() => {
-                  const it = document.getElementById("autoTuneIterations") as HTMLInputElement;
-                  const iterations = Number(it?.value) || 5;
-                  if (confirm(`将在后端全自动运行 ${iterations} 次 6个大模型的游戏，确保已配置 OPENAI_API_KEY。确认执行？`)) {
-                    emit("adminStartAutoPlay", { iterations });
-                  }
-                }}
-              >⚡ 开始无头对弈 (Auto-Play)</button>
-            </div>
-          </div>
-        </div>
 
         {/* 拍卖面板 */}
         {game.phase === "AUCTION" && (
@@ -338,45 +321,63 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
             }}
           >
             <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#c084fc", marginBottom: "1rem" }}>
-              🔨 拍卖发卡控制台
+              🔨 拍卖发卡控制台 · 第 {auctionRound} 场
             </h2>
             <div style={{ display: "flex", alignItems: "center", gap: "0.875rem", marginBottom: "1.25rem" }}>
-              <label style={{ fontWeight: 700, color: "#fbbf24", fontSize: "0.875rem" }}>成交价格：</label>
+              <label style={{ fontWeight: 700, color: "#fbbf24", fontSize: uiRem(0.875) }}>成交价格：</label>
               <input
                 type="number"
                 value={auctionCost}
                 onChange={(e) => setAuctionCost(Number(e.target.value))}
                 className="input"
-                style={{ width: "7rem", textAlign: "center", fontFamily: "var(--font-mono)", fontSize: "1.1rem" }}
+                style={{ width: "7rem", textAlign: "center", fontFamily: "var(--font-mono)", fontSize: uiRem(1.1) }}
               />
-              <span style={{ color: "var(--color-text-muted)", fontSize: "0.8rem" }}>先设定价格，再点击发放</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.8) }}>先设定价格，再点击发放</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "1rem" }}>
-              {currentAuctionCards.map((card) => (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "1rem" }}>
+              {currentAuctionCards.map((card) => {
+                const def = BUFF_CARD_DEFS[card.id];
+                const sold = distributedSet.has(card.id);
+                return (
                 <div
                   key={card.id}
                   style={{
                     background: "rgba(0,0,0,0.3)",
-                    border: "1px solid rgba(168,85,247,0.25)",
+                    border: `1px solid ${sold ? "rgba(100,100,100,0.3)" : "rgba(168,85,247,0.25)"}`,
                     borderRadius: "0.875rem",
                     padding: "1rem",
+                    opacity: sold ? 0.55 : 1,
                   }}
                 >
-                  <div style={{ fontWeight: 700, color: "#d8b4fe", marginBottom: "0.75rem", fontSize: "0.95rem" }}>
-                    🃏 {card.name}
+                  <BuffCardArt cardId={card.id} buffImages={buffImages} compact />
+                  <div style={{ fontWeight: 700, color: "#d8b4fe", margin: "0.75rem 0 0.25rem", fontSize: uiRem(0.95) }}>
+                    {def?.name || card.name}
+                    {sold && <span style={{ color: "var(--color-text-muted)", fontWeight: 600, marginLeft: "0.35rem" }}>(已成交)</span>}
                   </div>
+                  <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-secondary)", marginBottom: "0.75rem", lineHeight: 1.4 }}>
+                    {def?.desc}
+                  </div>
+                  <label className="btn btn-sm btn-full" style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.35)", color: "#c084fc", cursor: "pointer", display: "block", textAlign: "center", marginBottom: "0.5rem" }}>
+                    上传卡面 (3:4)
+                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => handleImageUpload(card.id, "buff", e)} />
+                  </label>
+                  {buffImages[card.id] ? (
+                    <button type="button" className="admin-inline-btn admin-delete-btn" style={{ marginBottom: "0.5rem" }} onClick={(e) => handleDeleteImage(card.id, "buff", e)}>
+                      删除卡面
+                    </button>
+                  ) : null}
                   <select
                     className="input"
-                    style={{ fontSize: "0.85rem" }}
+                    disabled={sold}
                     onChange={(e) => { if (e.target.value) { handleProposeBuff(e.target.value, card.id); e.target.value = ""; } }}
                   >
-                    <option value="">发给玩家...</option>
-                    {sortedPlayers.map((p) => (
+                    <option value="">{sold ? "已成交" : "发给玩家..."}</option>
+                    {!sold && humanPlayers.map((p) => (
                       <option key={p.id} value={p.id}>{p.name} (💰{p.wealth})</option>
                     ))}
                   </select>
                 </div>
-              ))}
+              );})}
             </div>
           </div>
         )}
@@ -392,21 +393,21 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
             }}
           >
             <div style={{ padding: "1rem 1.25rem", borderBottom: "1px solid var(--color-border)" }}>
-              <h2 style={{ fontWeight: 700, fontSize: "1rem" }}>👥 玩家实时监控</h2>
+              <h2 style={{ fontWeight: 700, fontSize: uiRem(1) }}>👥 玩家实时监控</h2>
             </div>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: uiRem(0.8) }}>
                 <thead>
                   <tr style={{ background: "rgba(255,255,255,0.02)", color: "var(--color-text-muted)" }}>
                     {["#", "昵称", "状态", "社交", "人格", "手牌", "已用", "⚡", "💰", "操作"].map((h, i) => (
-                      <th key={i} style={{ padding: "0.75rem 0.875rem", fontWeight: 700, fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", whiteSpace: "nowrap" }}>
+                      <th key={i} style={{ padding: "0.75rem 0.875rem", fontWeight: 700, fontSize: uiRem(0.7), textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", whiteSpace: "nowrap" }}>
                         {h}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedPlayers.map((p, idx) => {
+                  {humanPlayers.map((p, idx) => {
                     const hasLottery = p.activeBuffs?.some((b) => b.cardId === "buff_lottery");
                     return (
                       <tr key={p.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
@@ -422,8 +423,8 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                               border: `1px solid ${p.socialRank === "A" ? "rgba(212,175,55,0.6)" : "rgba(212,175,55,0.2)"}`,
                               borderRadius: "0.375rem",
                               color: p.socialRank === "A" ? "#d4af37" : "var(--color-text-secondary)",
-                              padding: "0.25rem 0.5rem",
-                              fontSize: "0.8rem",
+                              padding: "0.35rem 0.65rem",
+                              fontSize: uiRem(0.875),
                               outline: "none",
                               cursor: "pointer",
                             }}
@@ -439,24 +440,24 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                         <td style={{ padding: "0.875rem" }}>
                           {p.analysisResult ? (
                             <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-                              <span style={{ fontSize: "0.7rem", color: "#60a5fa" }}>🎭 {p.analysisResult.primaryPersona}</span>
+                              <span style={{ fontSize: uiRem(0.7), color: "#60a5fa" }}>🎭 {p.analysisResult.primaryPersona}</span>
                               {p.analysisResult.mbtiPersona && (
-                                <span style={{ fontSize: "0.7rem", color: "#34d399" }}>🧬 {p.analysisResult.mbtiPersona.code}</span>
+                                <span style={{ fontSize: uiRem(0.7), color: "#34d399" }}>🧬 {p.analysisResult.mbtiPersona.code}</span>
                               )}
                               {game.phase === "GAME_OVER" && (
-                                <span style={{ fontSize: "0.65rem", color: p.personaVote ? "#fbbf24" : "var(--color-text-muted)" }}>
+                                <span style={{ fontSize: uiRem(0.65), color: p.personaVote ? "#fbbf24" : "var(--color-text-muted)" }}>
                                   {p.personaVote === "fate" ? "🗳️选: 命运素描" : p.personaVote === "gene" ? "🗳️选: 决策基因" : p.personaVote === "neither" ? "🗳️选: 都不准" : "⏳未投票"}
                                 </span>
                               )}
                             </div>
                           ) : (
-                            <span style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>尚未分析</span>
+                            <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.75) }}>尚未分析</span>
                           )}
                         </td>
                         <td style={{ padding: "0.875rem" }}>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
                             {(p.inventory || []).map((cid, i) => (
-                              <span key={i} style={{ background: "rgba(168,85,247,0.2)", border: "1px solid rgba(168,85,247,0.4)", borderRadius: "0.25rem", padding: "0.15rem 0.5rem", color: "#d8b4fe", fontSize: "0.7rem", whiteSpace: "nowrap" }}>
+                              <span key={i} style={{ background: "rgba(168,85,247,0.2)", border: "1px solid rgba(168,85,247,0.4)", borderRadius: "0.25rem", padding: "0.15rem 0.5rem", color: "#d8b4fe", fontSize: uiRem(0.7), whiteSpace: "nowrap" }}>
                                 {CARD_NAME_MAP[cid] || cid}
                               </span>
                             ))}
@@ -466,11 +467,11 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                         <td style={{ padding: "0.875rem" }}>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
                             {(p.usedCards || []).map((cid, i) => (
-                              <span key={i} style={{ color: "var(--color-text-muted)", textDecoration: "line-through", fontSize: "0.7rem" }}>
+                              <span key={i} style={{ color: "var(--color-text-muted)", textDecoration: "line-through", fontSize: uiRem(0.7) }}>
                                 {CARD_NAME_MAP[cid] || cid}
                               </span>
                             ))}
-                            {(!p.usedCards || p.usedCards.length === 0) && <span style={{ color: "var(--color-text-muted)", fontSize: "0.7rem" }}>—</span>}
+                            {(!p.usedCards || p.usedCards.length === 0) && <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.7) }}>—</span>}
                           </div>
                         </td>
                         <td style={{ padding: "0.875rem", fontFamily: "var(--font-mono)", fontWeight: 700, color: "#34d399" }}>{p.energy}</td>
@@ -478,20 +479,25 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                         <td style={{ padding: "0.875rem" }}>
                           <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
                             <button
+                              type="button"
+                              className="admin-inline-btn"
                               onClick={() => { if (confirm(`踢出 ${p.name}？`)) emit("adminKickPlayer", { targetPlayerId: p.id }); }}
-                              style={{ fontSize: "0.7rem", padding: "0.2rem 0.5rem", background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: "0.375rem", color: "#f87171", cursor: "pointer" }}
+                              style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", color: "#f87171" }}
                             >踢</button>
                             {p.ready && (
                               <button
+                                type="button"
+                                className="admin-inline-btn"
                                 onClick={() => { if (confirm(`解锁 ${p.name}？`)) emit("adminUnlockPlayer", { targetPlayerId: p.id }); }}
-                                style={{ fontSize: "0.7rem", padding: "0.2rem 0.5rem", background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.35)", borderRadius: "0.375rem", color: "#fbbf24", cursor: "pointer" }}
+                                style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.35)", color: "#fbbf24" }}
                               >解</button>
                             )}
                             {hasLottery && (
                               <button
+                                type="button"
                                 onClick={() => handleSettleLottery(p.id)}
-                                className="animate-pulse"
-                                style={{ fontSize: "0.7rem", padding: "0.2rem 0.5rem", background: "rgba(16,185,129,0.2)", border: "1px solid rgba(16,185,129,0.4)", borderRadius: "0.375rem", color: "#34d399", cursor: "pointer" }}
+                                className="admin-inline-btn animate-pulse"
+                                style={{ background: "rgba(16,185,129,0.2)", border: "1px solid rgba(16,185,129,0.4)", color: "#34d399" }}
                               >🎲</button>
                             )}
                           </div>
@@ -517,7 +523,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
             }}
           >
             <div style={{ padding: "1rem 1.25rem", borderBottom: "1px solid var(--color-border)", flexShrink: 0 }}>
-              <h2 style={{ fontWeight: 700, fontSize: "1rem" }}>📜 游戏日志</h2>
+              <h2 style={{ fontWeight: 700, fontSize: uiRem(1) }}>📜 游戏日志</h2>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "0.875rem" }}>
               {[...game.logs].reverse().map((log, i) => (
@@ -528,7 +534,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                     paddingLeft: "0.75rem",
                     paddingTop: "0.375rem",
                     paddingBottom: "0.375rem",
-                    fontSize: "0.75rem",
+                    fontSize: uiRem(0.75),
                     color: "var(--color-text-secondary)",
                     lineHeight: 1.5,
                   }}
@@ -544,11 +550,13 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
         {/* 底部：图片上传折叠面板 */}
         <div style={{ marginTop: "2rem", marginBottom: "2rem", background: "var(--color-bg-card)", borderRadius: "1.25rem", border: "1px solid var(--color-border)", overflow: "hidden" }}>
           <button
+            type="button"
+            aria-expanded={isImagePanelOpen}
             onClick={() => setIsImagePanelOpen(!isImagePanelOpen)}
-            style={{ width: "100%", padding: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none", color: "white", cursor: "pointer", fontSize: "1.1rem", fontWeight: 700 }}
+            style={{ width: "100%", padding: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none", color: "white", cursor: "pointer", fontWeight: 700 }}
           >
-            <span>🖼 图片上传管理 {isImagePanelOpen ? "▼" : "▶"}</span>
-            <span style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", fontWeight: "normal" }}>点击展开</span>
+            <span className="admin-panel-toggle">🖼 图片上传管理 {isImagePanelOpen ? "▼" : "▶"}</span>
+            <span className="admin-panel-toggle-hint" style={{ color: "var(--color-text-muted)", fontWeight: "normal" }}>点击展开</span>
           </button>
           
           {isImagePanelOpen && (
@@ -556,7 +564,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
               
               {/* 时代图片上传区域 */}
               <div>
-                <h3 style={{ fontSize: "1rem", color: "#60a5fa", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <h3 style={{ fontSize: uiRem(1), color: "#60a5fa", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span>⏳</span> 时代图片上传 (竖版 2:3)
                 </h3>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "1rem" }}>
@@ -565,15 +573,15 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                     const imgUrl = `${BACKEND_URL}/uploads_eras/${eraName}.jpg${version ? "?v=" + version : ""}`;
                     return (
                       <div key={eraName} style={{ background: "rgba(255,255,255,0.03)", borderRadius: "0.75rem", padding: "0.75rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        <div style={{ fontSize: "0.8rem", fontWeight: 700 }}>{eraName}</div>
+                        <div style={{ fontSize: uiRem(0.8), fontWeight: 700 }}>{eraName}</div>
                         <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-                          <div style={{ width: "100%", aspectRatio: "2/3", background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed rgba(255,255,255,0.2)", color: "var(--color-text-muted)", fontSize: "0.75rem", overflow: "hidden", position: "relative" }}>
+                          <div style={{ width: "100%", aspectRatio: "2/3", background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed rgba(255,255,255,0.2)", color: "var(--color-text-muted)", fontSize: uiRem(0.75), overflow: "hidden", position: "relative" }}>
                             {version ? <img src={imgUrl} alt={eraName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "上传"}
                           </div>
                           <input type="file" accept="image/*" onChange={(e) => handleImageUpload(eraName, 'era', e)} style={{ display: "none" }} />
                         </label>
                         {version ? (
-                          <button onClick={(e) => handleDeleteImage(eraName, 'era', e)} style={{ width: "100%", padding: "0.4rem", background: "rgba(239,68,68,0.2)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "0.5rem", fontSize: "0.75rem", cursor: "pointer", marginTop: "0.25rem" }}>删除图片</button>
+                          <button type="button" onClick={(e) => handleDeleteImage(eraName, 'era', e)} className="admin-delete-btn">删除图片</button>
                         ) : null}
                       </div>
                     );
@@ -583,7 +591,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
 
               {/* 项目图片上传区域 */}
               <div>
-                <h3 style={{ fontSize: "1rem", color: "#fbbf24", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <h3 style={{ fontSize: uiRem(1), color: "#fbbf24", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span>🏢</span> 项目图片上传 (横版 16:9)
                 </h3>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "1rem" }}>
@@ -592,15 +600,15 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                     const imgUrl = `${BACKEND_URL}/uploads/${p.id}.jpg${version ? "?v=" + version : ""}`;
                     return (
                       <div key={p.id} style={{ background: "rgba(255,255,255,0.03)", borderRadius: "0.75rem", padding: "0.75rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }} title={p.name}>[{p.era}] {p.name}</div>
+                        <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-secondary)", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }} title={p.name}>[{p.era}] {p.name}</div>
                         <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-                          <div style={{ width: "100%", aspectRatio: "16/9", background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed rgba(255,255,255,0.2)", color: "var(--color-text-muted)", fontSize: "0.75rem", overflow: "hidden", position: "relative" }}>
+                          <div style={{ width: "100%", aspectRatio: "16/9", background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed rgba(255,255,255,0.2)", color: "var(--color-text-muted)", fontSize: uiRem(0.75), overflow: "hidden", position: "relative" }}>
                             {version ? <img src={imgUrl} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "上传"}
                           </div>
                           <input type="file" accept="image/*" onChange={(e) => handleImageUpload(p.id, 'project', e)} style={{ display: "none" }} />
                         </label>
                         {version ? (
-                          <button onClick={(e) => handleDeleteImage(p.id, 'project', e)} style={{ width: "100%", padding: "0.4rem", background: "rgba(239,68,68,0.2)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "0.5rem", fontSize: "0.75rem", cursor: "pointer", marginTop: "0.25rem" }}>删除图片</button>
+                          <button type="button" onClick={(e) => handleDeleteImage(p.id, 'project', e)} className="admin-delete-btn">删除图片</button>
                         ) : null}
                       </div>
                     );

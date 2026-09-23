@@ -1,4 +1,5 @@
 import React from "react";
+import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket, BACKEND_URL } from "../socket";
 
@@ -29,193 +30,177 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {} }) => {
   const eraGradient = card ? (ERA_GRADIENTS[card.themeColor] || ERA_GRADIENTS.blue) : ERA_GRADIENTS.blue;
   const eraNum = game.currentEra;
   const readyCount = game.readyPlayers?.length ?? 0;
+  const eraImgSrc = card
+    ? eraImages[card.era]
+      ? `${BACKEND_URL}/uploads_eras/${card.era}.jpg?v=${eraImages[card.era]}`
+      : `/images/eras/${card.era}.jpg?v=final1`
+    : "";
 
   return (
     <div
-      className="page-center flex-col"
+      className="page-center flex-col era-intro-shell"
       style={{
         background: `
           radial-gradient(ellipse at 50% 0%, ${eraColor}22 0%, transparent 60%),
           #070b14
         `,
-        minHeight: "100vh",
-        padding: "2rem 1rem",
+        padding: "1rem 1.25rem",
         textAlign: "center",
       }}
     >
-      {/* 时代标识 */}
-      <div className="animate-slideDown" style={{ marginBottom: "2rem" }}>
-        <div style={{ fontSize: "3rem", marginBottom: "0.5rem", animation: "float 3s ease-in-out infinite" }}>
-          {ERA_ICONS[eraNum] || "⏳"}
-        </div>
-        <div style={{ fontSize: "0.8rem", fontWeight: 700, letterSpacing: "0.3em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
-          第 {eraNum} 时代 · 第 {game.roundInEra} 轮
-        </div>
-        <div
-          style={{
-            fontSize: "4rem",
-            fontWeight: 900,
-            background: `linear-gradient(135deg, ${eraColor}, white)`,
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            backgroundClip: "text",
-            lineHeight: 1.1,
-          }}
-        >
-          {ERA_NAMES[eraNum] || "新时代"}
-        </div>
-      </div>
-
-      {/* 时代卡展示 */}
-      {card && (
-        <div
-          className="animate-scaleIn"
-          style={{
-            background: eraGradient,
-            border: `1px solid ${eraColor}44`,
-            borderRadius: "1.5rem",
-            padding: "2rem",
-            maxWidth: "600px",
-            width: "100%",
-            boxShadow: `0 0 40px ${eraColor}22`,
-            marginBottom: "2.5rem",
-          }}
-        >
+      <div className="era-intro-inner">
+        {/* 时代标识 */}
+        <div className="era-intro-header animate-slideDown" style={{ flexShrink: 0 }}>
+          <div style={{ fontSize: "2rem", lineHeight: 1, marginBottom: "0.25rem", animation: "float 3s ease-in-out infinite" }}>
+            {ERA_ICONS[eraNum] || "⏳"}
+          </div>
+          <div style={{ fontSize: uiRem(0.75), fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.25rem" }}>
+            第 {eraNum} 时代 · 第 {game.roundInEra} 轮
+          </div>
           <div
             style={{
-              fontSize: "1.75rem",
+              fontSize: "2.125rem",
               fontWeight: 900,
-              color: eraColor,
-              marginBottom: "0.75rem",
+              background: `linear-gradient(135deg, ${eraColor}, white)`,
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+              lineHeight: 1.15,
             }}
           >
-            {card.name}
-          </div>
-          <div
-            style={{
-              fontSize: "1.1rem",
-              color: "var(--color-text-secondary)",
-              fontStyle: "italic",
-              marginBottom: "1.25rem",
-              lineHeight: 1.6,
-            }}
-          >
-            "{card.description}"
-          </div>
-          <div
-            style={{
-              background: "rgba(0,0,0,0.25)",
-              borderRadius: "0.75rem",
-              padding: "0.875rem 1.25rem",
-              fontSize: "0.85rem",
-              color: "var(--color-text-secondary)",
-              lineHeight: 1.6,
-              border: "1px solid rgba(255,255,255,0.06)",
-              marginBottom: "1.5rem"
-            }}
-          >
-            📢 时代加成：本时代所有{" "}
-            <span style={{ color: eraColor, fontWeight: 700 }}>【{card.era}】</span>{" "}
-            主题的短期/长期项目，结算时第一名额外奖励财富。
-          </div>
-          
-          <div style={{ width: "100%", maxWidth: "320px", margin: "0 auto", borderRadius: "1rem", overflow: "hidden", boxShadow: `0 10px 30px rgba(0,0,0,0.5)`, border: `2px solid ${eraColor}66` }}>
-            <img 
-              src={eraImages[card.era] ? `${BACKEND_URL}/uploads_eras/${card.era}.jpg?v=${eraImages[card.era]}` : `/images/eras/${card.era}.jpg?v=final1`} 
-              alt={card.era} 
-              style={{ width: "100%", height: "auto", display: "block" }} 
-            />
+            {ERA_NAMES[eraNum] || "新时代"}
           </div>
         </div>
-      )}
 
-      {/* 玩家状态 */}
-      <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem", justifyContent: "center" }}>
-        <div
-          style={{
-            background: "rgba(52,211,153,0.1)",
-            border: "1px solid rgba(52,211,153,0.25)",
-            borderRadius: "9999px",
-            padding: "0.5rem 1.25rem",
-            fontFamily: "var(--font-mono)",
-            fontWeight: 700,
-            color: "#34d399",
-          }}
-        >
-          ⚡ 精力 {me.energy}
-        </div>
-        <div
-          style={{
-            background: "rgba(251,191,36,0.1)",
-            border: "1px solid rgba(251,191,36,0.25)",
-            borderRadius: "9999px",
-            padding: "0.5rem 1.25rem",
-            fontFamily: "var(--font-mono)",
-            fontWeight: 700,
-            color: "#fbbf24",
-          }}
-        >
-          💰 财富 {me.wealth}
-        </div>
-        {me.draftOrder && (
+        {/* 时代卡展示（竖版，仅图片） */}
+        {card && (
           <div
-            style={{
-              background: "rgba(168,85,247,0.1)",
-              border: "1px solid rgba(168,85,247,0.25)",
-              borderRadius: "9999px",
-              padding: "0.5rem 1.25rem",
-              fontFamily: "var(--font-mono)",
-              fontWeight: 700,
-              color: "#c084fc",
-            }}
+            className="era-intro-card-stack animate-scaleIn"
+            style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", width: "100%" }}
           >
-            💺 座次 #{me.draftOrder}
+            <div
+              className="era-intro-card"
+              style={{
+                background: eraGradient,
+                border: `1px solid ${eraColor}44`,
+                borderRadius: "1.25rem",
+                padding: "0.75rem",
+                boxShadow: `0 0 40px ${eraColor}22`,
+              }}
+            >
+              <div
+                className="era-intro-card-img-wrap"
+                style={{
+                  borderRadius: "0.875rem",
+                  overflow: "hidden",
+                  boxShadow: `0 10px 30px rgba(0,0,0,0.5)`,
+                  border: `2px solid ${eraColor}66`,
+                }}
+              >
+                <img src={eraImgSrc} alt={card.era} />
+              </div>
+            </div>
+            <p
+              className="era-intro-bonus"
+              style={{
+                marginTop: "0.875rem",
+                fontSize: uiRem(1.05),
+                fontWeight: 600,
+                color: "var(--color-text-secondary)",
+                lineHeight: 1.35,
+              }}
+            >
+              📢 时代加成：本时代所有{" "}
+              <span style={{ color: eraColor, fontWeight: 700 }}>【{card.era}】</span>{" "}
+              主题的短期/长期项目，结算时第一名额外奖励财富。
+            </p>
           </div>
         )}
-      </div>
 
-      {/* 准备按钮 */}
-      {me.ready ? (
-        <div
-          className="animate-pulse"
-          style={{
-            color: "#4ade80",
-            fontWeight: 700,
-            fontSize: "1.1rem",
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-          }}
-        >
-          <span style={{ width: "0.75rem", height: "0.75rem", borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />
-          已准备，等待其他玩家...
+        {/* 底栏：状态 + 准备 */}
+        <div className="era-intro-footer" style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem" }}>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", justifyContent: "center" }}>
+            <div
+              style={{
+                background: "rgba(52,211,153,0.1)",
+                border: "1px solid rgba(52,211,153,0.25)",
+                borderRadius: "9999px",
+                padding: "0.4rem 1rem",
+                fontFamily: "var(--font-mono)",
+                fontWeight: 700,
+                fontSize: uiRem(0.85),
+                color: "#34d399",
+              }}
+            >
+              ⚡ 精力 {me.energy}
+            </div>
+            <div
+              style={{
+                background: "rgba(251,191,36,0.1)",
+                border: "1px solid rgba(251,191,36,0.25)",
+                borderRadius: "9999px",
+                padding: "0.4rem 1rem",
+                fontFamily: "var(--font-mono)",
+                fontWeight: 700,
+                fontSize: uiRem(0.85),
+                color: "#fbbf24",
+              }}
+            >
+              💰 财富 {me.wealth}
+            </div>
+            {me.draftOrder && (
+              <div
+                style={{
+                  background: "rgba(168,85,247,0.1)",
+                  border: "1px solid rgba(168,85,247,0.25)",
+                  borderRadius: "9999px",
+                  padding: "0.4rem 1rem",
+                  fontFamily: "var(--font-mono)",
+                  fontWeight: 700,
+                  fontSize: uiRem(0.85),
+                  color: "#c084fc",
+                }}
+              >
+                💺 座次 #{me.draftOrder}
+              </div>
+            )}
+          </div>
+
+          {me.ready ? (
+            <div
+              className="animate-pulse"
+              style={{
+                color: "#4ade80",
+                fontWeight: 700,
+                fontSize: uiRem(1),
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+              }}
+            >
+              <span style={{ width: "0.625rem", height: "0.625rem", borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />
+              已准备，等待其他玩家...
+            </div>
+          ) : (
+            <button
+              onClick={() => socket.emit("playerReady")}
+              className="btn btn-lg"
+              style={{
+                background: `linear-gradient(135deg, ${eraColor}, ${eraColor}aa)`,
+                color: "white",
+                padding: "0.75rem 2.5rem",
+                boxShadow: `0 8px 30px ${eraColor}44`,
+                border: "none",
+              }}
+            >
+              我准备好了 ✓
+            </button>
+          )}
+
+          <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-muted)" }}>
+            已准备 {readyCount} / {game.players.length} 人
+          </div>
         </div>
-      ) : (
-        <button
-          onClick={() => socket.emit("playerReady")}
-          className="btn btn-lg"
-          style={{
-            background: `linear-gradient(135deg, ${eraColor}, ${eraColor}aa)`,
-            color: "white",
-            padding: "1rem 3rem",
-            fontSize: "1.1rem",
-            boxShadow: `0 8px 30px ${eraColor}44`,
-            border: "none",
-          }}
-        >
-          我准备好了 ✓
-        </button>
-      )}
-
-      {/* 等待进度 */}
-      <div
-        style={{
-          marginTop: "1.5rem",
-          fontSize: "0.8rem",
-          color: "var(--color-text-muted)",
-        }}
-      >
-        已准备 {readyCount} / {game.players.length} 人
       </div>
     </div>
   );

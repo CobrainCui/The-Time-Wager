@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { uiRem } from "../utils/typography";
 import { GameState, Player, SettlementProjectResult } from "../types";
 import { socket } from "../socket";
 
@@ -33,8 +34,8 @@ const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) =
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontWeight: 700, color: "white", fontSize: "0.95rem" }}>{result.name}</span>
-        <span style={{ fontSize: "0.75rem", fontWeight: 700, color: statusColor }}>{statusText}</span>
+        <span style={{ fontWeight: 700, color: "white", fontSize: uiRem(0.95) }}>{result.name}</span>
+        <span style={{ fontSize: uiRem(0.75), fontWeight: 700, color: statusColor }}>{statusText}</span>
       </div>
       <div style={{ width: "100%", height: "5px", background: "rgba(255,255,255,0.06)", borderRadius: "9999px", overflow: "hidden" }}>
         <div
@@ -47,7 +48,7 @@ const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) =
           }}
         />
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: uiRem(0.75), color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
         <span>{result.isExploded ? "---" : result.totalInvested} / {result.maxEnergy}</span>
         <span style={{ color }}>{result.type === "short" ? "短期" : result.type === "long" ? "长期" : "风险"}</span>
       </div>
@@ -84,7 +85,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
   if (!snapshot) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-        <div style={{ textAlign: "center", color: "#fbbf24", fontSize: "1.25rem", animation: "pulse 1.5s infinite" }}>
+        <div style={{ textAlign: "center", color: "#fbbf24", fontSize: uiRem(1.25), animation: "pulse 1.5s infinite" }}>
           📊 正在生成结算报告...
         </div>
       </div>
@@ -102,7 +103,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
 
         {/* 标题 */}
         <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <div style={{ fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.375rem" }}>
+          <div style={{ fontSize: uiRem(0.75), fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.375rem" }}>
             Round {snapshot.round} · 结算报告
           </div>
           <h1 style={{ fontSize: "2.25rem", fontWeight: 900, color: "white" }}>本轮战报</h1>
@@ -119,7 +120,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
               textAlign: "center",
             }}
           >
-            <div style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+            <div style={{ fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
               本轮净收益
             </div>
             <div
@@ -143,7 +144,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
               textAlign: "center",
             }}
           >
-            <div style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+            <div style={{ fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
               当前总财富
             </div>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: "2.75rem", fontWeight: 900, color: "#fbbf24", lineHeight: 1 }}>
@@ -158,10 +159,10 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
               padding: "1.5rem",
             }}
           >
-            <div style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+            <div style={{ fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
               🚀 下一轮预告
             </div>
-            <div style={{ fontSize: "0.9rem", color: "var(--color-text-secondary)", lineHeight: 1.7 }}>
+            <div style={{ fontSize: uiRem(0.9), color: "var(--color-text-secondary)", lineHeight: 1.7 }}>
               <div>阶段：{isNextNewEra ? <span style={{ color: "#c084fc", fontWeight: 700 }}>拍卖 & 新时代</span> : "讨论轮"}</div>
               <div>精力重置：<span style={{ color: "white", fontWeight: 700, fontFamily: "var(--font-mono)" }}>{nextEnergy}</span></div>
             </div>
@@ -174,15 +175,15 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
             {/* 个人投资结算单 */}
             <div style={{ background: "var(--color-bg-card)", border: "1px solid var(--color-border)", borderRadius: "1rem", overflow: "hidden" }}>
               <div style={{ padding: "1rem 1.25rem", borderBottom: "1px solid var(--color-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <h3 style={{ fontWeight: 700, color: "white", fontSize: "1rem" }}>🧾 个人投资结算单</h3>
+                <h3 style={{ fontWeight: 700, color: "white", fontSize: uiRem(1) }}>🧾 个人投资结算单</h3>
               </div>
               {myProjects.length > 0 ? (
                 <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: uiRem(0.875) }}>
                     <thead>
                       <tr style={{ background: "rgba(255,255,255,0.03)", color: "var(--color-text-muted)" }}>
                         {["项目名称", "投入", "基础+排名+时代", "总回报"].map((h, i) => (
-                          <th key={i} style={{ padding: "0.75rem 1rem", fontWeight: 700, fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: i > 0 ? "center" : "left", whiteSpace: "nowrap" }}>
+                          <th key={i} style={{ padding: "0.75rem 1rem", fontWeight: 700, fontSize: uiRem(0.7), textTransform: "uppercase", letterSpacing: "0.06em", textAlign: i > 0 ? "center" : "left", whiteSpace: "nowrap" }}>
                             {h}
                           </th>
                         ))}
@@ -202,12 +203,12 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
                           <tr key={res.projectId} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
                             <td style={{ padding: "0.875rem 1rem", color: "white", fontWeight: 600 }}>
                               {res.name}
-                              <span style={{ marginLeft: "0.375rem", fontSize: "0.7rem", color: "var(--color-text-muted)" }}>{statusSuffix}</span>
+                              <span style={{ marginLeft: "0.375rem", fontSize: uiRem(0.7), color: "var(--color-text-muted)" }}>{statusSuffix}</span>
                             </td>
                             <td style={{ padding: "0.875rem 1rem", textAlign: "center", fontFamily: "var(--font-mono)", color: "var(--color-text-secondary)" }}>
                               {myInvest}
                             </td>
-                            <td style={{ padding: "0.875rem 1rem", textAlign: "center", fontFamily: "var(--font-mono)", fontSize: "0.8rem", color: rowColor }}>
+                            <td style={{ padding: "0.875rem 1rem", textAlign: "center", fontFamily: "var(--font-mono)", fontSize: uiRem(0.8), color: rowColor }}>
                               {gains.base}+{gains.rank}+{gains.era}
                             </td>
                             <td
@@ -216,7 +217,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
                                 textAlign: "center",
                                 fontFamily: "var(--font-mono)",
                                 fontWeight: 800,
-                                fontSize: "1rem",
+                                fontSize: uiRem(1),
                                 color: gains.total > 0 ? "#fbbf24" : gains.total < 0 ? "#f87171" : "var(--color-text-muted)",
                               }}
                             >
@@ -237,7 +238,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
 
             {/* 项目全览 */}
             <div style={{ background: "var(--color-bg-card)", border: "1px solid var(--color-border)", borderRadius: "1rem", padding: "1.25rem" }}>
-              <h3 style={{ fontWeight: 700, color: "white", marginBottom: "1rem", fontSize: "1rem" }}>🌍 本轮项目全览</h3>
+              <h3 style={{ fontWeight: 700, color: "white", marginBottom: "1rem", fontSize: uiRem(1) }}>🌍 本轮项目全览</h3>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "0.875rem" }}>
                 {snapshot.results.map((r) => <GlobalCard key={r.projectId} result={r} />)}
               </div>
@@ -257,7 +258,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
               }}
             >
               <div style={{ background: "rgba(245,158,11,0.06)", padding: "1rem", borderBottom: "1px solid rgba(245,158,11,0.15)", textAlign: "center" }}>
-                <h3 style={{ fontWeight: 700, color: "#fbbf24", fontSize: "1rem" }}>🏆 财富排行</h3>
+                <h3 style={{ fontWeight: 700, color: "#fbbf24", fontSize: uiRem(1) }}>🏆 财富排行</h3>
               </div>
               <div style={{ padding: "0.75rem" }}>
                 {leaderboard.map((p, idx) => {
@@ -287,17 +288,17 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          fontSize: "0.65rem",
+                          fontSize: uiRem(0.65),
                           fontWeight: 800,
                           flexShrink: 0,
                         }}
                       >
                         {idx + 1}
                       </span>
-                      <span style={{ flex: 1, fontWeight: isMe ? 700 : 400, color: isMe ? "#fbbf24" : "var(--color-text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.9rem" }}>
+                      <span style={{ flex: 1, fontWeight: isMe ? 700 : 400, color: isMe ? "#fbbf24" : "var(--color-text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: uiRem(0.9) }}>
                         {p.name}
                       </span>
-                      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: isMe ? "#fbbf24" : "var(--color-text-secondary)", fontSize: "0.95rem" }}>
+                      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: isMe ? "#fbbf24" : "var(--color-text-secondary)", fontSize: uiRem(0.95) }}>
                         {isMe ? p.wealth : "???"}
                       </span>
                     </div>
@@ -328,7 +329,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
         <button
           onClick={() => socket.emit("playerReady")}
           className="btn btn-primary btn-lg"
-          style={{ padding: "0.875rem 3.5rem", fontSize: "1.05rem" }}
+          style={{ padding: "0.875rem 3.5rem", fontSize: uiRem(1.05) }}
         >
           {me.ready ? "✅ 已确认，等待其他人..." : "确认战绩，继续 →"}
         </button>

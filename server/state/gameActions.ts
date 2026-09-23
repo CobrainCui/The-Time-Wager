@@ -1,4 +1,13 @@
 import { GameState, Player } from "./gameState.js";
+import { AI_BOT_ENABLED } from "../config/features.js";
+import { isAiPlayer } from "../util/isAiPlayer.js";
+import { applyInvestments, sanitizeInvestments } from "../logic/investmentLogic.js";
+
+export function playersRequiringAction(game: GameState): Player[] {
+  return game.players.filter(
+    (p) => p.connected && (AI_BOT_ENABLED || !isAiPlayer(p))
+  );
+}
 
 /**
  * 玩家点击“准备/下一阶段”
@@ -27,27 +36,47 @@ export function resetAllReady(game: GameState) {
  * 检查是否所有人都准备好了
  */
 export function isEveryoneReady(game: GameState): boolean {
-  // 只检查已连接的玩家
-  const connectedPlayers = game.players.filter(p => p.connected);
-  if (connectedPlayers.length === 0) return false;
-  
-  // 只要每个人都 ready = true 即可
-  return connectedPlayers.every(p => p.ready);
+  const players = playersRequiringAction(game);
+  if (players.length === 0) return false;
+  return players.every((p) => p.ready);
 }
 
 /**
  * 检查选座是否完成
  */
 export function isDraftingComplete(game: GameState): boolean {
-  const connectedPlayers = game.players.filter(p => p.connected);
-  // 所有人都有 draftOrder (非 undefined)
-  return connectedPlayers.every(p => p.draftOrder !== undefined);
+  const players = playersRequiringAction(game);
+  if (players.length === 0) return false;
+  return players.every((p) => p.draftOrder !== undefined);
 }
 
 /**
  * 检查投资是否完成
  */
 export function isInvestmentComplete(game: GameState): boolean {
-  const connectedPlayers = game.players.filter(p => p.connected);
-  return connectedPlayers.every(p => p.ready);
+  const players = playersRequiringAction(game);
+  if (players.length === 0) return false;
+  return players.every((p) => p.ready);
+}
+
+/**
+ * 倒计时结束或管理员强制结算：为尚未提交的玩家应用预填（或空方案）并标记 ready
+ */
+export function forceSubmitPendingInvestments(game: GameState) {
+  if (game.phase !== "INVESTMENT") return;
+
+  for (const player of playersRequiringAction(game)) {
+    if (player.ready) continue;
+    const raw = player.investmentDraft ?? {};
+    let investments = sanitizeInvestments(game, player, raw);
+    let applied = applyInvestments(game, player.id, investments);
+    if (!applied) {
+      investments = {};
+      applied = applyInvestments(game, player.id, investments);
+    }
+    if (!applied) {
+      game.logs.push(`⚠️ ${player.name} 自动提交投资失败，按未投资推进`);
+    }
+    togglePlayerReady(game, player.id);
+  }
 }

@@ -1,22 +1,37 @@
 import { Server, Socket } from "socket.io";
-import { GameState, createInitialGame, Player } from "../state/gameState.js";
-import { togglePlayerReady } from "../state/gameActions.js";
+import { createInitialGame, Player, resetGameSession, needsSessionReset, finishTutorialExit } from "../state/gameState.js";
+import { togglePlayerReady, forceSubmitPendingInvestments } from "../state/gameActions.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
-import { applyInvestments } from "../logic/investmentLogic.js"; 
-import { broadcastUpdate } from "./broadcast.js"; 
-import { rooms, customImagesVersions, customEraImagesVersions, globalLeaderboard } from "../state/store.js"; 
+import { applyInvestments, sanitizeInvestments } from "../logic/investmentLogic.js"; 
+import { broadcastUpdate, serializeGameForClient } from "./broadcast.js"; 
+import { AI_BOT_ENABLED } from "../config/features.js";
+import { rooms, customImagesVersions, customEraImagesVersions, customBuffImagesVersions, globalLeaderboard } from "../state/store.js"; 
 import { drawProjectsForEra } from "../state/gameEra.js";
 import { shuffleArray } from "../utils/shuffle.js";
 import { useBuffCard } from "../logic/buffLogic.js";
 import { analyzeGamePersona } from "../logic/analysisLogic.js";
+import { verifyAdminToken } from "../config/adminAuth.js";
+import { beginAuctionSession, isAuctionCardAvailable, markAuctionCardDistributed } from "../logic/auctionCards.js";
+import { pruneSettledTransactions } from "../util/pruneTransactions.js";
+import {
+  appendSessionEvent,
+  ensureSessionStarted,
+  recordPhaseChange,
+} from "../state/sessionTelemetry.js";
 
-function broadcastRoomList(io: Server, socket: Socket) {
-  const roomList = Object.keys(rooms).map(rid => ({
+function buildAdminRoomList() {
+  return Object.keys(rooms).map((rid) => ({
     roomId: rid,
     playerCount: rooms[rid].players.length,
-    phase: rooms[rid].phase
+    phase: rooms[rid].phase,
   }));
-  socket.emit("adminRoomList", roomList);
+}
+
+/** 向所有已登录管理员广播房间列表；若传入 socket 则同时给该连接发一份 */
+function broadcastRoomList(io: Server, socket?: Socket) {
+  const roomList = buildAdminRoomList();
+  io.to("super_admin_room").emit("adminRoomList", roomList);
+  if (socket) socket.emit("adminRoomList", roomList);
 }
 
 export function registerSocketHandlers(io: Server, socket: Socket) {
@@ -25,19 +40,13 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
   // 发送自定义图片版本号
   socket.emit("syncProjectImages", customImagesVersions);
   socket.emit("syncEraImages", customEraImagesVersions);
+  socket.emit("syncBuffImages", customBuffImagesVersions);
 
 
   // 1. 加入房间
   socket.on("joinGame", ({ roomId, name }: { roomId: string, name: string }) => {
     roomId = String(roomId).trim();
     const playerName = String(name).trim();
-
-    if (roomId === "999999") {
-      socket.data.isSuperAdmin = true;
-      socket.join("super_admin_room");
-      broadcastRoomList(io, socket);
-      return;
-    }
 
     socket.join(roomId);
     
@@ -86,26 +95,32 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     socket.emit("playerJoined", { playerId: player.id });
     broadcastUpdate(io, game);
     
-    io.to("super_admin_room").emit("adminRoomList", Object.keys(rooms).map(rid => ({
-        roomId: rid,
-        playerCount: rooms[rid].players.length,
-        phase: rooms[rid].phase
-    })));
+    broadcastRoomList(io);
   });
 
   // === Admin ===
+  socket.on("adminAuthenticate", ({ token }: { token?: string }) => {
+    if (!verifyAdminToken(token)) {
+      socket.data.isSuperAdmin = false;
+      socket.leave("super_admin_room");
+      socket.emit("adminAuthFailed", { message: "密钥无效" });
+      return;
+    }
+    socket.data.isSuperAdmin = true;
+    socket.join("super_admin_room");
+    socket.emit("adminAuthOk");
+    broadcastRoomList(io, socket);
+  });
+
   socket.on("adminSpectate", ({ targetRoomId }) => {
     if (!socket.data.isSuperAdmin) return;
     const game = rooms[targetRoomId];
-    if (game) {
-      socket.join(targetRoomId); 
-      socket.emit("gameUpdate", {
-        ...game,
-        readyPlayers: Array.from(game.readyPlayers),
-        phaseFinished: Array.from(game.phaseFinished),
-        isGodView: true 
-      });
+    if (!game) {
+      socket.emit("error", "房间不存在或已解散");
+      return;
     }
+    socket.join(targetRoomId);
+    socket.emit("gameUpdate", serializeGameForClient(game, { isGodView: true }));
   });
 
   socket.on("adminLeaveRoom", ({ roomId }) => {
@@ -118,6 +133,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (!socket.data.isSuperAdmin) return;
       const game = rooms[roomId];
       if (game) {
+          if (game.phase !== "TUTORIAL") {
+            game.tutorialEntryPhase = game.phase;
+          }
           game.phase = "TUTORIAL";
           game.tutorialStep = 0;
           game.logs.push("🎓 上帝开启了新手教程");
@@ -147,8 +165,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (!socket.data.isSuperAdmin) return;
       const game = rooms[roomId];
       if (game) {
-          game.phase = "ERA_INTRO"; 
-          game.tutorialStep = 0;
+          finishTutorialExit(game);
           broadcastUpdate(io, game);
       }
   });
@@ -159,18 +176,39 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (!game) return;
 
     if (game.phase === "ERA_INTRO" || game.phase === "TUTORIAL") {
-      const shuffledIds = shuffleArray(game.players.map(p => p.id));
-      game.players.forEach(p => { p.draftOrder = shuffledIds.indexOf(p.id) + 1; });
-      game.logs.push(`🎲 初始随机座次已分配`);
-
-      if (game.activeProjects.length === 0) {
-          drawProjectsForEra(game);
+      if (game.phase === "TUTORIAL") {
+        finishTutorialExit(game);
+      }
+      if (needsSessionReset(game)) {
+        resetGameSession(game);
       }
 
+      const shuffledIds = shuffleArray(game.players.map(p => p.id));
+      game.players.forEach(p => { p.draftOrder = shuffledIds.indexOf(p.id) + 1; });
+      appendSessionEvent(game, "draft_seat_chosen", {
+        mode: "random",
+        orders: Object.fromEntries(game.players.map((p) => [p.id, p.draftOrder])),
+      });
+      game.logs.push(`🎲 初始随机座次已分配`);
+
+      if (game.currentEra === 1 && game.roundInEra === 1) {
+        game.activeProjects = [];
+        game.uncompletedProjects = [];
+        game.completedProjects = [];
+        game.drawnProjects = new Set();
+        game.totalRiskEnergyAvailable = 0;
+        drawProjectsForEra(game);
+      } else if (game.activeProjects.length === 0) {
+        drawProjectsForEra(game);
+      }
+
+      const prevPhase = game.phase;
+      ensureSessionStarted(game);
       game.phase = "INVESTMENT";
-      game.investmentEndsAt = Date.now() + 10 * 60 * 1000; 
+      game.investmentEndsAt = Date.now() + 10 * 60 * 1000;
 
       game.logs.push("👑 游戏开始！进入投资阶段");
+      recordPhaseChange(game, prevPhase, game.phase, "adminStartGame");
       broadcastUpdate(io, game);
     }
   });
@@ -199,11 +237,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (rooms[roomId]) {
         io.to(roomId).emit("roomDissolved");
         delete rooms[roomId];
-        io.to("super_admin_room").emit("adminRoomList", Object.keys(rooms).map(rid => ({
-            roomId: rid,
-            playerCount: rooms[rid].players.length,
-            phase: rooms[rid].phase
-        })));
+        broadcastRoomList(io);
     }
   });
 
@@ -213,8 +247,16 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (!game) return;
 
     if (targetPhase) {
-        game.phase = targetPhase;
-        game.logs.push(`⏭️ 上帝强制跳转至 [${targetPhase}]`);
+        const prevPhase = game.phase;
+        if (targetPhase === "ERA_INTRO" && needsSessionReset(game)) {
+          resetGameSession(game);
+          game.logs.push(`⏭️ 上帝强制跳转至 [${targetPhase}]（已重置局内状态）`);
+        } else {
+          game.phase = targetPhase;
+          if (targetPhase === "AUCTION") beginAuctionSession(game);
+          game.logs.push(`⏭️ 上帝强制跳转至 [${targetPhase}]`);
+        }
+        recordPhaseChange(game, prevPhase, game.phase, "adminSkipPhase");
         broadcastUpdate(io, game);
         return;
     }
@@ -229,9 +271,15 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         });
     }
     if (game.phase === "BUFF_USAGE") { game.buffPhaseEndsAt = undefined; }
-    if (game.phase === "INVESTMENT") { game.investmentEndsAt = undefined; }
-
-    game.players.forEach(p => { p.ready = true; game.readyPlayers.add(p.id); });
+    if (game.phase === "INVESTMENT") {
+      game.investmentEndsAt = undefined;
+      forceSubmitPendingInvestments(game);
+    } else {
+      game.players.forEach((p) => {
+        p.ready = true;
+        game.readyPlayers.add(p.id);
+      });
+    }
     tryAdvancePhase(game);
     broadcastUpdate(io, game);
   });
@@ -241,7 +289,8 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const game = rooms[roomId];
     if (game && game.phase === "INVESTMENT") {
        game.investmentEndsAt = undefined;
-       game.players.forEach(p => { p.ready = true; game.readyPlayers.add(p.id); });
+       game.buffPhaseEndsAt = undefined;
+       forceSubmitPendingInvestments(game);
        tryAdvancePhase(game);
        broadcastUpdate(io, game);
     }
@@ -252,11 +301,20 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (!socket.data.isSuperAdmin) return;
       const game = rooms[roomId];
       if (!game || game.phase !== "AUCTION") return;
+      if (!isAuctionCardAvailable(game, cardId)) {
+          socket.emit("error", "该道具已成交或不在本轮拍卖池");
+          return;
+      }
 
       const player = game.players.find(p => p.id === playerId);
       if (player && player.socketId) {
           io.to(player.socketId).emit("auctionTradeRequest", { cardId, cost });
           game.logs.push(`🔨 上帝向 ${player.name} 发起拍卖确认：[${cardId}] 价格 ${cost}`);
+          appendSessionEvent(game, "auction_offered", {
+            targetPlayerId: playerId,
+            cardId,
+            cost,
+          });
           broadcastUpdate(io, game);
       }
   });
@@ -269,10 +327,18 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       
       if (!player) return;
 
+      let accepted = false;
+      let costPaid = 0;
+      let cardEnteredInventory = false;
+
       if (accept) {
           if (player.wealth >= cost) {
               player.wealth -= cost;
               player.inventory.push(cardId);
+              markAuctionCardDistributed(game, cardId);
+              accepted = true;
+              costPaid = cost;
+              cardEnteredInventory = true;
               game.logs.push(`✅ ${player.name} 支付 ${cost} 财富，拍得 [${cardId}]`);
           } else {
               game.logs.push(`❌ ${player.name} 试图购买 [${cardId}] 但财富不足 (${player.wealth}/${cost})`);
@@ -281,6 +347,13 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       } else {
           game.logs.push(`🚫 ${player.name} 拒绝了拍卖交易 [${cardId}]`);
       }
+
+      appendSessionEvent(
+        game,
+        "auction_resolved",
+        { cardId, cost, accepted, costPaid, cardEnteredInventory },
+        player.id
+      );
       broadcastUpdate(io, game);
   });
 
@@ -288,7 +361,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (!socket.data.isSuperAdmin) return;
       const game = rooms[roomId];
       if (game && game.phase === "AUCTION") {
+          const prevPhase = game.phase;
           game.phase = "ERA_INTRO";
+          recordPhaseChange(game, prevPhase, game.phase, "adminEndAuction");
           broadcastUpdate(io, game);
       }
   });
@@ -299,8 +374,14 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (!game) return;
       const player = game.players.find(p => p.id === targetPlayerId);
       if (player) {
-          player.socialRank = rank; 
+          const ratedAt = Date.now();
+          player.socialRank = rank;
           game.logs.push(`📝 上帝给 ${player.name} 社交评分: ${rank}`);
+          appendSessionEvent(game, "social_rated", {
+            targetPlayerId,
+            rank,
+            ratedAt,
+          });
           broadcastUpdate(io, game);
       }
   });
@@ -315,12 +396,20 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (player) {
           player.wealth += amount;
           game.logs.push(`🎲 彩票开奖！上帝给 ${player.name} 发放了 ${amount} 财富`);
+          appendSessionEvent(game, "lottery_settled", {
+            targetPlayerId,
+            amount,
+          });
           broadcastUpdate(io, game);
       }
   });
 
   // === AI 与自动调优 ===
   socket.on("adminAddAI", ({ roomId, persona }) => {
+      if (!AI_BOT_ENABLED) {
+          socket.emit("error", "AI Bot 功能已关闭");
+          return;
+      }
       if (!socket.data.isSuperAdmin) return;
       const game = rooms[roomId];
       if (!game) return;
@@ -359,6 +448,10 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
   });
 
   socket.on("adminStartAutoPlay", async ({ roomId, iterations }) => {
+      if (!AI_BOT_ENABLED) {
+          socket.emit("error", "AI Bot 功能已关闭");
+          return;
+      }
       if (!socket.data.isSuperAdmin) return;
       // Start headless session in background
       // Note: In real app, this should probably broadcast progress back
@@ -377,12 +470,32 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (player) { togglePlayerReady(game, player.id); tryAdvancePhase(game); broadcastUpdate(io, game); }
   });
 
+  socket.on("syncInvestmentDraft", ({ investment }) => {
+    const roomId = getRoomId(socket);
+    if (!roomId || !rooms[roomId]) return;
+    const game = rooms[roomId];
+    if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") return;
+    const player = game.players.find((p) => p.socketId === socket.id);
+    if (!player) return;
+    if (game.phase === "INVESTMENT" && player.ready) return;
+    player.investmentDraft = sanitizeInvestments(game, player, investment ?? {});
+  });
+
   socket.on("submitInvestment", ({ investment }) => {
     const roomId = getRoomId(socket);
     if (!roomId || !rooms[roomId]) return;
     const game = rooms[roomId];
+    if (game.phase !== "INVESTMENT") return;
     const player = game.players.find(p => p.socketId === socket.id);
-    if (player) { applyInvestments(game, player.id, investment); togglePlayerReady(game, player.id); tryAdvancePhase(game); broadcastUpdate(io, game); }
+    if (!player || player.ready) return;
+    const sanitized = sanitizeInvestments(game, player, investment ?? {});
+    if (!applyInvestments(game, player.id, sanitized)) {
+      socket.emit("error", "投资方案无效（精力不足或超出限制）");
+      return;
+    }
+    togglePlayerReady(game, player.id);
+    tryAdvancePhase(game);
+    broadcastUpdate(io, game);
   });
 
   socket.on("draftSeat", ({ seatIndex }) => {
@@ -395,6 +508,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         player.draftOrder = seatIndex;
         game.draftingState.availableSlots = game.draftingState.availableSlots.filter(s => s !== seatIndex);
         game.draftingState.currentIndex++;
+        appendSessionEvent(game, "draft_seat_chosen", { seatIndex }, player.id);
         if (game.draftingState.currentIndex >= game.draftingState.queue.length) { game.players.forEach(p => p.ready = true); tryAdvancePhase(game); }
         broadcastUpdate(io, game);
     }
@@ -406,8 +520,47 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const game = rooms[roomId];
     const sender = game.players.find(p => p.socketId === socket.id);
     const receiver = game.players.find(p => p.id === toId);
-    if (sender && receiver && sender.wealth >= amount && amount > 0) {
-      game.transactions.push({ id: Math.random().toString(), fromId: sender.id, fromName: sender.name, toId: receiver.id, toName: receiver.name, amount, note, status: "pending", timestamp: Date.now() });
+    // 严格一对一：单条记录仅绑定发送方与唯一接收方
+    if (!sender || !receiver || sender.id === receiver.id) return;
+
+    const amt = Math.floor(Number(amount) || 0);
+    const message = (typeof note === "string" ? note.trim() : "").slice(0, 500);
+
+    if (amt === 0) {
+      if (!message) return;
+      const tx = {
+        id: Math.random().toString(),
+        fromId: sender.id,
+        fromName: sender.name,
+        toId: receiver.id,
+        toName: receiver.name,
+        amount: 0,
+        note: message,
+        status: "pending" as const,
+        timestamp: Date.now(),
+      };
+      game.transactions.push(tx);
+      appendSessionEvent(game, "transaction_created", { txId: tx.id, ...tx }, sender.id);
+      pruneSettledTransactions(game);
+      broadcastUpdate(io, game);
+      return;
+    }
+
+    if (amt > 0 && sender.wealth >= amt) {
+      const tx = {
+        id: Math.random().toString(),
+        fromId: sender.id,
+        fromName: sender.name,
+        toId: receiver.id,
+        toName: receiver.name,
+        amount: amt,
+        note: message,
+        status: "pending" as const,
+        timestamp: Date.now(),
+      };
+      game.transactions.push(tx);
+      appendSessionEvent(game, "transaction_created", { txId: tx.id, ...tx }, sender.id);
+      pruneSettledTransactions(game);
       broadcastUpdate(io, game);
     }
   });
@@ -420,9 +573,28 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const player = game.players.find(p => p.socketId === socket.id);
     if (tx && player && tx.toId === player.id && tx.status === "pending") {
       if (accept) {
+        if (tx.amount === 0) {
+          tx.status = "accepted";
+        } else {
           const sender = game.players.find(p => p.id === tx.fromId);
-          if (sender && sender.wealth >= tx.amount) { sender.wealth -= tx.amount; player.wealth += tx.amount; tx.status = "accepted"; } else { tx.status = "rejected"; }
-      } else { tx.status = "rejected"; }
+          if (sender && sender.wealth >= tx.amount) {
+            sender.wealth -= tx.amount;
+            player.wealth += tx.amount;
+            tx.status = "accepted";
+          } else {
+            tx.status = "rejected";
+          }
+        }
+      } else {
+        tx.status = "rejected";
+      }
+      appendSessionEvent(
+        game,
+        "transaction_resolved",
+        { txId: tx.id, accept, status: tx.status, amount: tx.amount },
+        player.id
+      );
+      pruneSettledTransactions(game);
       broadcastUpdate(io, game);
     }
   });
@@ -437,7 +609,13 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         player.energy += 1; 
         player.totalEnergyConsumed += 1;
         game.logs.push(`☕ ${player.name} 购买了咖啡 (精力+1)`);
-        broadcastUpdate(io, game); 
+        appendSessionEvent(
+          game,
+          "coffee_purchased",
+          { wealthCost: 15, energyGain: 1 },
+          player.id
+        );
+        broadcastUpdate(io, game);
     }
   });
 
@@ -472,6 +650,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       player.personaVote = vote;
       const voteLabel = vote === "fate" ? "命运素描" : vote === "gene" ? "决策基因" : "都不准";
       game.logs.push(`🗳️ ${player.name} 投票：${voteLabel}`);
+      appendSessionEvent(game, "persona_voted", { vote }, player.id);
       broadcastUpdate(io, game);
     }
   });
@@ -491,6 +670,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
 
     analyzeGamePersona(game);
 
+    appendSessionEvent(game, "community_named", { communityName: name });
     broadcastUpdate(io, game);
   });
 

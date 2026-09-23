@@ -9,7 +9,10 @@ import { settlePhase } from "../logic/projectSettlement.js";
 import { drawProjectsForEra, updateEraCard } from "../state/gameEra.js";
 import { shuffleArray } from "../utils/shuffle.js";
 import { eraCards } from "../data/game_data.js";
-import { handleAIPhase } from "../ai/aiOrchestrator.js";
+import { AI_BOT_ENABLED } from "../config/features.js";
+import { isAiPlayer } from "../util/isAiPlayer.js";
+import { beginAuctionSession } from "../logic/auctionCards.js";
+import { appendSessionEvent, ensureSessionStarted, recordPhaseChange } from "./sessionTelemetry.js";
 
 // 统一倒计时：10分钟 (包含 Buff 阶段和 Investment 阶段)
 const TOTAL_ACTION_TIME_MS = 10 * 60 * 1000;
@@ -26,8 +29,13 @@ export function tryAdvancePhase(game: GameState) {
           if (game.roundInEra === 1) {
             const shuffledIds = shuffleArray(game.players.map(p => p.id));
             game.players.forEach(p => { p.draftOrder = shuffledIds.indexOf(p.id) + 1; });
-            
-            drawProjectsForEra(game); 
+            appendSessionEvent(game, "draft_seat_chosen", {
+              mode: "random",
+              orders: Object.fromEntries(
+                game.players.map((p) => [p.id, p.draftOrder])
+              ),
+            });
+            drawProjectsForEra(game);
           }
           
           game.phase = "INVESTMENT";
@@ -39,7 +47,10 @@ export function tryAdvancePhase(game: GameState) {
           if (game.roundInEra === 1) {
             game.phase = "DRAFTING";
             game.players.forEach(p => p.draftOrder = undefined);
-            const sorted = [...game.players].sort((a, b) => {
+            const draftingPool = AI_BOT_ENABLED
+              ? game.players
+              : game.players.filter((p) => !isAiPlayer(p));
+            const sorted = [...draftingPool].sort((a, b) => {
                 if (a.wealth !== b.wealth) return a.wealth - b.wealth;
                 return a.energy - b.energy; // 财富相同比精力
             });
@@ -119,10 +130,17 @@ export function tryAdvancePhase(game: GameState) {
     }
   }
 
-  // 如果阶段发生了改变，或者游戏刚初始化（或者特定阶段需要AI立刻行动），我们在这里触发 AI 回合
   if (game.phase !== initialPhase) {
-      // 避免阻止事件循环，异步触发
-      handleAIPhase(game).catch(e => console.error("AI Error:", e));
+    if (game.phase === "INVESTMENT") {
+      ensureSessionStarted(game);
+    }
+    recordPhaseChange(game, initialPhase, game.phase, "tryAdvancePhase");
+  }
+
+  if (AI_BOT_ENABLED && game.phase !== initialPhase) {
+    import("../ai/aiOrchestrator.js")
+      .then((m) => m.handleAIPhase(game))
+      .catch((e) => console.error("AI Error:", e));
   }
 }
 
@@ -153,6 +171,7 @@ function advanceRound(game: GameState) {
     
     // 换代前插入拍卖阶段
     game.phase = "AUCTION";
+    beginAuctionSession(game);
     game.logs.push(`🔨 第 ${game.currentEra - 1} 轮拍卖会开启`);
   } else {
     // 时代内轮转，不做特殊处理
@@ -161,8 +180,9 @@ function advanceRound(game: GameState) {
   // 重置玩家状态
   game.players.forEach(p => {
     p.ready = false;
-    p.investment = {}; 
-    
+    p.investment = {};
+    p.investmentDraft = undefined;
+
     const energyMap: Record<number, number> = { 1: 15, 2: 13, 3: 11, 4: 9 };
     p.energy = energyMap[game.currentEra] || 9;
   });

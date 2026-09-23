@@ -4,13 +4,22 @@ import http from "http";
 import { Server } from "socket.io";
 import { registerSocketHandlers } from "./network/socketHandlers.js";
 import { broadcastUpdate } from "./network/broadcast.js";
-import { rooms, customImagesVersions, customEraImagesVersions } from "./state/store.js";
-import { tryAdvancePhase } from "./state/phaseController.js";
+import { rooms, customImagesVersions, customEraImagesVersions, customBuffImagesVersions } from "./state/store.js";
+import { handleActionTimeExpired } from "./state/actionTimeExpiry.js";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import cors from "cors";
+import { assertAdminTokenConfigured, requireAdminToken } from "./config/adminAuth.js";
+import {
+  buildSessionExport,
+  buildSessionWorkbook,
+  safeExportBasename,
+  contentDispositionAttachment,
+} from "./export/sessionExport.js";
+
+assertAdminTokenConfigured();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,8 +58,19 @@ for (const file of existingEraFiles) {
   }
 }
 
+const uploadBuffsDir = path.join(__dirname, "../data/uploads_buffs");
+if (!fs.existsSync(uploadBuffsDir)) {
+  fs.mkdirSync(uploadBuffsDir, { recursive: true });
+}
+for (const file of fs.readdirSync(uploadBuffsDir)) {
+  if (file.endsWith(".jpg")) {
+    customBuffImagesVersions[file.replace(".jpg", "")] = Date.now();
+  }
+}
+
 app.use("/uploads", express.static(uploadDir));
 app.use("/uploads_eras", express.static(uploadErasDir));
+app.use("/uploads_buffs", express.static(uploadBuffsDir));
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -61,7 +81,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-app.post("/api/upload-image", upload.single("image"), (req, res) => {
+app.post("/api/upload-image", requireAdminToken, upload.single("image"), (req, res) => {
   const { id } = req.body;
   if (!id) return res.status(400).json({ error: "Missing id" });
   
@@ -83,7 +103,7 @@ const storageEra = multer.diskStorage({
 });
 const uploadEra = multer({ storage: storageEra });
 
-app.post("/api/upload-era-image", uploadEra.single("image"), (req, res) => {
+app.post("/api/upload-era-image", requireAdminToken, uploadEra.single("image"), (req, res) => {
   const { id } = req.body; // id is the era name
   if (!id) return res.status(400).json({ error: "Missing id" });
   
@@ -93,7 +113,37 @@ app.post("/api/upload-era-image", uploadEra.single("image"), (req, res) => {
   
   res.json({ success: true, timestamp: customEraImagesVersions[id] });
 });
-app.post("/api/delete-image", express.json(), (req, res) => {
+
+const storageBuff = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadBuffsDir),
+  filename: (req, _file, cb) => {
+    cb(null, `${req.body.id}.jpg`);
+  },
+});
+const uploadBuff = multer({ storage: storageBuff });
+
+app.post("/api/upload-buff-image", requireAdminToken, uploadBuff.single("image"), (req, res) => {
+  const { id } = req.body;
+  if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing id" });
+
+  customBuffImagesVersions[id] = Date.now();
+  io.emit("syncBuffImages", customBuffImagesVersions);
+  res.json({ success: true, timestamp: customBuffImagesVersions[id] });
+});
+
+app.post("/api/delete-buff-image", express.json(), requireAdminToken, (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: "Missing id" });
+
+  const filePath = path.join(uploadBuffsDir, `${id}.jpg`);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+  customBuffImagesVersions[id] = 0;
+  io.emit("syncBuffImages", customBuffImagesVersions);
+  res.json({ success: true, timestamp: 0 });
+});
+
+app.post("/api/delete-image", express.json(), requireAdminToken, (req, res) => {
   const { id } = req.body;
   if (!id) return res.status(400).json({ error: "Missing id" });
   
@@ -108,7 +158,7 @@ app.post("/api/delete-image", express.json(), (req, res) => {
   res.json({ success: true, timestamp: 0 });
 });
 
-app.post("/api/delete-era-image", express.json(), (req, res) => {
+app.post("/api/delete-era-image", express.json(), requireAdminToken, (req, res) => {
   const { id } = req.body;
   if (!id) return res.status(400).json({ error: "Missing id" });
   
@@ -121,6 +171,40 @@ app.post("/api/delete-era-image", express.json(), (req, res) => {
   io.emit("syncEraImages", customEraImagesVersions);
   res.json({ success: true, timestamp: 0 });
 });
+app.get("/api/session-export", requireAdminToken, (req, res) => {
+  const roomId = String(req.query.roomId ?? "").trim();
+  const format = String(req.query.format ?? "json").toLowerCase();
+  if (!roomId) {
+    res.status(400).json({ error: "Missing roomId" });
+    return;
+  }
+  const game = rooms[roomId];
+  if (!game) {
+    res.status(404).json({ error: "Room not found" });
+    return;
+  }
+  const base = safeExportBasename(roomId);
+  const exportData = buildSessionExport(game);
+
+  if (format === "xlsx") {
+    const buf = buildSessionWorkbook(exportData);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", contentDispositionAttachment(`${base}_session.xlsx`));
+    res.send(buf);
+    return;
+  }
+  if (format === "json") {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", contentDispositionAttachment(`${base}_session.json`));
+    res.send(JSON.stringify(exportData, null, 2));
+    return;
+  }
+  res.status(400).json({ error: "Invalid format (use json or xlsx)" });
+});
+
 // -----------------------
 
 const server = http.createServer(app);
@@ -139,18 +223,8 @@ io.on("connection", (socket) => {
  */
 setInterval(() => {
   Object.values(rooms).forEach((game) => {
-    if (
-      game.phase === "INVESTMENT" &&
-      game.investmentEndsAt &&
-      Date.now() >= game.investmentEndsAt
-    ) {
-      console.log(`⏰ Room ${game.roomId}: Investment time is up! Force submitting.`);
-      game.players.forEach(p => {
-        p.ready = true;
-        game.readyPlayers.add(p.id);
-      });
-      game.investmentEndsAt = undefined;
-      tryAdvancePhase(game);
+    if (handleActionTimeExpired(game)) {
+      console.log(`⏰ Room ${game.roomId}: Discussion/investment time is up — auto-submitting drafts.`);
       broadcastUpdate(io, game);
     }
   });

@@ -107,6 +107,7 @@ export interface Player {
   rank: number;
   draftOrder?: number; 
   investment: Record<number, number>;
+  investmentDraft?: Record<number, number>;
   longTerm: Record<number, LongTermProgress>;
 
   inventory: string[]; 
@@ -125,6 +126,9 @@ export interface Player {
   analysisResult?: PersonaAnalysis; 
   personaVote?: "fate" | "gene" | "neither" | null;
   longTermStatus?: Record<number, 'investing' | 'abandoned'>;
+
+  isAI?: boolean;
+  aiPersona?: string;
 }
 
 export interface EventOption {
@@ -211,4 +215,6 @@ export interface GameState {
   
   communityName?: string;
   globalLeaderboard?: { name: string; score: number }[];
+  /** 本轮拍卖已成功成交的道具卡 id */
+  auctionDistributedCardIds?: string[];
 }

@@ -20,6 +20,15 @@
 ## 🚀 How to Run | 运行项目
 
 ### 1. Backend Server (服务端)
+
+在 `server/.env` 中配置管理密钥（可参考 `server/.env.example`）：
+
+```bash
+ADMIN_TOKEN=你的长随机密钥
+```
+
+生产环境未设置 `ADMIN_TOKEN` 时服务将拒绝启动。
+
 ```bash
 cd server
 npm install
@@ -28,12 +37,30 @@ npm run start
 ```
 
 ### 2. Frontend Client (客户端)
+
 ```bash
 cd frontend
 npm install
 npm run dev
-# App will run on http://localhost:5173
+# 玩家端 http://localhost:5173/
+# 管理端 http://localhost:5173/admin.html
 ```
+
+开发环境下 Vite 会将 `/socket.io` 与 `/api` 代理到 `localhost:3001`。
+
+### 3. 生产部署与管理后台
+
+- **玩家**：`https://guangyinduidu.com`
+- **管理员**：`https://admin.guangyinduidu.com`（登录页输入与服务器 `ADMIN_TOKEN` 相同的密钥）
+
+宝塔/Nginx 上请为 **主域与管理子域** 均配置与现网一致的反代：
+
+- `location /socket.io/` → Node（如 `127.0.0.1:3001`）
+- `location /api/` → 同上
+
+管理子域站点 `root` 指向 `admin.guangyinduidu.com` 目录。CI 部署会将 `admin.html` 复制为 `index.html`，使子域根路径即为管理入口（无需额外 Nginx 重写）。
+
+在 pm2 工作目录的 `server/.env` 中配置 `ADMIN_TOKEN` 后执行 `pm2 restart`。
 
 ## ⚖️ License
 

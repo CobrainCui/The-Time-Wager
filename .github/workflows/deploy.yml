@@ -31,7 +31,7 @@ jobs:
         cd server
         npm install
         npm run build
-        zip -r ../server_upload.zip dist/* package.json package-lock.json
+        zip -r ../server_upload.zip dist/* package.json package-lock.json .env.example
 
     - name: Copy files via SCP
       uses: appleboy/scp-action@v0.1.7
@@ -50,9 +50,15 @@ jobs:
         username: ${{ secrets.SERVER_USERNAME }}
         password: ${{ secrets.SERVER_PASSWORD }}
         script: |
-          # 部署前端
+          # 部署玩家前端（主域不暴露管理入口页）
           unzip -o /root/dist_upload.zip -d /www/wwwroot/guangyinduidu.com/
-          
+          rm -f /www/wwwroot/guangyinduidu.com/admin.html
+
+          # 部署管理前端（子域根路径即管理入口）
+          mkdir -p /www/wwwroot/admin.guangyinduidu.com
+          unzip -o /root/dist_upload.zip -d /www/wwwroot/admin.guangyinduidu.com/
+          cp -f /www/wwwroot/admin.guangyinduidu.com/admin.html /www/wwwroot/admin.guangyinduidu.com/index.html
+
           # 部署后端
           unzip -o /root/server_upload.zip -d /www/wwwroot/guangyinduidu.com/server/
           cd /www/wwwroot/guangyinduidu.com/server/

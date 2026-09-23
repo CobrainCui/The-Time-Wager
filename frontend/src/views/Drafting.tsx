@@ -1,4 +1,5 @@
 import React from "react";
+import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
 
@@ -34,13 +35,13 @@ export const Drafting: React.FC<Props> = ({ game, me }) => {
       <div className="container-md animate-fadeIn">
         {/* 标题 */}
         <div className="text-center mb-8">
-          <div style={{ fontSize: "0.8rem", fontWeight: 700, letterSpacing: "0.3em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+          <div style={{ fontSize: uiRem(0.8), fontWeight: 700, letterSpacing: "0.3em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
             选座阶段
           </div>
           <h1 style={{ fontSize: "2.5rem", fontWeight: 900, color: "#fbbf24" }}>
             🔢 行动位次甄选
           </h1>
-          <p style={{ color: "var(--color-text-secondary)", marginTop: "0.5rem", fontSize: "0.95rem" }}>
+          <p style={{ color: "var(--color-text-secondary)", marginTop: "0.5rem", fontSize: uiRem(0.95) }}>
             越靠前的顺位，越早选择长期项目的投资名额
           </p>
         </div>
@@ -78,19 +79,19 @@ export const Drafting: React.FC<Props> = ({ game, me }) => {
             </div>
           ) : haveISelected ? (
             <div>
-              <div style={{ fontSize: "1rem", color: "var(--color-text-secondary)", marginBottom: "0.25rem" }}>
+              <div style={{ fontSize: uiRem(1), color: "var(--color-text-secondary)", marginBottom: "0.25rem" }}>
                 你已选择
               </div>
               <div style={{ fontSize: "2.5rem", fontWeight: 900, color: "#60a5fa" }}>
                 第 {me.draftOrder} 顺位
               </div>
-              <div style={{ color: "var(--color-text-muted)", fontSize: "0.875rem", marginTop: "0.5rem" }}>
+              <div style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.875), marginTop: "0.5rem" }}>
                 等待其他玩家完成选择...
               </div>
             </div>
           ) : (
             <div>
-              <div style={{ fontSize: "1rem", color: "#fbbf24", fontWeight: 700 }}>
+              <div style={{ fontSize: uiRem(1), color: "#fbbf24", fontWeight: 700 }}>
                 ⏳ 等待 {currentDrafter?.name} 选座...
               </div>
             </div>
@@ -149,7 +150,7 @@ export const Drafting: React.FC<Props> = ({ game, me }) => {
                   <span
                     style={{
                       fontWeight: 700,
-                      fontSize: "0.9rem",
+                      fontSize: uiRem(0.9),
                       color: isMe ? "#fbbf24" : "#93c5fd",
                       textAlign: "center",
                     }}
@@ -157,7 +158,7 @@ export const Drafting: React.FC<Props> = ({ game, me }) => {
                     {isMe ? "👈 你" : owner.name}
                   </span>
                 ) : (
-                  <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                  <span style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>
                     {isMyTurn ? "点击选择" : "空闲"}
                   </span>
                 )}
@@ -177,7 +178,7 @@ export const Drafting: React.FC<Props> = ({ game, me }) => {
         >
           <div
             style={{
-              fontSize: "0.75rem",
+              fontSize: uiRem(0.75),
               fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.08em",
@@ -199,7 +200,7 @@ export const Drafting: React.FC<Props> = ({ game, me }) => {
                     padding: "0.375rem 0.875rem",
                     borderRadius: "9999px",
                     border: "1px solid",
-                    fontSize: "0.875rem",
+                    fontSize: uiRem(0.875),
                     display: "flex",
                     alignItems: "center",
                     gap: "0.375rem",
@@ -229,7 +230,7 @@ export const Drafting: React.FC<Props> = ({ game, me }) => {
                         background: "rgba(59,130,246,0.2)",
                         borderRadius: "4px",
                         padding: "0 0.375rem",
-                        fontSize: "0.75rem",
+                        fontSize: uiRem(0.75),
                         color: "#93c5fd",
                       }}
                     >

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
 
@@ -28,7 +29,7 @@ export const CommunityNaming: React.FC<Props> = ({ game, me }) => {
         <h1 style={{ fontSize: "2.25rem", fontWeight: 900, color: "white", marginBottom: "0.5rem" }}>
           为你们的社区命名
         </h1>
-        <p style={{ color: "var(--color-text-muted)", marginBottom: "2.5rem", fontSize: "0.95rem" }}>
+        <p style={{ color: "var(--color-text-muted)", marginBottom: "2.5rem", fontSize: uiRem(0.95) }}>
           游戏已结束，请为本次冒险命名，留下你们共同的印记
         </p>
 
@@ -41,14 +42,14 @@ export const CommunityNaming: React.FC<Props> = ({ game, me }) => {
               onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
               placeholder="输入社区名称..."
               maxLength={20}
-              style={{ textAlign: "center", fontSize: "1.25rem", padding: "1rem", letterSpacing: "0.05em" }}
+              style={{ textAlign: "center", fontSize: uiRem(1.25), padding: "1rem", letterSpacing: "0.05em" }}
               autoFocus
             />
             <button
               onClick={handleSubmit}
               disabled={!name.trim()}
               className="btn btn-gold btn-lg btn-full"
-              style={{ fontSize: "1.1rem" }}
+              style={{ fontSize: uiRem(1.1) }}
             >
               🌟 确认命名
             </button>
