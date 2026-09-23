@@ -1,7 +1,7 @@
 import { GameState, Player } from "./gameState.js";
 import { AI_BOT_ENABLED } from "../config/features.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
-import { applyInvestments, sanitizeInvestments } from "../logic/investmentLogic.js";
+import { applyInvestments, revertInvestments, sanitizeInvestments } from "../logic/investmentLogic.js";
 
 export function playersRequiringAction(game: GameState): Player[] {
   return game.players.filter(
@@ -79,4 +79,22 @@ export function forceSubmitPendingInvestments(game: GameState) {
     }
     togglePlayerReady(game, player.id);
   }
+}
+
+/** 上帝解锁玩家：清除 ready；投资阶段 additionally 回滚已提交投资 */
+export function adminUnlockPlayer(game: GameState, playerId: string): boolean {
+  const player = game.players.find((p) => p.id === playerId);
+  if (!player || !player.ready) return false;
+
+  if (game.phase === "INVESTMENT") {
+    if (!revertInvestments(game, playerId)) {
+      game.logs.push(`🔓 上帝解锁 ${player.name}，可重新操作`);
+    }
+  } else {
+    game.logs.push(`🔓 上帝解锁 ${player.name}，可重新操作`);
+  }
+
+  player.ready = false;
+  game.readyPlayers.delete(playerId);
+  return true;
 }

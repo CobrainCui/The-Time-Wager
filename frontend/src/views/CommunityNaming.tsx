@@ -2,12 +2,14 @@ import React, { useState } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
+import { CommunityLeaderboard } from "../components/CommunityLeaderboard";
 
 interface Props { game: GameState; me: Player; }
 
 export const CommunityNaming: React.FC<Props> = ({ game, me }) => {
   const [name, setName] = useState("");
-  const isHost = game.players[0]?.id === me.id;
+  const richest = [...game.players].sort((a, b) => b.wealth - a.wealth)[0];
+  const canName = richest?.id === me.id;
 
   const handleSubmit = () => {
     if (!name.trim()) return;
@@ -33,7 +35,7 @@ export const CommunityNaming: React.FC<Props> = ({ game, me }) => {
           游戏已结束，请为本次冒险命名，留下你们共同的印记
         </p>
 
-        {isHost ? (
+        {canName ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             <input
               className="input"
@@ -66,9 +68,14 @@ export const CommunityNaming: React.FC<Props> = ({ game, me }) => {
               animation: "pulse 2s infinite",
             }}
           >
-            ⏳ 等待主持人为社区命名...
+            ⏳ 等待首富为社区命名...
           </div>
         )}
+
+        <CommunityLeaderboard
+          entries={game.globalLeaderboard ?? []}
+          emptyMessage="暂无其它社区记录；确认命名后，本社区总财富将参与全服排名。"
+        />
       </div>
     </div>
   );

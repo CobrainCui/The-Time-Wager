@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import { GameState, ActiveProject, Player } from "../state/gameState.js";
 import { EXPORT_SCHEMA_VERSION, getAnalysisWeightsVersion } from "./constants.js";
 import { emptySessionTelemetry } from "../state/sessionTelemetry.js";
+import { getCommunityLeaderboard } from "../state/communityLeaderboard.js";
 
 function uniqueProjects(game: GameState): ActiveProject[] {
   const all = [...game.activeProjects, ...game.completedProjects, ...game.uncompletedProjects];
@@ -78,7 +79,7 @@ export function buildSessionExport(game: GameState) {
     settlementHistory: tel.settlementHistory,
     events: tel.events,
     logs: game.logs,
-    globalLeaderboard: game.globalLeaderboard ?? null,
+    globalLeaderboard: getCommunityLeaderboard(),
     eventChoices: game.eventChoices,
   };
 }

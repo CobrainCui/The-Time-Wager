@@ -40,20 +40,20 @@ export function formatBubbleText(m: ChatMessage): string {
   return m.note ? `${prefix} · ${m.note}` : prefix;
 }
 
-/** 微信式状态：收发方向区分文案 */
+/** 微信式状态：收发方向区分文案（仅转账） */
 export function messageStatusMeta(m: ChatMessage): string | null {
+  if (m.amount === 0) return null;
   if (m.status === "pending") {
     if (m.direction === "out" && !m.txId) return "发送中…";
     if (m.direction === "out") return "等待对方确认";
     return null;
   }
-  const isMsg = m.amount === 0;
   if (m.direction === "out") {
-    if (m.status === "accepted") return isMsg ? "对方已读" : "对方已收款";
-    return isMsg ? "对方已忽略" : "对方已退回";
+    if (m.status === "accepted") return "对方已收款";
+    return "对方已退回";
   }
-  if (m.status === "accepted") return isMsg ? "已知晓" : "已收款";
-  return isMsg ? "已忽略" : "已退回";
+  if (m.status === "accepted") return "已收款";
+  return "已退回";
 }
 
 export function badgeCount(unread: number, pending: number): number {

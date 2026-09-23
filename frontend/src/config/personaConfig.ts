@@ -1,3 +1,13 @@
+/** 命运素描六类在 UI / 终局页中的主题色 */
+export const FATE_SKETCH_PERSONA_COLORS: Record<string, string> = {
+  "罗盘精算师": "#3b82f6",
+  "时荫植者": "#10b981",
+  "涌机触发者": "#f97316",
+  "瞬刻炼金士": "#a855f7",
+  "桥梁架构师": "#ec4899",
+  "随机诗人": "#6b7280",
+};
+
 export const FATE_SKETCH_CONFIG: Record<string, { name: string; desc: string }> = {
   "桥梁架构师": { name: "桥梁架构师", desc: "善于整合资源与人脉，通过高超的社交连结达成目标。" },
   "瞬刻炼金士": { name: "瞬刻炼金士", desc: "能在瞬间捕捉机遇，将微小的优势放大并转化为实质财富。" },

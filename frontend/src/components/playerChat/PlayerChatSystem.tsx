@@ -25,7 +25,7 @@ function optimisticMessage(peerId: string, amount: number, note: string): ChatMe
     direction: "out",
     amount,
     note: note.trim(),
-    status: "pending",
+    status: amount === 0 ? "accepted" : "pending",
     timestamp: Date.now(),
     peerId,
   };
@@ -74,7 +74,7 @@ const QuickComposer: React.FC<{
           min={0}
           max={maxWealth}
           className="input"
-          placeholder="金额(可空)"
+          placeholder="金额"
           value={amount}
           onChange={(e) => {
             const raw = e.target.value;
@@ -111,20 +111,15 @@ const QuickComposer: React.FC<{
           {sending ? "…" : "发"}
         </button>
       </div>
-      <div className="player-chat-composer-hint">
-        一对一 · 不填金额为私信 · 仅 {peerName} 可见
-      </div>
     </form>
   );
 };
 
 const IncomingRespondActions: React.FC<{
   txId: string;
-  amount: number;
   disabled: boolean;
   onRespond: (txId: string, accept: boolean) => void;
-}> = ({ txId, amount, disabled, onRespond }) => {
-  const isMsg = amount === 0;
+}> = ({ txId, disabled, onRespond }) => {
   return (
     <div className="player-chat-bubble-actions">
       <button
@@ -133,7 +128,7 @@ const IncomingRespondActions: React.FC<{
         disabled={disabled}
         onClick={() => onRespond(txId, true)}
       >
-        {isMsg ? "知道了" : "接收"}
+        接收
       </button>
       <button
         type="button"
@@ -141,7 +136,7 @@ const IncomingRespondActions: React.FC<{
         disabled={disabled}
         onClick={() => onRespond(txId, false)}
       >
-        {isMsg ? "忽略" : "退回"}
+        退回
       </button>
     </div>
   );
@@ -150,7 +145,6 @@ const IncomingRespondActions: React.FC<{
 const ChatPanel: React.FC<{
   playerId: string;
   thread: ChatThread;
-  peerWealth: number | undefined;
   displayMessages: ChatMessage[];
   respondingTxIds: Set<string>;
   maxWealth: number;
@@ -160,7 +154,6 @@ const ChatPanel: React.FC<{
 }> = ({
   playerId,
   thread,
-  peerWealth,
   displayMessages,
   respondingTxIds,
   maxWealth,
@@ -185,9 +178,6 @@ const ChatPanel: React.FC<{
       <div className="player-chat-panel-header">
         <div className="player-chat-panel-title">
           <span style={{ fontWeight: 800, fontSize: uiRem(0.9) }}>{thread.playerName}</span>
-          {peerWealth !== undefined && (
-            <span className="player-chat-header-wealth">💰 {peerWealth}</span>
-          )}
         </div>
         <button type="button" className="player-chat-icon-btn" onClick={onCollapse} aria-label="收起">
           ─
@@ -202,15 +192,14 @@ const ChatPanel: React.FC<{
           return (
             <div key={m.id} className={`player-chat-bubble ${m.direction === "out" ? "out" : "in"}`}>
               <div>{formatBubbleText(m)}</div>
-              {m.status === "pending" && m.direction === "in" && m.txId && (
+              {m.status === "pending" && m.direction === "in" && m.txId && m.amount > 0 && (
                 <IncomingRespondActions
                   txId={m.txId}
-                  amount={m.amount}
                   disabled={respondingTxIds.has(m.txId)}
                   onRespond={onRespond}
                 />
               )}
-              {meta && <div className="player-chat-bubble-meta">{meta}</div>}
+              {meta && m.amount > 0 && <div className="player-chat-bubble-meta">{meta}</div>}
             </div>
           );
         })}
@@ -267,18 +256,14 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [hasExpandedPanel, collapseAllExpanded]);
 
-  const peerWealthById = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const p of game.players) map[p.id] = p.wealth;
-    return map;
-  }, [game.players]);
-
   const myTransactions = useMemo(
     () => (game.transactions ?? []).filter((t) => txInvolvesMe(t, me.id)),
     [game.transactions, me.id]
   );
 
-  const pendingTxs = myTransactions.filter((t) => t.toId === me.id && t.status === "pending");
+  const pendingTxs = myTransactions.filter(
+    (t) => t.toId === me.id && t.status === "pending" && t.amount > 0
+  );
 
   useEffect(() => {
     const peerIds = peerPlayers.map((p) => p.id);
@@ -564,7 +549,6 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
               key={playerId}
               playerId={playerId}
               thread={thread}
-              peerWealth={peerWealthById[playerId]}
               displayMessages={displayMessages}
               respondingTxIds={respondingTxIds}
               maxWealth={me.wealth}

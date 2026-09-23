@@ -36,18 +36,55 @@ export default function AdminApp() {
   };
 
   const authenticate = useCallback((token: string) => {
+    const trimmed = token.trim();
+    if (!trimmed) return;
+
+    if (!socket.connected) {
+      setAuthState("login");
+      setAuthPending(false);
+      setAuthError("未连接服务器：请先启动 server（端口 3001）并刷新页面");
+      return;
+    }
+
     setAuthPending(true);
     setAuthError(null);
-    setAdminToken(token);
+    setAdminToken(trimmed);
     clearAuthTimeout();
+
+    const onOk = () => {
+      clearAuthTimeout();
+      setAuthState("authenticated");
+      setAuthPending(false);
+      setAuthError(null);
+      const roomId = spectatingRoomIdRef.current;
+      if (roomId) socket.emit("adminSpectate", { targetRoomId: roomId });
+    };
+
+    const onFailed = ({ message }: { message?: string }) => {
+      clearAuthTimeout();
+      clearAdminToken();
+      setAuthState("login");
+      setAuthPending(false);
+      setAuthError(message || "密钥无效");
+      setGame(null);
+    };
+
+    socket.once("adminAuthOk", onOk);
+    socket.once("adminAuthFailed", onFailed);
+
     authTimeoutRef.current = setTimeout(() => {
+      socket.off("adminAuthOk", onOk);
+      socket.off("adminAuthFailed", onFailed);
       clearAdminToken();
       setAuthPending(false);
-      setAuthError("验证超时，请重试");
+      setAuthError(
+        "验证超时：请确认已在 server 目录执行 npm run build 并重启，且 .env 中 ADMIN_TOKEN 与输入一致（等号两侧勿加空格）",
+      );
       setAuthState("login");
       setGame(null);
     }, 15000);
-    socket.emit("adminAuthenticate", { token });
+
+    socket.emit("adminAuthenticate", { token: trimmed });
   }, []);
 
   useEffect(() => {
@@ -70,25 +107,6 @@ export default function AdminApp() {
       setAuthPending(false);
     };
 
-    const onAuthOk = () => {
-      clearAuthTimeout();
-      setAuthState("authenticated");
-      setAuthPending(false);
-      setAuthError(null);
-      const roomId = spectatingRoomIdRef.current;
-      if (roomId) {
-        socket.emit("adminSpectate", { targetRoomId: roomId });
-      }
-    };
-    const onAuthFailed = ({ message }: { message?: string }) => {
-      clearAuthTimeout();
-      clearAdminToken();
-      setAuthState("login");
-      setAuthPending(false);
-      setAuthError(message || "密钥无效");
-      setGame(null);
-    };
-
     const onGameUpdate = (newGame: GameState) => setGame(newGame);
     const onAdminRoomList = (list: AdminRoomSummary[]) => setAdminRoomList(list);
     const onRoomDissolved = () => {
@@ -101,8 +119,6 @@ export default function AdminApp() {
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
-    socket.on("adminAuthOk", onAuthOk);
-    socket.on("adminAuthFailed", onAuthFailed);
     socket.on("gameUpdate", onGameUpdate);
     socket.on("adminRoomList", onAdminRoomList);
     socket.on("roomDissolved", onRoomDissolved);
@@ -116,8 +132,6 @@ export default function AdminApp() {
       clearAuthTimeout();
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
-      socket.off("adminAuthOk", onAuthOk);
-      socket.off("adminAuthFailed", onAuthFailed);
       socket.off("gameUpdate", onGameUpdate);
       socket.off("adminRoomList", onAdminRoomList);
       socket.off("roomDissolved", onRoomDissolved);
@@ -203,6 +217,15 @@ export default function AdminApp() {
         projectImages={projectImages}
         eraImages={eraImages}
         buffImages={buffImages}
+        onProjectImageVersion={(id, version) =>
+          setProjectImages((prev) => ({ ...prev, [id]: version }))
+        }
+        onEraImageVersion={(eraName, version) =>
+          setEraImages((prev) => ({ ...prev, [eraName]: version }))
+        }
+        onBuffImageVersion={(cardId, version) =>
+          setBuffImages((prev) => ({ ...prev, [cardId]: version }))
+        }
       />
     );
   }

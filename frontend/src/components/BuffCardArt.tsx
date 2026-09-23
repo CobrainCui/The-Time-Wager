@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { BACKEND_URL } from "../socket";
 import { BUFF_CARD_DEFS } from "../config/buffCards";
 import { uiRem } from "../utils/typography";
@@ -12,7 +12,13 @@ interface Props {
 export const BuffCardArt: React.FC<Props> = ({ cardId, buffImages = {}, compact }) => {
   const def = BUFF_CARD_DEFS[cardId] || { name: cardId, desc: "", icon: "🃏", color: "#a855f7" };
   const v = buffImages[cardId];
-  const hasImage = v && v > 0;
+  const hasImage = v != null && v > 0;
+  const [broken, setBroken] = useState(false);
+  const showImage = hasImage && !broken;
+
+  useEffect(() => {
+    setBroken(false);
+  }, [cardId, v]);
 
   return (
     <div
@@ -28,11 +34,12 @@ export const BuffCardArt: React.FC<Props> = ({ cardId, buffImages = {}, compact 
         position: "relative",
       }}
     >
-      {hasImage ? (
+      {showImage ? (
         <img
           src={`${BACKEND_URL}/uploads_buffs/${cardId}.jpg?v=${v}`}
           alt={def.name}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          onError={() => setBroken(true)}
         />
       ) : (
         <div

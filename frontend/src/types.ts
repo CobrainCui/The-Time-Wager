@@ -214,7 +214,7 @@ export interface GameState {
   };
   
   communityName?: string;
-  globalLeaderboard?: { name: string; score: number }[];
+  globalLeaderboard?: { name: string; score: number; roomId?: string; recordedAt?: number }[];
   /** 本轮拍卖已成功成交的道具卡 id */
   auctionDistributedCardIds?: string[];
 }

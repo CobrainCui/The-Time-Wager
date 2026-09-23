@@ -116,6 +116,8 @@ export interface Player {
   investment: Record<number, number>;
   /** 讨论/投资阶段本地预填，倒计时结束时服务端据此自动提交 */
   investmentDraft?: Record<number, number>;
+  /** 提交投资前快照，供上帝解锁时恢复空提交前的预填 */
+  preSubmitInvestmentDraft?: Record<number, number>;
   longTerm: Record<number, { 
     totalInvested: number; 
     status: "active"|"completed"|"abandoned";
@@ -214,7 +216,7 @@ export interface GameState {
   };
 
   communityName?: string;
-  globalLeaderboard?: { name: string; score: number }[];
+  globalLeaderboard?: { name: string; score: number; roomId?: string; recordedAt?: number }[];
   /** 本轮拍卖已成功成交的道具卡 id */
   auctionDistributedCardIds?: string[];
   /** 进入 TUTORIAL 前的阶段，用于教程结束后判断是否全量 reset */
@@ -368,6 +370,11 @@ export function finishTutorialExit(game: GameState): void {
     game.tutorialStep = 0;
     game.tutorialEntryPhase = undefined;
   }
+}
+
+export function getWealthiestPlayer(game: GameState): Player | undefined {
+  if (game.players.length === 0) return undefined;
+  return game.players.reduce((best, p) => (p.wealth > best.wealth ? p : best), game.players[0]);
 }
 
 export function shouldResetAfterTutorial(game: GameState): boolean {

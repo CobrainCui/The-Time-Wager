@@ -38,6 +38,9 @@ coverage/
 *.sln
 *.sw?
 
+# Runtime leaderboard (persisted on server)
+server/data/community_leaderboard.json
+
 # Misc
 .npm
 eslintcache

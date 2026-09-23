@@ -1134,13 +1134,6 @@ h1, h2, h3, h4, h5, h6 {
   min-width: 0;
 }
 
-.player-chat-header-wealth {
-  font-family: var(--font-mono);
-  font-size: calc(0.68rem * var(--text-ui-scale));
-  font-weight: 700;
-  color: #fbbf24;
-}
-
 .player-chat-empty {
   color: var(--color-text-muted);
   font-size: calc(0.75rem * var(--text-ui-scale));

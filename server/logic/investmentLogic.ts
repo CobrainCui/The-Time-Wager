@@ -53,6 +53,9 @@ export function applyInvestments(
   player.totalEnergyConsumed += totalSpent; // ✅ 埋点：总消耗
 
   // 3. 更新投资
+  player.preSubmitInvestmentDraft = player.investmentDraft
+    ? { ...player.investmentDraft }
+    : { ...investments };
   player.investment = investments;
   player.investmentDraft = undefined;
 
@@ -76,6 +79,78 @@ export function applyInvestments(
   appendSessionEvent(
     game,
     "investment_submitted",
+    {
+      globalRound: game.globalRound,
+      currentEra: game.currentEra,
+      roundInEra: game.roundInEra,
+      investments: { ...investments },
+      totalSpent,
+    },
+    playerId
+  );
+
+  return true;
+}
+
+/** 上帝解锁：回滚本轮已提交的投资（与 applyInvestments 对称） */
+export function revertInvestments(game: GameState, playerId: string): boolean {
+  const player = game.players.find((p) => p.id === playerId);
+  if (!player) return false;
+
+  const investments = { ...(player.investment ?? {}) };
+  let totalSpent = 0;
+  for (const amount of Object.values(investments)) {
+    totalSpent += Number(amount) || 0;
+  }
+
+  if (totalSpent <= 0) {
+    const backup = player.preSubmitInvestmentDraft;
+    delete player.preSubmitInvestmentDraft;
+    if (backup && Object.keys(backup).length > 0) {
+      player.investmentDraft = sanitizeInvestments(game, player, backup);
+      player.investment = {};
+      game.logs.push(`🔓 上帝解锁 ${player.name}，已恢复提交前的投资预填`);
+      appendSessionEvent(
+        game,
+        "admin_investment_reverted",
+        {
+          globalRound: game.globalRound,
+          currentEra: game.currentEra,
+          roundInEra: game.roundInEra,
+          investments: { ...player.investmentDraft },
+          totalSpent: 0,
+          restoredFromBackup: true,
+        },
+        playerId
+      );
+      return true;
+    }
+    return false;
+  }
+
+  for (const [projIdStr, amount] of Object.entries(investments)) {
+    const amt = Number(amount) || 0;
+    if (amt <= 0) continue;
+    const projId = Number(projIdStr);
+    const project = game.activeProjects.find((p) => p.id === projId);
+    if (project?.type === "risk") {
+      player.investedRiskEnergy = Math.max(0, player.investedRiskEnergy - amt);
+    } else if (project?.type === "long") {
+      player.investedLongEnergy = Math.max(0, player.investedLongEnergy - amt);
+    }
+  }
+
+  player.energy += totalSpent;
+  player.totalEnergyConsumed = Math.max(0, player.totalEnergyConsumed - totalSpent);
+  player.investmentDraft = sanitizeInvestments(game, player, investments);
+  player.investment = {};
+  delete player.preSubmitInvestmentDraft;
+
+  game.logs.push(`🔓 上帝解锁 ${player.name}，退回 ${totalSpent} 精力，可重新投资`);
+
+  appendSessionEvent(
+    game,
+    "admin_investment_reverted",
     {
       globalRound: game.globalRound,
       currentEra: game.currentEra,

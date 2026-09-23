@@ -26,6 +26,9 @@ export default defineConfig({
       '/uploads_eras': {
         target: 'http://localhost:3001',
       },
+      '/uploads_buffs': {
+        target: 'http://localhost:3001',
+      },
     },
   },
 })

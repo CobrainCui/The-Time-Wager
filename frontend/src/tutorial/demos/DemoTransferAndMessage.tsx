@@ -107,10 +107,12 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
       direction: "out",
       amount,
       note: trimmed,
-      status: "pending",
+      status: amount === 0 ? "accepted" : "pending",
     });
     setExpanded(peerId, true);
     setToast(amount === 0 ? "私信已发送（试玩）" : `已向对方发起转账 ${amount} 💰（试玩）`);
+
+    if (amount === 0) return;
 
     window.setTimeout(() => {
       updateMessageStatus(peerId, outId, "accepted");
@@ -173,7 +175,7 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
             className="input"
             min={0}
             max={wealth}
-            placeholder="金额(可空)"
+            placeholder="金额"
             value={amount}
             onChange={(e) => {
               const raw = e.target.value;
@@ -259,30 +261,30 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
                         className={`player-chat-bubble ${m.direction === "out" ? "out" : "in"}`}
                       >
                         <div>{formatBubble(m)}</div>
-                        {m.status === "pending" && m.direction === "in" && (
+                        {m.status === "pending" && m.direction === "in" && m.amount > 0 && (
                           <div className="player-chat-bubble-actions">
                             <button
                               type="button"
                               className="btn btn-success btn-sm"
                               onClick={() => respond(playerId, m.id, true)}
                             >
-                              {m.amount === 0 ? "知道了" : "接收"}
+                              接收
                             </button>
                             <button
                               type="button"
                               className="btn btn-danger btn-sm"
                               onClick={() => respond(playerId, m.id, false)}
                             >
-                              {m.amount === 0 ? "忽略" : "退回"}
+                              退回
                             </button>
                           </div>
                         )}
-                        {m.status !== "pending" && (
+                        {m.amount > 0 && m.status !== "pending" && (
                           <div className="player-chat-bubble-meta">
                             {m.status === "accepted" ? "已处理" : "已退回"}
                           </div>
                         )}
-                        {m.status === "pending" && m.direction === "out" && (
+                        {m.amount > 0 && m.status === "pending" && m.direction === "out" && (
                           <div className="player-chat-bubble-meta">等待对方确认</div>
                         )}
                       </div>
@@ -301,7 +303,9 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
               );
             }
 
-            const pendingIn = thread.messages.filter((m) => m.direction === "in" && m.status === "pending").length;
+            const pendingIn = thread.messages.filter(
+              (m) => m.direction === "in" && m.status === "pending" && m.amount > 0
+            ).length;
             const badge = Math.max(thread.unread, pendingIn);
 
             return (

@@ -21,7 +21,8 @@ const StatusBar: React.FC<{
   buffPhaseEndsAt?: number;
   onCoffee: () => void;
   coffeeLoading: boolean;
-}> = ({ me, remainingEnergy, investmentEndsAt, buffPhaseEndsAt, onCoffee, coffeeLoading }) => {
+  coffeeLocked?: boolean;
+}> = ({ me, remainingEnergy, investmentEndsAt, buffPhaseEndsAt, onCoffee, coffeeLoading, coffeeLocked }) => {
   const [timeLeft, setTimeLeft] = useState(0);
 
   useEffect(() => {
@@ -95,7 +96,7 @@ const StatusBar: React.FC<{
           )}
           <button
             onClick={onCoffee}
-            disabled={coffeeLoading || me.wealth < 15}
+            disabled={coffeeLoading || me.wealth < 15 || coffeeLocked}
             className="btn btn-sm"
             style={{
               background: "rgba(180,83,9,0.2)",
@@ -119,6 +120,7 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
   const draftSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSubmittedRef = useRef(false);
   const hydratedRoundRef = useRef<number | null>(null);
+  const prevReadyRef = useRef(me.ready);
   const investmentsRef = useRef(investments);
   investmentsRef.current = investments;
 
@@ -135,6 +137,14 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
       setInvestments(me.investmentDraft);
     }
   }, [game.globalRound, game.phase, me.investmentDraft]);
+
+  useEffect(() => {
+    const wasReady = prevReadyRef.current;
+    prevReadyRef.current = me.ready;
+    if (game.phase !== "INVESTMENT" || !wasReady || me.ready) return;
+    autoSubmittedRef.current = false;
+    setInvestments(me.investmentDraft ? { ...me.investmentDraft } : {});
+  }, [game.phase, me.ready, me.investmentDraft, me.id]);
 
   useEffect(() => {
     autoSubmittedRef.current = false;
@@ -246,6 +256,7 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
         buffPhaseEndsAt={game.buffPhaseEndsAt}
         onCoffee={handleCoffee}
         coffeeLoading={coffeeLoading}
+        coffeeLocked={isSubmitted}
       />
 
       <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "1.5rem 1rem 8rem" }}>

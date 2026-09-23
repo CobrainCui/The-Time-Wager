@@ -139,7 +139,12 @@ export default function GameRoom({ game, myPlayerId, onExit, projectImages = {},
       case "TUTORIAL":        return <TutorialView game={game} me={me} />;
       case "DRAFTING":        return <Drafting game={game} me={me} />;
       case "BUFF_USAGE":      return (
-        <BuffUsage game={game} me={me} onOpenInvestmentPrefill={() => setBuffPrefillOpen(true)} />
+        <BuffUsage
+          game={game}
+          me={me}
+          buffImages={buffImages}
+          onOpenInvestmentPrefill={() => setBuffPrefillOpen(true)}
+        />
       );
       case "INVESTMENT":      return <Investment game={game} me={me} mode="investment" projectImages={projectImages} />;
       case "SETTLEMENT":      return <Settlement game={game} me={me} />;

@@ -6,6 +6,7 @@ export type SessionEventType =
   | "draft_seat_chosen"
   | "draft_order_swapped"
   | "investment_submitted"
+  | "admin_investment_reverted"
   | "buff_used"
   | "coffee_purchased"
   | "transaction_created"

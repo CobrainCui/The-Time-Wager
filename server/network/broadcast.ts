@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 
 import { GameState, Transaction } from "../state/gameState.js";
+import { getCommunityLeaderboard } from "../state/communityLeaderboard.js";
 
 
 
@@ -63,6 +64,8 @@ export function serializeGameForClient(
     transactions,
 
     ...extra,
+
+    globalLeaderboard: getCommunityLeaderboard(),
 
   };
 

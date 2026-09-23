@@ -5,11 +5,20 @@ import { socket, BACKEND_URL } from "../socket";
 import { adminApiUrl, adminAuthHeaders } from "../admin/adminFetch";
 import { TUTORIAL_SLIDES } from "../tutorialData";
 import { ALL_PROJECTS } from "../config/projects";
-import { getAuctionCardsForEra, getAuctionRound, BUFF_CARD_DEFS } from "../config/buffCards";
-import { BuffCardArt } from "../components/BuffCardArt";
+import {
+  AUCTION_CARDS_BY_ROUND,
+  getAuctionCardsForEra,
+  getAuctionRound,
+  BUFF_CARD_DEFS,
+} from "../config/buffCards";
+import { FATE_SKETCH_PERSONA_COLORS } from "../config/personaConfig";
 
 const CARD_NAME_MAP: Record<string, string> = Object.fromEntries(
   Object.entries(BUFF_CARD_DEFS).map(([id, d]) => [id, d.name])
+);
+
+const ALL_AUCTION_BUFF_IDS = Array.from(
+  new Set(Object.values(AUCTION_CARDS_BY_ROUND).flat().map((c) => c.id))
 );
 
 interface Props {
@@ -18,6 +27,9 @@ interface Props {
   projectImages?: Record<number, number>;
   eraImages?: Record<string, number>;
   buffImages?: Record<string, number>;
+  onProjectImageVersion?: (id: number, version: number) => void;
+  onEraImageVersion?: (eraName: string, version: number) => void;
+  onBuffImageVersion?: (cardId: string, version: number) => void;
 }
 
 function isAiPlayer(p: Player): boolean {
@@ -34,9 +46,18 @@ const PHASE_NAMES: Record<string, string> = {
   AUCTION: "拍卖会", GAME_OVER: "游戏结束", COMMUNITY_NAMING: "社区命名",
 };
 
-export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, eraImages = {}, buffImages = {} }) => {
+export const AdminView: React.FC<Props> = ({
+  game,
+  onExit,
+  projectImages = {},
+  eraImages = {},
+  buffImages = {},
+  onProjectImageVersion,
+  onEraImageVersion,
+  onBuffImageVersion,
+}) => {
   const [timeLeft, setTimeLeft] = useState(0);
-  const [auctionCost, setAuctionCost] = useState(0);
+  const [cardAuctionCosts, setCardAuctionCosts] = useState<Record<string, number>>({});
   const [isImagePanelOpen, setIsImagePanelOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -62,14 +83,21 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
       });
       if (res.status === 401) alert("未授权：请重新登录管理后台");
       else if (!res.ok) alert("删除失败");
+      else {
+        const data = (await res.json().catch(() => null)) as { timestamp?: number } | null;
+        const ts = data?.timestamp ?? 0;
+        if (type === "buff" && onBuffImageVersion) onBuffImageVersion(String(id), ts);
+        if (type === "era" && onEraImageVersion) onEraImageVersion(String(id), ts);
+        if (type === "project" && onProjectImageVersion) onProjectImageVersion(Number(id), ts);
+      }
     } catch (err) {
       console.error("Delete failed", err);
     }
   };
 
-  const handleProposeBuff = (playerId: string, cardId: string) => {
+  const handleProposeBuff = (playerId: string, cardId: string, cost: number) => {
     if (game.phase !== "AUCTION") { alert("只能在拍卖阶段发卡"); return; }
-    emit("adminProposeBuff", { playerId, cardId, cost: auctionCost });
+    emit("adminProposeBuff", { playerId, cardId, cost: Math.floor(Number(cost) || 0) });
     alert("已发送交易请求");
   };
 
@@ -157,7 +185,8 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
   const isUrgent = timeLeft < 60 && timeLeft > 0;
 
   const handleImageUpload = (id: string | number, type: 'project' | 'era' | 'buff', e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
@@ -203,9 +232,18 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
               });
               if (res.status === 401) alert("未授权：请重新登录管理后台");
               else if (!res.ok) alert("上传失败！");
+              else {
+                const data = (await res.json().catch(() => null)) as { timestamp?: number } | null;
+                const ts = data?.timestamp ?? Date.now();
+                if (type === "buff" && onBuffImageVersion) onBuffImageVersion(String(id), ts);
+                if (type === "era" && onEraImageVersion) onEraImageVersion(String(id), ts);
+                if (type === "project" && onProjectImageVersion) onProjectImageVersion(Number(id), ts);
+              }
             } catch (err) {
               console.error(err);
               alert("上传出错：" + err);
+            } finally {
+              input.value = "";
             }
           }, 'image/jpeg', 0.6);
         };
@@ -320,28 +358,27 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
               boxShadow: "0 0 30px rgba(168,85,247,0.15)",
             }}
           >
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#c084fc", marginBottom: "1rem" }}>
+            <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#c084fc", marginBottom: "1.25rem" }}>
               🔨 拍卖发卡控制台 · 第 {auctionRound} 场
             </h2>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.875rem", marginBottom: "1.25rem" }}>
-              <label style={{ fontWeight: 700, color: "#fbbf24", fontSize: uiRem(0.875) }}>成交价格：</label>
-              <input
-                type="number"
-                value={auctionCost}
-                onChange={(e) => setAuctionCost(Number(e.target.value))}
-                className="input"
-                style={{ width: "7rem", textAlign: "center", fontFamily: "var(--font-mono)", fontSize: uiRem(1.1) }}
-              />
-              <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.8) }}>先设定价格，再点击发放</span>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "1rem" }}>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                justifyContent: "center",
+                gap: "1rem",
+              }}
+            >
               {currentAuctionCards.map((card) => {
                 const def = BUFF_CARD_DEFS[card.id];
                 const sold = distributedSet.has(card.id);
+                const cardCost = cardAuctionCosts[card.id] ?? 0;
                 return (
                 <div
                   key={card.id}
                   style={{
+                    flex: "0 1 260px",
+                    width: "min(100%, 260px)",
                     background: "rgba(0,0,0,0.3)",
                     border: `1px solid ${sold ? "rgba(100,100,100,0.3)" : "rgba(168,85,247,0.25)"}`,
                     borderRadius: "0.875rem",
@@ -349,33 +386,59 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                     opacity: sold ? 0.55 : 1,
                   }}
                 >
-                  <BuffCardArt cardId={card.id} buffImages={buffImages} compact />
-                  <div style={{ fontWeight: 700, color: "#d8b4fe", margin: "0.75rem 0 0.25rem", fontSize: uiRem(0.95) }}>
+                  <div style={{ fontWeight: 700, color: "#d8b4fe", marginBottom: "0.35rem", fontSize: uiRem(0.95) }}>
                     {def?.name || card.name}
                     {sold && <span style={{ color: "var(--color-text-muted)", fontWeight: 600, marginLeft: "0.35rem" }}>(已成交)</span>}
                   </div>
-                  <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-secondary)", marginBottom: "0.75rem", lineHeight: 1.4 }}>
+                  <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-secondary)", marginBottom: "0.875rem", lineHeight: 1.45 }}>
                     {def?.desc}
                   </div>
-                  <label className="btn btn-sm btn-full" style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.35)", color: "#c084fc", cursor: "pointer", display: "block", textAlign: "center", marginBottom: "0.5rem" }}>
-                    上传卡面 (3:4)
-                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => handleImageUpload(card.id, "buff", e)} />
-                  </label>
-                  {buffImages[card.id] ? (
-                    <button type="button" className="admin-inline-btn admin-delete-btn" style={{ marginBottom: "0.5rem" }} onClick={(e) => handleDeleteImage(card.id, "buff", e)}>
-                      删除卡面
-                    </button>
-                  ) : null}
-                  <select
-                    className="input"
-                    disabled={sold}
-                    onChange={(e) => { if (e.target.value) { handleProposeBuff(e.target.value, card.id); e.target.value = ""; } }}
-                  >
-                    <option value="">{sold ? "已成交" : "发给玩家..."}</option>
-                    {!sold && humanPlayers.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} (💰{p.wealth})</option>
-                    ))}
-                  </select>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: uiRem(0.8) }}>
+                      <span style={{ fontWeight: 700, color: "#fbbf24", whiteSpace: "nowrap" }}>成交价格</span>
+                      <input
+                        type="number"
+                        min={0}
+                        disabled={sold}
+                        value={cardCost}
+                        onChange={(e) =>
+                          setCardAuctionCosts((prev) => ({
+                            ...prev,
+                            [card.id]: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                          }))
+                        }
+                        className="input"
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          textAlign: "center",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: uiRem(1),
+                        }}
+                      />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: uiRem(0.8) }}>
+                      <span style={{ fontWeight: 700, color: "#c084fc" }}>得主</span>
+                      <select
+                        className="input"
+                        disabled={sold}
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            handleProposeBuff(e.target.value, card.id, cardCost);
+                            e.target.value = "";
+                          }
+                        }}
+                      >
+                        <option value="">{sold ? "已成交" : "选择玩家…"}</option>
+                        {!sold &&
+                          humanPlayers.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} (💰{p.wealth})
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  </div>
                 </div>
               );})}
             </div>
@@ -439,17 +502,9 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                         </td>
                         <td style={{ padding: "0.875rem" }}>
                           {p.analysisResult ? (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-                              <span style={{ fontSize: uiRem(0.7), color: "#60a5fa" }}>🎭 {p.analysisResult.primaryPersona}</span>
-                              {p.analysisResult.mbtiPersona && (
-                                <span style={{ fontSize: uiRem(0.7), color: "#34d399" }}>🧬 {p.analysisResult.mbtiPersona.code}</span>
-                              )}
-                              {game.phase === "GAME_OVER" && (
-                                <span style={{ fontSize: uiRem(0.65), color: p.personaVote ? "#fbbf24" : "var(--color-text-muted)" }}>
-                                  {p.personaVote === "fate" ? "🗳️选: 命运素描" : p.personaVote === "gene" ? "🗳️选: 决策基因" : p.personaVote === "neither" ? "🗳️选: 都不准" : "⏳未投票"}
-                                </span>
-                              )}
-                            </div>
+                            <span style={{ fontSize: uiRem(0.7), color: FATE_SKETCH_PERSONA_COLORS[p.analysisResult.primaryPersona] || "#60a5fa" }}>
+                              {p.analysisResult.primaryPersona}
+                            </span>
                           ) : (
                             <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.75) }}>尚未分析</span>
                           )}
@@ -488,7 +543,13 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                               <button
                                 type="button"
                                 className="admin-inline-btn"
-                                onClick={() => { if (confirm(`解锁 ${p.name}？`)) emit("adminUnlockPlayer", { targetPlayerId: p.id }); }}
+                                onClick={() => {
+                                  const msg =
+                                    game.phase === "INVESTMENT"
+                                      ? `解锁 ${p.name} 并将退回本轮已提交的投资与精力，确认？`
+                                      : `解锁 ${p.name}？`;
+                                  if (confirm(msg)) emit("adminUnlockPlayer", { targetPlayerId: p.id });
+                                }}
                                 style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.35)", color: "#fbbf24" }}
                               >解</button>
                             )}
@@ -582,6 +643,77 @@ export const AdminView: React.FC<Props> = ({ game, onExit, projectImages = {}, e
                         </label>
                         {version ? (
                           <button type="button" onClick={(e) => handleDeleteImage(eraName, 'era', e)} className="admin-delete-btn">删除图片</button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 拍卖道具卡面（与对局 BuffCardArt / uploads_buffs 一致） */}
+              <div>
+                <h3 style={{ fontSize: uiRem(1), color: "#c084fc", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span>🔨</span> 拍卖道具卡面 (竖版 3:4)
+                </h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "1rem" }}>
+                  {ALL_AUCTION_BUFF_IDS.map((cardId) => {
+                    const def = BUFF_CARD_DEFS[cardId];
+                    const version = buffImages[cardId] || 0;
+                    const hasImage = version > 0;
+                    const imgUrl = `${BACKEND_URL}/uploads_buffs/${cardId}.jpg${hasImage ? `?v=${version}` : ""}`;
+                    return (
+                      <div
+                        key={cardId}
+                        style={{
+                          background: "rgba(255,255,255,0.03)",
+                          borderRadius: "0.75rem",
+                          padding: "0.75rem",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                          border: "1px solid rgba(168,85,247,0.2)",
+                        }}
+                      >
+                        <div
+                          style={{ fontSize: uiRem(0.75), fontWeight: 700, textAlign: "center", color: def?.color || "#d8b4fe" }}
+                          title={cardId}
+                        >
+                          {def?.name || cardId}
+                        </div>
+                        <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
+                          <div
+                            style={{
+                              width: "100%",
+                              aspectRatio: "3/4",
+                              background: "rgba(0,0,0,0.3)",
+                              borderRadius: "0.5rem",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              border: "1px dashed rgba(168,85,247,0.35)",
+                              color: "var(--color-text-muted)",
+                              fontSize: uiRem(0.75),
+                              overflow: "hidden",
+                            }}
+                          >
+                            {hasImage ? (
+                              <img src={imgUrl} alt={def?.name || cardId} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            ) : (
+                              "上传"
+                            )}
+                          </div>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => handleImageUpload(cardId, "buff", e)}
+                            style={{ display: "none" }}
+                          />
+                        </label>
+                        {hasImage ? (
+                          <button type="button" onClick={(e) => handleDeleteImage(cardId, "buff", e)} className="admin-delete-btn">
+                            删除图片
+                          </button>
                         ) : null}
                       </div>
                     );

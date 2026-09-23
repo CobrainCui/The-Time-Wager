@@ -2,7 +2,7 @@ import crypto from "crypto";
 import type { Request, Response, NextFunction } from "express";
 
 function configuredAdminToken(): string {
-  return process.env.ADMIN_TOKEN ?? "";
+  return (process.env.ADMIN_TOKEN ?? "").trim();
 }
 
 export function assertAdminTokenConfigured(): void {
@@ -20,7 +20,7 @@ export function verifyAdminToken(token: string | undefined | null): boolean {
   const secret = configuredAdminToken();
   if (!secret || !token) return false;
   const a = Buffer.from(secret, "utf8");
-  const b = Buffer.from(String(token), "utf8");
+  const b = Buffer.from(String(token).trim(), "utf8");
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
 }

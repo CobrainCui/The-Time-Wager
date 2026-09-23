@@ -182,6 +182,7 @@ function advanceRound(game: GameState) {
     p.ready = false;
     p.investment = {};
     p.investmentDraft = undefined;
+    p.preSubmitInvestmentDraft = undefined;
 
     const energyMap: Record<number, number> = { 1: 15, 2: 13, 3: 11, 4: 9 };
     p.energy = energyMap[game.currentEra] || 9;

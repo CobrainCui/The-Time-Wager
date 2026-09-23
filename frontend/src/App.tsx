@@ -25,6 +25,7 @@ function App() {
       setMyPlayerId("");
     };
     const onError = (msg: string) => alert(`❌ ${msg}`);
+    const onPlayerNotify = ({ message }: { message: string }) => alert(message);
     const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
     const onSyncEraImages = (images: Record<string, number>) => setEraImages(images);
     const onSyncBuffImages = (images: Record<string, number>) => setBuffImages(images);
@@ -35,6 +36,7 @@ function App() {
     socket.on("playerJoined", onPlayerJoined);
     socket.on("roomDissolved", onRoomDissolved);
     socket.on("error", onError);
+    socket.on("playerNotify", onPlayerNotify);
     socket.on("syncProjectImages", onSyncImages);
     socket.on("syncEraImages", onSyncEraImages);
     socket.on("syncBuffImages", onSyncBuffImages);
@@ -46,6 +48,7 @@ function App() {
       socket.off("playerJoined", onPlayerJoined);
       socket.off("roomDissolved", onRoomDissolved);
       socket.off("error", onError);
+      socket.off("playerNotify", onPlayerNotify);
       socket.off("syncProjectImages", onSyncImages);
       socket.off("syncEraImages", onSyncEraImages);
       socket.off("syncBuffImages", onSyncBuffImages);

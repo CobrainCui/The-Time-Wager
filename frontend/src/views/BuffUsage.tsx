@@ -4,14 +4,16 @@ import { GameState, Player } from "../types";
 import { socket } from "../socket";
 
 import { BUFF_DEFS } from "../data/buffDefs";
+import { BuffCardArt } from "../components/BuffCardArt";
 
 interface Props {
   game: GameState;
   me: Player;
+  buffImages?: Record<string, number>;
   onOpenInvestmentPrefill?: () => void;
 }
 
-export const BuffUsage: React.FC<Props> = ({ game, me, onOpenInvestmentPrefill }) => {
+export const BuffUsage: React.FC<Props> = ({ game, me, buffImages = {}, onOpenInvestmentPrefill }) => {
   const [timeLeft, setTimeLeft] = useState(0);
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [targetPlayer, setTargetPlayer] = useState("");
@@ -141,12 +143,11 @@ export const BuffUsage: React.FC<Props> = ({ game, me, onOpenInvestmentPrefill }
                           : isUsed
                           ? "rgba(255,255,255,0.02)"
                           : "var(--color-bg-card)",
-                        padding: "1.1rem",
+                        padding: "0.65rem",
                         cursor: isUsed ? "not-allowed" : "pointer",
                         display: "flex",
                         flexDirection: "column",
-                        height: "9.5rem",
-                        justifyContent: "space-between",
+                        gap: "0.5rem",
                         transition: "all 0.2s ease",
                         transform: isSelected ? "scale(1.04)" : undefined,
                         boxShadow: isSelected ? `0 0 20px ${def.color}40` : undefined,
@@ -155,12 +156,14 @@ export const BuffUsage: React.FC<Props> = ({ game, me, onOpenInvestmentPrefill }
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <span style={{ fontSize: "1.75rem" }}>{def.icon}</span>
+                        <span style={{ fontSize: uiRem(0.65), color: "var(--color-text-muted)" }}>
+                          {isUsed ? "已用" : isSelected ? "已选" : ""}
+                        </span>
                         {isSelected && <span style={{ color: def.color, fontSize: uiRem(1) }}>✓</span>}
-                        {isUsed && <span style={{ fontSize: uiRem(0.65), color: "var(--color-text-muted)" }}>已用</span>}
                       </div>
+                      <BuffCardArt cardId={cardId} buffImages={buffImages} compact />
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: uiRem(0.9), color: isSelected ? def.color : "white", marginBottom: "0.25rem" }}>
+                        <div style={{ fontWeight: 700, fontSize: uiRem(0.85), color: isSelected ? def.color : "white", marginBottom: "0.2rem" }}>
                           {def.name}
                         </div>
                         <div

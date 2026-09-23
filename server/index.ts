@@ -18,11 +18,20 @@ import {
   safeExportBasename,
   contentDispositionAttachment,
 } from "./export/sessionExport.js";
+import { isAllowedBuffImageId } from "./util/buffImageIds.js";
+import {
+  getCommunityLeaderboard,
+  initCommunityLeaderboardPersistence,
+} from "./state/communityLeaderboard.js";
 
 assertAdminTokenConfigured();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+initCommunityLeaderboardPersistence(
+  path.join(__dirname, "../data/community_leaderboard.json")
+);
 
 const app = express();
 app.use(cors());
@@ -82,10 +91,12 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 app.post("/api/upload-image", requireAdminToken, upload.single("image"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Missing image file" });
   const { id } = req.body;
   if (!id) return res.status(400).json({ error: "Missing id" });
   
   const numId = parseInt(id);
+  if (!Number.isFinite(numId)) return res.status(400).json({ error: "Invalid id" });
   customImagesVersions[numId] = Date.now();
   
   // Notify all connected clients
@@ -104,6 +115,7 @@ const storageEra = multer.diskStorage({
 const uploadEra = multer({ storage: storageEra });
 
 app.post("/api/upload-era-image", requireAdminToken, uploadEra.single("image"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Missing image file" });
   const { id } = req.body; // id is the era name
   if (!id) return res.status(400).json({ error: "Missing id" });
   
@@ -123,8 +135,10 @@ const storageBuff = multer.diskStorage({
 const uploadBuff = multer({ storage: storageBuff });
 
 app.post("/api/upload-buff-image", requireAdminToken, uploadBuff.single("image"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Missing image file" });
   const { id } = req.body;
   if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing id" });
+  if (!isAllowedBuffImageId(id)) return res.status(400).json({ error: "Invalid buff card id" });
 
   customBuffImagesVersions[id] = Date.now();
   io.emit("syncBuffImages", customBuffImagesVersions);
@@ -133,7 +147,8 @@ app.post("/api/upload-buff-image", requireAdminToken, uploadBuff.single("image")
 
 app.post("/api/delete-buff-image", express.json(), requireAdminToken, (req, res) => {
   const { id } = req.body;
-  if (!id) return res.status(400).json({ error: "Missing id" });
+  if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing id" });
+  if (!isAllowedBuffImageId(id)) return res.status(400).json({ error: "Invalid buff card id" });
 
   const filePath = path.join(uploadBuffsDir, `${id}.jpg`);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
@@ -171,6 +186,10 @@ app.post("/api/delete-era-image", express.json(), requireAdminToken, (req, res) 
   io.emit("syncEraImages", customEraImagesVersions);
   res.json({ success: true, timestamp: 0 });
 });
+app.get("/api/community-leaderboard", (_req, res) => {
+  res.json({ entries: getCommunityLeaderboard() });
+});
+
 app.get("/api/session-export", requireAdminToken, (req, res) => {
   const roomId = String(req.query.roomId ?? "").trim();
   const format = String(req.query.format ?? "json").toLowerCase();

@@ -1,11 +1,23 @@
 import { Server, Socket } from "socket.io";
-import { createInitialGame, Player, resetGameSession, needsSessionReset, finishTutorialExit } from "../state/gameState.js";
-import { togglePlayerReady, forceSubmitPendingInvestments } from "../state/gameActions.js";
+import {
+  createInitialGame,
+  Player,
+  resetGameSession,
+  needsSessionReset,
+  finishTutorialExit,
+  getWealthiestPlayer,
+} from "../state/gameState.js";
+import { togglePlayerReady, forceSubmitPendingInvestments, adminUnlockPlayer } from "../state/gameActions.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
 import { applyInvestments, sanitizeInvestments } from "../logic/investmentLogic.js"; 
 import { broadcastUpdate, serializeGameForClient } from "./broadcast.js"; 
 import { AI_BOT_ENABLED } from "../config/features.js";
-import { rooms, customImagesVersions, customEraImagesVersions, customBuffImagesVersions, globalLeaderboard } from "../state/store.js"; 
+import { rooms, customImagesVersions, customEraImagesVersions, customBuffImagesVersions } from "../state/store.js";
+import {
+  recordCommunityScore,
+  broadcastLeaderboardToAllRooms,
+  sanitizeCommunityName,
+} from "../state/communityLeaderboard.js"; 
 import { drawProjectsForEra } from "../state/gameEra.js";
 import { shuffleArray } from "../utils/shuffle.js";
 import { useBuffCard } from "../logic/buffLogic.js";
@@ -228,8 +240,18 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (!socket.data.isSuperAdmin) return;
     const game = rooms[roomId];
     if (!game) return;
-    const player = game.players.find(p => p.id === targetPlayerId);
-    if (player) { player.ready = false; game.readyPlayers.delete(targetPlayerId); broadcastUpdate(io, game); }
+    if (!adminUnlockPlayer(game, targetPlayerId)) return;
+
+    const unlocked = game.players.find((p) => p.id === targetPlayerId);
+    if (unlocked?.socketId) {
+      io.to(unlocked.socketId).emit("playerNotify", {
+        message:
+          game.phase === "INVESTMENT"
+            ? "主持人已解锁你的投资决策，精力与方案已恢复，请重新确认后提交。"
+            : "主持人已解锁你的本阶段操作，请继续。",
+      });
+    }
+    broadcastUpdate(io, game);
   });
 
   socket.on("adminDissolveRoom", ({ roomId }) => {
@@ -536,7 +558,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         toName: receiver.name,
         amount: 0,
         note: message,
-        status: "pending" as const,
+        status: "accepted" as const,
         timestamp: Date.now(),
       };
       game.transactions.push(tx);
@@ -604,6 +626,8 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (!roomId || !rooms[roomId]) return;
     const game = rooms[roomId];
     const player = game.players.find(p => p.socketId === socket.id);
+    if (!player) return;
+    if (player.ready && game.phase === "INVESTMENT") return;
     if (player && player.wealth >= 15) { 
         player.wealth -= 15; 
         player.energy += 1; 
@@ -659,19 +683,41 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const roomId = getRoomId(socket);
     if (!roomId || !rooms[roomId]) return;
     const game = rooms[roomId];
-    game.communityName = name;
+
+    if (game.phase !== "COMMUNITY_NAMING") {
+      socket.emit("error", "当前阶段不能为社区命名");
+      return;
+    }
+    if (game.communityName) {
+      socket.emit("error", "社区已命名，请勿重复提交");
+      return;
+    }
+
+    const player = game.players.find((p) => p.socketId === socket.id);
+    if (!player) return;
+
+    const richest = getWealthiestPlayer(game);
+    if (!richest || player.id !== richest.id) {
+      socket.emit("error", "仅首富可为社区命名");
+      return;
+    }
+
+    const communityName = sanitizeCommunityName(name);
+    if (!communityName) {
+      socket.emit("error", "请输入有效的社区名称");
+      return;
+    }
+
+    game.communityName = communityName;
     game.phase = "GAME_OVER";
-    
+
     const totalScore = game.players.reduce((sum, p) => sum + p.wealth, 0);
-    globalLeaderboard.push({ name: name, score: totalScore });
-    globalLeaderboard.sort((a, b) => b.score - a.score);
-    if(globalLeaderboard.length > 10) globalLeaderboard.pop();
-    game.globalLeaderboard = globalLeaderboard;
+    recordCommunityScore(communityName, totalScore, roomId);
 
     analyzeGamePersona(game);
 
-    appendSessionEvent(game, "community_named", { communityName: name });
-    broadcastUpdate(io, game);
+    appendSessionEvent(game, "community_named", { communityName });
+    broadcastLeaderboardToAllRooms(io);
   });
 
   socket.on("disconnect", () => {

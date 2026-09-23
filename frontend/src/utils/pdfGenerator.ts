@@ -1,7 +1,13 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import {
+  assertPdfChartElementsReady,
+  prepareChartsForPdfCapture,
+  waitForChartPaint,
+} from './gameOverPdf';
+import { buildCollectionManualFileName } from './pdfFileName';
+import { PDF_PAGE2_CHARTS } from './pdfLayout';
 
-// 1. 文件夹映射
 const PERSONA_PATHS: Record<string, string> = {
   "桥梁架构师": "Bridge",
   "瞬刻炼金士": "Moment",
@@ -14,143 +20,199 @@ const PERSONA_PATHS: Record<string, string> = {
 const PDF_WIDTH = 210;
 const PDF_HEIGHT = 297;
 
+type PdfBox = { x: number; y: number; w: number; h: number };
+
+async function addChartFromDom(
+  doc: jsPDF,
+  elementId: string,
+  box: PdfBox,
+  label: string
+): Promise<boolean> {
+  const chartDom = document.getElementById(elementId);
+  if (!chartDom) {
+    console.warn(`PDF: 未找到图表容器（${label}）`, elementId);
+    return false;
+  }
+  try {
+    await waitForChartPaint();
+    const canvas = await html2canvas(chartDom, {
+      backgroundColor: "#ffffff",
+      scale: 2,
+      logging: false,
+      useCORS: true,
+      width: chartDom.offsetWidth,
+      height: chartDom.offsetHeight,
+    });
+    if (canvas.width === 0 || canvas.height === 0) {
+      console.warn(`PDF: 图表截图为空（${label}）`);
+      return false;
+    }
+    const imgData = canvas.toDataURL("image/png");
+    doc.addImage(imgData, "PNG", box.x, box.y, box.w, box.h);
+    return true;
+  } catch (e) {
+    console.warn(`PDF: 图表截图失败（${label}）`, e);
+    return false;
+  }
+}
+
+function publicAssetUrl(path: string): string {
+  const normalized = path.startsWith("/") ? path.slice(1) : path;
+  const base = import.meta.env.BASE_URL ?? "/";
+  return `${base}${normalized}`;
+}
+
 interface GeneratePdfParams {
   playerName: string;
   persona: string;
-  totalEnergy: number;
   remainingEnergy: number;
-  unfinishedProjects: {name: string, progress: number}[];
-  chartElementId: string;
+  unfinishedProjects: { name: string; progress: number }[];
+  radarChartElementId: string;
+  lineChartElementId: string;
 }
 
-// 辅助函数：将 URL 文件转换为 Base64
+export type GeneratePdfResult =
+  | { ok: true; fileName: string; warnings?: string[] }
+  | { ok: false; message: string };
+
 async function loadFontAsBase64(url: string): Promise<string> {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            // reader.result 是 "data:font/ttf;base64,AAEAAA..."
-            // 我们只需要逗号后面的部分
-            const base64 = (reader.result as string).split(',')[1];
-            resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
+  const response = await fetch(publicAssetUrl(url));
+  if (!response.ok) {
+    throw new Error(`字体加载失败 (${response.status})`);
+  }
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = (reader.result as string).split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 export async function generateCollectionManual({
   playerName,
   persona,
-  totalEnergy,
   remainingEnergy,
   unfinishedProjects,
-  chartElementId
-}: GeneratePdfParams) {
-  
+  radarChartElementId,
+  lineChartElementId,
+}: GeneratePdfParams): Promise<GeneratePdfResult> {
+  const safeName = playerName.trim() || "玩家";
+  const fileName = buildCollectionManualFileName(safeName);
+
+  const notReady = assertPdfChartElementsReady(radarChartElementId, lineChartElementId);
+  if (notReady) {
+    return { ok: false, message: notReady };
+  }
+
+  prepareChartsForPdfCapture([radarChartElementId, lineChartElementId]);
+  await waitForChartPaint();
+
   const doc = new jsPDF('p', 'mm', 'a4');
-  
-  // === 1. 动态加载字体===
+
   try {
-      const fontBase64 = await loadFontAsBase64('/fonts/XuandongKaishu.ttf');
-      
-      doc.addFileToVFS("XuanDong.ttf", fontBase64);
-      doc.addFont("XuanDong.ttf", "XuanDong", "normal");
-      doc.setFont("XuanDong");
-      
-      console.log("字体动态加载成功！");
+    const fontBase64 = await loadFontAsBase64('/fonts/XuandongKaishu.ttf');
+    doc.addFileToVFS("XuanDong.ttf", fontBase64);
+    doc.addFont("XuanDong.ttf", "XuanDong", "normal");
+    doc.setFont("XuanDong");
   } catch (e) {
-      console.error("字体加载失败，中文将无法显示！请检查 public/fonts/ 目录下是否有 XuandongKaishu.ttf 文件。", e);
-      // 回退到默认字体（虽然中文会乱码，但防止程序崩溃）
-      doc.setFont("helvetica");
+    console.error("字体加载失败，中文可能无法正常显示", e);
+    doc.setFont("helvetica");
   }
 
   const pathKey = PERSONA_PATHS[persona] || "Poet";
-  const basePath = `/assets/pdf_templates/${pathKey}`;
+  const basePath = publicAssetUrl(`/assets/pdf_templates/${pathKey}`);
 
   const loadImage = (src: string): Promise<HTMLImageElement> => {
     return new Promise((resolve, reject) => {
       const img = new Image();
+      img.crossOrigin = "anonymous";
       img.src = src;
       img.onload = () => resolve(img);
-      img.onerror = (e) => {
-          console.error("加载图片失败:", src);
-          reject(e);
+      img.onerror = () => {
+        console.error("加载图片失败:", src);
+        reject(new Error(`无法加载 PDF 模板：${src}`));
       };
     });
   };
 
   try {
-    // 设置黑色文字
     doc.setTextColor(0, 0, 0);
 
-    // ================= Page 1: 封面 =================
     const img1 = await loadImage(`${basePath}/1.jpg`);
     doc.addImage(img1, 'JPEG', 0, 0, PDF_WIDTH, PDF_HEIGHT);
-    
     doc.setFontSize(24);
-    doc.text(playerName, 44, 124); 
+    doc.text(safeName, 44, 124);
 
-    // ================= Page 2: 轨迹目录 & 图表 =================
     doc.addPage();
     const img2 = await loadImage(`${basePath}/2.jpg`);
     doc.addImage(img2, 'JPEG', 0, 0, PDF_WIDTH, PDF_HEIGHT);
 
-    // 贴图：雷达图 & 曲线图
-    const chartDom = document.getElementById(chartElementId);
-    if (chartDom) {
-        const canvas = await html2canvas(chartDom, { 
-            backgroundColor: null, 
-            scale: 2 
-        });
-        const imgData = canvas.toDataURL('image/png');
-        // 坐标：X=35, Y=114, 宽=140, 高=140
-        doc.addImage(imgData, 'PNG', 35, 114, 140, 140); 
+    const radarOk = await addChartFromDom(
+      doc,
+      radarChartElementId,
+      PDF_PAGE2_CHARTS.radar,
+      "雷达图"
+    );
+    const lineOk = await addChartFromDom(
+      doc,
+      lineChartElementId,
+      PDF_PAGE2_CHARTS.wealthLine,
+      "财富曲线"
+    );
+    const warnings: string[] = [];
+    if (!radarOk) warnings.push("决策雷达图未能嵌入");
+    if (!lineOk) warnings.push("财富曲线未能嵌入");
+    if (!radarOk && !lineOk) {
+      return { ok: false, message: "图表截图失败，请刷新页面后重试" };
     }
 
-    // ================= Page 3: 肖像 =================
     doc.addPage();
     const img3 = await loadImage(`${basePath}/3.jpg`);
     doc.addImage(img3, 'JPEG', 0, 0, PDF_WIDTH, PDF_HEIGHT);
 
-    // ================= Page 4: 核心特征 =================
     doc.addPage();
     const img4 = await loadImage(`${basePath}/4.jpg`);
     doc.addImage(img4, 'JPEG', 0, 0, PDF_WIDTH, PDF_HEIGHT);
 
-    // ================= Page 5: 遗憾分析 =================
     doc.addPage();
     const img5 = await loadImage(`${basePath}/5.jpg`);
     doc.addImage(img5, 'JPEG', 0, 0, PDF_WIDTH, PDF_HEIGHT);
 
     doc.setFontSize(24);
-    doc.text(`${remainingEnergy}`, 70, 54); 
+    doc.text(`${Math.max(0, Math.round(remainingEnergy))}`, 70, 54);
 
-    // 表格：未完成项目
     let rowY = 105;
     doc.setFontSize(20);
-    
-    if (!unfinishedProjects || unfinishedProjects.length === 0) {
-        doc.text("无", 80, 76);
+
+    const nameColumnWidthMm = 88;
+    if (!unfinishedProjects.length) {
+      doc.text("无", 60, rowY);
     } else {
-        unfinishedProjects.forEach(proj => {
-            if (rowY > 200) return; 
-            doc.text(proj.name, 60, rowY);
-            doc.text(`${proj.progress.toFixed(0)}`, 160, rowY); 
-            rowY += 10; 
-        });
+      unfinishedProjects.forEach((proj) => {
+        if (rowY > 200) return;
+        const lines = doc.splitTextToSize(proj.name, nameColumnWidthMm);
+        doc.text(lines, 60, rowY);
+        doc.text(`${proj.progress.toFixed(0)}`, 160, rowY);
+        rowY += 10 * Math.max(1, lines.length);
+      });
     }
 
-    // ================= Page 6: 寄语 =================
     doc.addPage();
     const img6 = await loadImage(`${basePath}/6.jpg`);
     doc.addImage(img6, 'JPEG', 0, 0, PDF_WIDTH, PDF_HEIGHT);
 
-    doc.save(`人生决策藏品手册_${playerName}.pdf`);
-
+    doc.save(fileName);
+    return warnings.length > 0
+      ? { ok: true, fileName, warnings }
+      : { ok: true, fileName };
   } catch (e) {
     console.error("PDF Generate Error:", e);
-    alert("生成 PDF 失败！请按 F12 查看 Console 错误信息。");
+    const message =
+      e instanceof Error ? e.message : "生成 PDF 失败，请稍后重试";
+    return { ok: false, message };
   }
 }
