@@ -102,13 +102,6 @@ export const RoomWaiting: React.FC<Props> = ({ game, me, onExit }) => {
             </ul>
           </div>
 
-          <p
-            className="buff-phase-waiting"
-            style={{ margin: "0 0 1.25rem", fontSize: uiRem(0.85) }}
-          >
-            主持人点击「开局」后将进入第 1 时代
-          </p>
-
           {onExit && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={onExit}>
               退出房间

@@ -5,6 +5,8 @@ import { GameState } from "../types";
 import { AdminView } from "../views/AdminView";
 import { AdminLogin } from "./AdminLogin";
 import { clearAdminToken, getAdminToken, setAdminToken } from "./adminToken";
+import { ConnectionGate } from "../components/ConnectionGate";
+import { useSocketConnection } from "../hooks/useSocketConnection";
 
 type AuthState = "connecting" | "login" | "authenticated";
 
@@ -14,8 +16,10 @@ interface AdminRoomSummary {
   phase: string;
 }
 
+const AUTH_TIMEOUT_MS = 15_000;
+
 export default function AdminApp() {
-  const [isConnected, setIsConnected] = useState(socket.connected);
+  const { connected, error: connectError, retry: retryConnect } = useSocketConnection();
   const [authState, setAuthState] = useState<AuthState>("connecting");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authPending, setAuthPending] = useState(false);
@@ -24,71 +28,104 @@ export default function AdminApp() {
   const [projectImages, setProjectImages] = useState<Record<number, number>>({});
   const [eraImages, setEraImages] = useState<Record<string, number>>({});
   const [buffImages, setBuffImages] = useState<Record<string, number>>({});
-  /** 断线重连后恢复观战房间 */
+
   const spectatingRoomIdRef = useRef<string | null>(null);
   const authTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 进行中的鉴权序号；null 表示无等待 */
+  const pendingAuthSeqRef = useRef<number | null>(null);
+  const authSeqRef = useRef(0);
 
-  const clearAuthTimeout = () => {
+  const clearAuthTimeout = useCallback(() => {
     if (authTimeoutRef.current) {
       clearTimeout(authTimeoutRef.current);
       authTimeoutRef.current = null;
     }
-  };
+  }, []);
 
-  const authenticate = useCallback((token: string) => {
-    const trimmed = token.trim();
-    if (!trimmed) return;
-
-    if (!socket.connected) {
-      setAuthState("login");
-      setAuthPending(false);
-      setAuthError("未连接服务器：请先启动 server（端口 3001）并刷新页面");
-      return;
-    }
-
-    setAuthPending(true);
-    setAuthError(null);
-    setAdminToken(trimmed);
+  const finishAuthSuccess = useCallback(() => {
+    if (pendingAuthSeqRef.current === null) return;
+    pendingAuthSeqRef.current = null;
     clearAuthTimeout();
+    setAuthState("authenticated");
+    setAuthPending(false);
+    setAuthError(null);
+    const roomId = spectatingRoomIdRef.current;
+    if (roomId) socket.emit("adminSpectate", { targetRoomId: roomId });
+  }, [clearAuthTimeout]);
 
-    const onOk = () => {
-      clearAuthTimeout();
-      setAuthState("authenticated");
-      setAuthPending(false);
-      setAuthError(null);
-      const roomId = spectatingRoomIdRef.current;
-      if (roomId) socket.emit("adminSpectate", { targetRoomId: roomId });
-    };
-
-    const onFailed = ({ message }: { message?: string }) => {
+  const finishAuthFailed = useCallback(
+    (message?: string) => {
+      if (pendingAuthSeqRef.current === null) return;
+      pendingAuthSeqRef.current = null;
       clearAuthTimeout();
       clearAdminToken();
       setAuthState("login");
       setAuthPending(false);
       setAuthError(message || "密钥无效");
       setGame(null);
+    },
+    [clearAuthTimeout],
+  );
+
+  const finishAuthTimeout = useCallback(() => {
+    if (pendingAuthSeqRef.current === null) return;
+    pendingAuthSeqRef.current = null;
+    clearAuthTimeout();
+    clearAdminToken();
+    setAuthPending(false);
+    setAuthError(
+      "验证超时：后端未响应 adminAuthenticate。请在服务器 server 目录执行 npm run build 与 pm2 restart，并确认 .env 中 ADMIN_TOKEN 与输入一致（等号两侧勿加空格）。",
+    );
+    setAuthState("login");
+    setGame(null);
+  }, [clearAuthTimeout]);
+
+  useEffect(() => {
+    const onAuthOk = () => finishAuthSuccess();
+    const onAuthFailed = (payload: { message?: string }) => finishAuthFailed(payload.message);
+
+    socket.on("adminAuthOk", onAuthOk);
+    socket.on("adminAuthFailed", onAuthFailed);
+
+    return () => {
+      socket.off("adminAuthOk", onAuthOk);
+      socket.off("adminAuthFailed", onAuthFailed);
     };
+  }, [finishAuthSuccess, finishAuthFailed]);
 
-    socket.once("adminAuthOk", onOk);
-    socket.once("adminAuthFailed", onFailed);
+  const authenticate = useCallback(
+    (token: string) => {
+      const trimmed = token.trim();
+      if (!trimmed) return;
 
-    authTimeoutRef.current = setTimeout(() => {
-      socket.off("adminAuthOk", onOk);
-      socket.off("adminAuthFailed", onFailed);
-      clearAdminToken();
-      setAuthPending(false);
-      setAuthError(
-        "验证超时：请确认已在 server 目录执行 npm run build 并重启，且 .env 中 ADMIN_TOKEN 与输入一致（等号两侧勿加空格）",
-      );
-      setAuthState("login");
-      setGame(null);
-    }, 15000);
+      if (!socket.connected) {
+        setAuthState("login");
+        setAuthPending(false);
+        pendingAuthSeqRef.current = null;
+        setAuthError("未连接服务器：请先启动 server（端口 3001）并刷新页面");
+        return;
+      }
 
-    socket.emit("adminAuthenticate", { token: trimmed });
-  }, []);
+      if (pendingAuthSeqRef.current !== null) return;
+
+      const seq = ++authSeqRef.current;
+      pendingAuthSeqRef.current = seq;
+      setAuthPending(true);
+      setAuthError(null);
+      setAdminToken(trimmed);
+      clearAuthTimeout();
+
+      authTimeoutRef.current = setTimeout(() => {
+        if (pendingAuthSeqRef.current === seq) finishAuthTimeout();
+      }, AUTH_TIMEOUT_MS);
+      socket.emit("adminAuthenticate", { token: trimmed });
+    },
+    [clearAuthTimeout, finishAuthTimeout],
+  );
 
   useEffect(() => {
     const tryStoredAuth = () => {
+      if (pendingAuthSeqRef.current !== null) return;
       const stored = getAdminToken();
       if (stored) authenticate(stored);
       else {
@@ -98,12 +135,13 @@ export default function AdminApp() {
     };
 
     const onConnect = () => {
-      setIsConnected(true);
       setAuthState((s) => (s === "authenticated" ? s : "connecting"));
       tryStoredAuth();
     };
+
     const onDisconnect = () => {
-      setIsConnected(false);
+      pendingAuthSeqRef.current = null;
+      clearAuthTimeout();
       setAuthPending(false);
     };
 
@@ -112,6 +150,9 @@ export default function AdminApp() {
     const onRoomDissolved = () => {
       alert("房间已解散");
       setGame(null);
+    };
+    const onSocketError = (msg: string) => {
+      alert(typeof msg === "string" ? msg : "操作失败");
     };
     const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
     const onSyncEraImages = (images: Record<string, number>) => setEraImages(images);
@@ -122,6 +163,7 @@ export default function AdminApp() {
     socket.on("gameUpdate", onGameUpdate);
     socket.on("adminRoomList", onAdminRoomList);
     socket.on("roomDissolved", onRoomDissolved);
+    socket.on("error", onSocketError);
     socket.on("syncProjectImages", onSyncImages);
     socket.on("syncEraImages", onSyncEraImages);
     socket.on("syncBuffImages", onSyncBuffImages);
@@ -135,16 +177,28 @@ export default function AdminApp() {
       socket.off("gameUpdate", onGameUpdate);
       socket.off("adminRoomList", onAdminRoomList);
       socket.off("roomDissolved", onRoomDissolved);
+      socket.off("error", onSocketError);
       socket.off("syncProjectImages", onSyncImages);
       socket.off("syncEraImages", onSyncEraImages);
       socket.off("syncBuffImages", onSyncBuffImages);
     };
-  }, [authenticate]);
+  }, [authenticate, clearAuthTimeout]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || authState !== "authenticated" || !game) return;
+      if (!socket.connected) return;
+      socket.emit("requestGameState");
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [authState, game]);
 
   const handleSpectate = (roomId: string) => {
     spectatingRoomIdRef.current = roomId;
     socket.emit("adminSpectate", { targetRoomId: roomId });
   };
+
   const handleExitRoom = () => {
     spectatingRoomIdRef.current = null;
     if (game) socket.emit("adminLeaveRoom", { roomId: game.roomId });
@@ -152,7 +206,7 @@ export default function AdminApp() {
   };
 
   const handleLogin = (token: string) => {
-    if (!isConnected) {
+    if (!connected) {
       setAuthError("未连接服务器，请稍后重试");
       return;
     }
@@ -160,6 +214,7 @@ export default function AdminApp() {
   };
 
   const handleLogout = () => {
+    pendingAuthSeqRef.current = null;
     clearAuthTimeout();
     clearAdminToken();
     spectatingRoomIdRef.current = null;
@@ -170,126 +225,123 @@ export default function AdminApp() {
     socket.connect();
   };
 
-  if (!isConnected) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minHeight: "100vh",
-          background: "#070b14",
-          flexDirection: "column",
-          gap: "1rem",
-        }}
-      >
+  return (
+    <ConnectionGate
+      connected={connected}
+      error={connectError}
+      onRetry={retryConnect}
+      variant="admin"
+    >
+      {authPending ? (
         <div
-          style={{
-            width: "3rem",
-            height: "3rem",
-            borderRadius: "50%",
-            border: "3px solid rgba(255,255,255,0.1)",
-            borderTopColor: "#3b82f6",
-            animation: "spin 1s linear infinite",
-          }}
-        />
-        <div style={{ color: "var(--color-text-muted)", fontSize: uiRem(1) }}>正在连接服务器...</div>
-      </div>
-    );
-  }
-
-  if (authState === "login" || authState === "connecting") {
-    if (authState === "connecting" && (authPending || getAdminToken())) {
-      return (
-        <div className="page-center" style={{ minHeight: "100vh", background: "#070b14", color: "var(--color-text-muted)" }}>
+          className="page-center"
+          style={{ minHeight: "100vh", background: "#070b14", color: "var(--color-text-muted)" }}
+        >
           正在验证密钥…
         </div>
-      );
-    }
-    return <AdminLogin onSubmit={handleLogin} error={authError} pending={authPending} />;
-  }
-
-  if (game) {
-    return (
-      <AdminView
-        game={game}
-        onExit={handleExitRoom}
-        projectImages={projectImages}
-        eraImages={eraImages}
-        buffImages={buffImages}
-        onProjectImageVersion={(id, version) =>
-          setProjectImages((prev) => ({ ...prev, [id]: version }))
-        }
-        onEraImageVersion={(eraName, version) =>
-          setEraImages((prev) => ({ ...prev, [eraName]: version }))
-        }
-        onBuffImageVersion={(cardId, version) =>
-          setBuffImages((prev) => ({ ...prev, [cardId]: version }))
-        }
-      />
-    );
-  }
-
-  return (
-    <div style={{ minHeight: "100vh", background: "#070b14", padding: "2rem 1.5rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "2rem", flexWrap: "wrap", gap: "1rem" }}>
-        <div>
-          <h1 style={{ fontSize: "2.5rem", fontWeight: 900, color: "#fbbf24", marginBottom: "0.375rem" }}>
-            上帝视角控制台
-          </h1>
-          <p style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.9) }}>
-            当前活跃房间 ({adminRoomList.length})
-          </p>
-        </div>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={handleLogout}>
-          退出登录
-        </button>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-          gap: "1rem",
-        }}
-      >
-        {adminRoomList.map((room) => (
+      ) : authState === "login" || authState === "connecting" ? (
+        <AdminLogin onSubmit={handleLogin} error={authError} pending={authPending} />
+      ) : game ? (
+        <AdminView
+          game={game}
+          onExit={handleExitRoom}
+          projectImages={projectImages}
+          eraImages={eraImages}
+          buffImages={buffImages}
+          onProjectImageVersion={(id, version) =>
+            setProjectImages((prev) => ({ ...prev, [id]: version }))
+          }
+          onEraImageVersion={(eraName, version) =>
+            setEraImages((prev) => ({ ...prev, [eraName]: version }))
+          }
+          onBuffImageVersion={(cardId, version) =>
+            setBuffImages((prev) => ({ ...prev, [cardId]: version }))
+          }
+        />
+      ) : (
+        <div style={{ minHeight: "100vh", background: "#070b14", padding: "2rem 1.5rem" }}>
           <div
-            key={room.roomId}
             style={{
-              background: "var(--color-bg-card)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "1.25rem",
-              padding: "1.5rem",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              marginBottom: "2rem",
+              flexWrap: "wrap",
+              gap: "1rem",
             }}
           >
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: "2rem", fontWeight: 900, color: "#fbbf24", marginBottom: "0.5rem" }}>
-              {room.roomId}
+            <div>
+              <h1 style={{ fontSize: "2.5rem", fontWeight: 900, color: "#fbbf24", marginBottom: "0.375rem" }}>
+                上帝视角控制台
+              </h1>
+              <p style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.9) }}>
+                当前活跃房间 ({adminRoomList.length})
+              </p>
             </div>
-            <div style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85), marginBottom: "1.25rem" }}>
-              <div>人数：{room.playerCount} / 6</div>
-              <div>阶段：{room.phase}</div>
-            </div>
-            <button type="button" onClick={() => handleSpectate(room.roomId)} className="btn btn-primary btn-full" style={{ fontSize: uiRem(0.9) }}>
-              进入监视
+            <button type="button" className="btn btn-ghost btn-sm" onClick={handleLogout}>
+              退出登录
             </button>
           </div>
-        ))}
-        {adminRoomList.length === 0 && (
+
           <div
             style={{
-              gridColumn: "1 / -1",
-              textAlign: "center",
-              padding: "4rem",
-              color: "var(--color-text-muted)",
-              border: "2px dashed var(--color-border)",
-              borderRadius: "1.25rem",
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+              gap: "1rem",
             }}
           >
-            暂无活跃房间，等待玩家创建...
+            {adminRoomList.map((room) => (
+              <div
+                key={room.roomId}
+                style={{
+                  background: "var(--color-bg-card)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "1.25rem",
+                  padding: "1.5rem",
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "2rem",
+                    fontWeight: 900,
+                    color: "#fbbf24",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  {room.roomId}
+                </div>
+                <div style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85), marginBottom: "1.25rem" }}>
+                  <div>人数：{room.playerCount} / 6</div>
+                  <div>阶段：{room.phase}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSpectate(room.roomId)}
+                  className="btn btn-primary btn-full"
+                  style={{ fontSize: uiRem(0.9) }}
+                >
+                  进入监视
+                </button>
+              </div>
+            ))}
+            {adminRoomList.length === 0 && (
+              <div
+                style={{
+                  gridColumn: "1 / -1",
+                  textAlign: "center",
+                  padding: "4rem",
+                  color: "var(--color-text-muted)",
+                  border: "2px dashed var(--color-border)",
+                  borderRadius: "1.25rem",
+                }}
+              >
+                暂无活跃房间，等待玩家创建...
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </ConnectionGate>
   );
 }

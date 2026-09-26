@@ -185,12 +185,15 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
 
   // === Admin ===
   socket.on("adminAuthenticate", ({ token }: { token?: string }) => {
+    console.log("[admin] authenticate request socket=%s", socket.id);
     if (!verifyAdminToken(token)) {
+      console.log("[admin] authenticate rejected (invalid token)");
       socket.data.isSuperAdmin = false;
       socket.leave("super_admin_room");
       socket.emit("adminAuthFailed", { message: "密钥无效" });
       return;
     }
+    console.log("[admin] authenticate ok socket=%s", socket.id);
     socket.data.isSuperAdmin = true;
     socket.join("super_admin_room");
     socket.emit("adminAuthOk");

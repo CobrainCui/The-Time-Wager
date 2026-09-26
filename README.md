@@ -62,6 +62,18 @@ npm run dev
 
 在 pm2 工作目录的 `server/.env` 中配置 `ADMIN_TOKEN` 后执行 `pm2 restart`。
 
+**管理后台「验证超时」**（WebSocket 已连上但 15 秒无响应）：说明 Node 未处理 `adminAuthenticate`，多为 **server 未部署最新 `dist`**。在服务器执行：
+
+```bash
+cd /www/wwwroot/guangyinduidu.com/server
+grep adminAuthenticate dist/network/socketHandlers.js   # 应有输出
+npm run build
+pm2 restart guangyin
+pm2 logs guangyin --lines 30   # 登录时应出现 [admin] authenticate request / ok
+```
+
+`.env` 格式：`ADMIN_TOKEN=密钥`（等号两侧勿加空格）。错误密钥应立刻提示「密钥无效」，不应等到超时。
+
 ## ⚖️ License
 
 MIT License
