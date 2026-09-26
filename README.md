@@ -53,10 +53,13 @@ npm run dev
 - **玩家**：`https://guangyinduidu.com`
 - **管理员**：`https://admin.guangyinduidu.com`（登录页输入与服务器 `ADMIN_TOKEN` 相同的密钥）
 
-宝塔/Nginx 上请为 **主域与管理子域** 均配置与现网一致的反代：
+宝塔/Nginx 上请为 **主域与管理子域** 均配置与现网一致的反代（端口以 pm2 为准，示例 `3001`）：
 
-- `location /socket.io/` → Node（如 `127.0.0.1:3001`）
-- `location /api/` → 同上
+- `location /socket.io/` → Node
+- `location /api/` → Node
+- `location ^~ /uploads/`、`location ^~ /uploads_eras/`、`location ^~ /uploads_buffs/` → Node（上传图片静态资源；建议使用 `^~` 避免被站点内「按后缀匹配 jpg」的规则拦截）
+
+开发环境下 Vite 还会代理上述三个 `/uploads*` 路径到 `localhost:3001`。
 
 管理子域站点 `root` 指向 `admin.guangyinduidu.com` 目录。CI 部署会将 `admin.html` 复制为 `index.html`，使子域根路径即为管理入口（无需额外 Nginx 重写）。
 

@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { uiRem } from "../utils/typography";
 import { ActiveProject, Player } from "../types";
-import { BACKEND_URL } from "../socket";
+import { getProjectImageDisplay } from "../utils/gameImageDisplay";
 
 export const TYPE_COLORS: Record<string, { border: string; text: string; bg: string; label: string }> = {
   short: { border: "#3b82f6", text: "#93c5fd", bg: "rgba(59,130,246,0.08)", label: "短期" },
@@ -41,9 +41,16 @@ export const ProjectCard: React.FC<{
   const myContrib = (myInvest / project.maxEnergy) * 100;
   const typeName = tc.label;
 
-  const imageUrl = uploadedVersion
-    ? `${BACKEND_URL}/uploads/${project.id}.jpg?v=${uploadedVersion}`
-    : `/images/projects/${project.name}.jpg?v=final2`;
+  const [coverBroken, setCoverBroken] = useState(false);
+  useEffect(() => {
+    setCoverBroken(false);
+  }, [project.id, uploadedVersion]);
+
+  const display = getProjectImageDisplay(project.id, project.name, {}, uploadedVersion);
+  const imageUrl =
+    coverBroken && display.source === "custom"
+      ? getProjectImageDisplay(project.id, project.name, {}, 0).src
+      : display.src;
 
   const showLongHint = project.type === "long";
   const showAtRiskBanner = isAtRisk && !isDisabled;
@@ -87,9 +94,7 @@ export const ProjectCard: React.FC<{
           src={imageUrl}
           alt={project.name}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          onError={(e) => {
-            e.currentTarget.style.display = "none";
-          }}
+          onError={() => setCoverBroken(true)}
         />
         {isEraMatch && (
           <div

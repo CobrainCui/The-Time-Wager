@@ -1,11 +1,9 @@
 import { uiRem } from "../utils/typography";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { GameState, Player } from "../types";
-import { socket, BACKEND_URL } from "../socket";
+import { socket } from "../socket";
 import { adminApiUrl, adminAuthHeaders } from "../admin/adminFetch";
-import { ALL_PROJECTS } from "../config/projects";
 import {
-  AUCTION_CARDS_BY_ROUND,
   getAuctionCardsForEra,
   getAuctionRound,
   BUFF_CARD_DEFS,
@@ -19,19 +17,9 @@ const CARD_NAME_MAP: Record<string, string> = Object.fromEntries(
   Object.entries(BUFF_CARD_DEFS).map(([id, d]) => [id, d.name])
 );
 
-const ALL_AUCTION_BUFF_IDS = Array.from(
-  new Set(Object.values(AUCTION_CARDS_BY_ROUND).flat().map((c) => c.id))
-);
-
 interface Props {
   game: GameState;
   onExit?: () => void;
-  projectImages?: Record<number, number>;
-  eraImages?: Record<string, number>;
-  buffImages?: Record<string, number>;
-  onProjectImageVersion?: (id: number, version: number) => void;
-  onEraImageVersion?: (eraName: string, version: number) => void;
-  onBuffImageVersion?: (cardId: string, version: number) => void;
 }
 
 const PHASE_NAMES: Record<string, string> = {
@@ -41,48 +29,13 @@ const PHASE_NAMES: Record<string, string> = {
   AUCTION: "拍卖会", GAME_OVER: "游戏结束", COMMUNITY_NAMING: "社区命名",
 };
 
-export const AdminView: React.FC<Props> = ({
-  game,
-  onExit,
-  projectImages = {},
-  eraImages = {},
-  buffImages = {},
-  onProjectImageVersion,
-  onEraImageVersion,
-  onBuffImageVersion,
-}) => {
+export const AdminView: React.FC<Props> = ({ game, onExit }) => {
   const showAdminTimer = game.phase === "INVESTMENT" && !!game.investmentEndsAt;
   const timeLeft = useActionCountdown(showAdminTimer, game.investmentEndsAt, game.serverNow);
   const [cardAuctionCosts, setCardAuctionCosts] = useState<Record<string, number>>({});
-  const [isImagePanelOpen, setIsImagePanelOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const emit = (event: string, extra?: object) => socket.emit(event, { roomId: game.roomId, ...extra });
-
-  const handleDeleteImage = async (id: number | string, type: 'project' | 'era' | 'buff', event: React.MouseEvent) => {
-    event.preventDefault();
-    if (!window.confirm("确定要删除这张图片吗？")) return;
-    const path =
-      type === "era" ? "delete-era-image" : type === "buff" ? "delete-buff-image" : "delete-image";
-    try {
-      const res = await fetch(adminApiUrl(`/api/${path}`), {
-        method: "POST",
-        headers: { ...adminAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ id: String(id) }),
-      });
-      if (res.status === 401) alert("未授权：请重新登录管理后台");
-      else if (!res.ok) alert("删除失败");
-      else {
-        const data = (await res.json().catch(() => null)) as { timestamp?: number } | null;
-        const ts = data?.timestamp ?? 0;
-        if (type === "buff" && onBuffImageVersion) onBuffImageVersion(String(id), ts);
-        if (type === "era" && onEraImageVersion) onEraImageVersion(String(id), ts);
-        if (type === "project" && onProjectImageVersion) onProjectImageVersion(Number(id), ts);
-      }
-    } catch (err) {
-      console.error("Delete failed", err);
-    }
-  };
 
   const handleProposeBuff = (playerId: string, cardId: string, cost: number) => {
     if (game.phase !== "AUCTION") { alert("只能在拍卖阶段发卡"); return; }
@@ -170,75 +123,6 @@ export const AdminView: React.FC<Props> = ({
   const mins = Math.floor(timeLeft / 60);
   const secs = (timeLeft % 60).toString().padStart(2, "0");
   const isUrgent = timeLeft < 60 && timeLeft > 0;
-
-  const handleImageUpload = (id: string | number, type: 'project' | 'era' | 'buff', e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.target;
-    const file = input.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      if (typeof ev.target?.result === 'string') {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 800;
-          const MAX_HEIGHT = 800;
-          let width = img.width;
-          let height = img.height;
-          
-          if (width > height) {
-            if (width > MAX_WIDTH) {
-              height *= MAX_WIDTH / width;
-              width = MAX_WIDTH;
-            }
-          } else {
-            if (height > MAX_HEIGHT) {
-              width *= MAX_HEIGHT / height;
-              height = MAX_HEIGHT;
-            }
-          }
-          
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          
-          canvas.toBlob(async (blob) => {
-            if (!blob) return;
-            const formData = new FormData();
-            formData.append("id", id.toString());
-            formData.append("image", blob, `${id}.jpg`);
-            
-            try {
-              const res = await fetch(adminApiUrl(
-                `/api/${type === "era" ? "upload-era-image" : type === "buff" ? "upload-buff-image" : "upload-image"}`
-              ), {
-                method: "POST",
-                headers: adminAuthHeaders(),
-                body: formData,
-              });
-              if (res.status === 401) alert("未授权：请重新登录管理后台");
-              else if (!res.ok) alert("上传失败！");
-              else {
-                const data = (await res.json().catch(() => null)) as { timestamp?: number } | null;
-                const ts = data?.timestamp ?? Date.now();
-                if (type === "buff" && onBuffImageVersion) onBuffImageVersion(String(id), ts);
-                if (type === "era" && onEraImageVersion) onEraImageVersion(String(id), ts);
-                if (type === "project" && onProjectImageVersion) onProjectImageVersion(Number(id), ts);
-              }
-            } catch (err) {
-              console.error(err);
-              alert("上传出错：" + err);
-            } finally {
-              input.value = "";
-            }
-          }, 'image/jpeg', 0.6);
-        };
-        img.src = ev.target.result;
-      }
-    };
-    reader.readAsDataURL(file);
-  };
 
   return (
     <div className="admin-view" style={{ minHeight: "100vh", background: "#070b14", color: "white", fontFamily: "var(--font-sans)" }}>
@@ -623,149 +507,6 @@ export const AdminView: React.FC<Props> = ({
           </div>
           </div>
         </div>
-
-        {/* 底部：图片上传折叠面板 */}
-        <div style={{ marginTop: "2rem", marginBottom: "2rem", background: "var(--color-bg-card)", borderRadius: "1.25rem", border: "1px solid var(--color-border)", overflow: "hidden" }}>
-          <button
-            type="button"
-            aria-expanded={isImagePanelOpen}
-            onClick={() => setIsImagePanelOpen(!isImagePanelOpen)}
-            style={{ width: "100%", padding: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none", color: "white", cursor: "pointer", fontWeight: 700 }}
-          >
-            <span className="admin-panel-toggle">📤 图片上传管理 {isImagePanelOpen ? "▼" : "▶"}</span>
-            <span className="admin-panel-toggle-hint" style={{ color: "var(--color-text-muted)", fontWeight: "normal" }}>点击展开</span>
-          </button>
-          
-          {isImagePanelOpen && (
-            <div style={{ padding: "1.5rem", borderTop: "1px solid var(--color-border)", display: "flex", flexDirection: "column", gap: "2.5rem" }}>
-              
-              {/* 时代图片上传区域 */}
-              <div>
-                <h3 style={{ fontSize: uiRem(1), color: "#60a5fa", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span>⏳</span> 时代图片上传 (竖版 2:3)
-                </h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "1rem" }}>
-                  {["气候", "科技", "文化", "健康", "心理"].map(eraName => {
-                    const version = eraImages[eraName] || "";
-                    const imgUrl = `${BACKEND_URL}/uploads_eras/${eraName}.jpg${version ? "?v=" + version : ""}`;
-                    return (
-                      <div key={eraName} style={{ background: "rgba(255,255,255,0.03)", borderRadius: "0.75rem", padding: "0.75rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        <div style={{ fontSize: uiRem(0.8), fontWeight: 700 }}>{eraName}</div>
-                        <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-                          <div style={{ width: "100%", aspectRatio: "2/3", background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed rgba(255,255,255,0.2)", color: "var(--color-text-muted)", fontSize: uiRem(0.75), overflow: "hidden", position: "relative" }}>
-                            {version ? <img src={imgUrl} alt={eraName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "上传"}
-                          </div>
-                          <input type="file" accept="image/*" onChange={(e) => handleImageUpload(eraName, 'era', e)} style={{ display: "none" }} />
-                        </label>
-                        {version ? (
-                          <button type="button" onClick={(e) => handleDeleteImage(eraName, 'era', e)} className="admin-delete-btn">删除图片</button>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 拍卖道具卡面（与对局 BuffCardArt / uploads_buffs 一致） */}
-              <div>
-                <h3 style={{ fontSize: uiRem(1), color: "#c084fc", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span>🔨</span> 拍卖道具卡面 (竖版 3:4)
-                </h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "1rem" }}>
-                  {ALL_AUCTION_BUFF_IDS.map((cardId) => {
-                    const def = BUFF_CARD_DEFS[cardId];
-                    const version = buffImages[cardId] || 0;
-                    const hasImage = version > 0;
-                    const imgUrl = `${BACKEND_URL}/uploads_buffs/${cardId}.jpg${hasImage ? `?v=${version}` : ""}`;
-                    return (
-                      <div
-                        key={cardId}
-                        style={{
-                          background: "rgba(255,255,255,0.03)",
-                          borderRadius: "0.75rem",
-                          padding: "0.75rem",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: "0.5rem",
-                          border: "1px solid rgba(168,85,247,0.2)",
-                        }}
-                      >
-                        <div
-                          style={{ fontSize: uiRem(0.75), fontWeight: 700, textAlign: "center", color: def?.color || "#d8b4fe" }}
-                          title={cardId}
-                        >
-                          {def?.name || cardId}
-                        </div>
-                        <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-                          <div
-                            style={{
-                              width: "100%",
-                              aspectRatio: "3/4",
-                              background: "rgba(0,0,0,0.3)",
-                              borderRadius: "0.5rem",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              border: "1px dashed rgba(168,85,247,0.35)",
-                              color: "var(--color-text-muted)",
-                              fontSize: uiRem(0.75),
-                              overflow: "hidden",
-                            }}
-                          >
-                            {hasImage ? (
-                              <img src={imgUrl} alt={def?.name || cardId} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            ) : (
-                              "上传"
-                            )}
-                          </div>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => handleImageUpload(cardId, "buff", e)}
-                            style={{ display: "none" }}
-                          />
-                        </label>
-                        {hasImage ? (
-                          <button type="button" onClick={(e) => handleDeleteImage(cardId, "buff", e)} className="admin-delete-btn">
-                            删除图片
-                          </button>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 项目图片上传区域 */}
-              <div>
-                <h3 style={{ fontSize: uiRem(1), color: "#fbbf24", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span>🏢</span> 项目图片上传 (横版 16:9)
-                </h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "1rem" }}>
-                  {ALL_PROJECTS.map(p => {
-                    const version = projectImages[p.id] || "";
-                    const imgUrl = `${BACKEND_URL}/uploads/${p.id}.jpg${version ? "?v=" + version : ""}`;
-                    return (
-                      <div key={p.id} style={{ background: "rgba(255,255,255,0.03)", borderRadius: "0.75rem", padding: "0.75rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-secondary)", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }} title={p.name}>[{p.era}] {p.name}</div>
-                        <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-                          <div style={{ width: "100%", aspectRatio: "16/9", background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed rgba(255,255,255,0.2)", color: "var(--color-text-muted)", fontSize: uiRem(0.75), overflow: "hidden", position: "relative" }}>
-                            {version ? <img src={imgUrl} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "上传"}
-                          </div>
-                          <input type="file" accept="image/*" onChange={(e) => handleImageUpload(p.id, 'project', e)} style={{ display: "none" }} />
-                        </label>
-                        {version ? (
-                          <button type="button" onClick={(e) => handleDeleteImage(p.id, 'project', e)} className="admin-delete-btn">删除图片</button>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-      </div>
     </div>
   );
 };

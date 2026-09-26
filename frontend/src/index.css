@@ -249,7 +249,8 @@ h1, h2, h3, h4, h5, h6 {
   font-size: calc(0.95rem * var(--text-ui-scale));
 }
 
-.admin-view .admin-delete-btn {
+.admin-view .admin-delete-btn,
+.admin-image-manager .admin-delete-btn {
   width: 100%;
   padding: 0.55rem;
   font-size: calc(0.875rem * var(--text-ui-scale));
@@ -264,8 +265,27 @@ h1, h2, h3, h4, h5, h6 {
   transition: transform var(--transition-base);
 }
 
-.admin-view .admin-delete-btn:active {
+.admin-view .admin-delete-btn:active,
+.admin-image-manager .admin-delete-btn:active {
   transform: scale(0.98);
+}
+
+.admin-image-manager .admin-delete-btn:disabled,
+.admin-image-manager .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-image-manager__section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 0.75rem 0;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(180deg, #070b14 70%, transparent);
 }
 
 /* --- Input --- */

@@ -3,12 +3,14 @@ import { uiRem } from "../utils/typography";
 import { socket } from "../socket";
 import { GameState } from "../types";
 import { AdminView } from "../views/AdminView";
+import { AdminImageManager } from "./AdminImageManager";
 import { AdminLogin } from "./AdminLogin";
 import { clearAdminToken, getAdminToken, setAdminToken } from "./adminToken";
 import { ConnectionGate } from "../components/ConnectionGate";
 import { useSocketConnection } from "../hooks/useSocketConnection";
 
 type AuthState = "connecting" | "login" | "authenticated";
+type AdminScreen = "rooms" | "images";
 
 interface AdminRoomSummary {
   roomId: string;
@@ -28,6 +30,7 @@ export default function AdminApp() {
   const [projectImages, setProjectImages] = useState<Record<number, number>>({});
   const [eraImages, setEraImages] = useState<Record<string, number>>({});
   const [buffImages, setBuffImages] = useState<Record<string, number>>({});
+  const [adminScreen, setAdminScreen] = useState<AdminScreen>("rooms");
 
   const spectatingRoomIdRef = useRef<string | null>(null);
   const authTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -203,6 +206,7 @@ export default function AdminApp() {
     spectatingRoomIdRef.current = null;
     if (game) socket.emit("adminLeaveRoom", { roomId: game.roomId });
     setGame(null);
+    setAdminScreen("rooms");
   };
 
   const handleLogin = (token: string) => {
@@ -221,6 +225,7 @@ export default function AdminApp() {
     setGame(null);
     setAdminRoomList([]);
     setAuthState("login");
+    setAdminScreen("rooms");
     socket.disconnect();
     socket.connect();
   };
@@ -242,9 +247,9 @@ export default function AdminApp() {
       ) : authState === "login" || authState === "connecting" ? (
         <AdminLogin onSubmit={handleLogin} error={authError} pending={authPending} />
       ) : game ? (
-        <AdminView
-          game={game}
-          onExit={handleExitRoom}
+        <AdminView game={game} onExit={handleExitRoom} />
+      ) : adminScreen === "images" ? (
+        <AdminImageManager
           projectImages={projectImages}
           eraImages={eraImages}
           buffImages={buffImages}
@@ -257,6 +262,7 @@ export default function AdminApp() {
           onBuffImageVersion={(cardId, version) =>
             setBuffImages((prev) => ({ ...prev, [cardId]: version }))
           }
+          onBack={() => setAdminScreen("rooms")}
         />
       ) : (
         <div style={{ minHeight: "100vh", background: "#070b14", padding: "2rem 1.5rem" }}>
@@ -278,9 +284,18 @@ export default function AdminApp() {
                 当前活跃房间 ({adminRoomList.length})
               </p>
             </div>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={handleLogout}>
-              退出登录
-            </button>
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setAdminScreen("images")}
+              >
+                图片资源管理
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={handleLogout}>
+                退出登录
+              </button>
+            </div>
           </div>
 
           <div

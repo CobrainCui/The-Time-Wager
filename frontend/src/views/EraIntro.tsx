@@ -1,7 +1,8 @@
 import React from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
-import { socket, BACKEND_URL } from "../socket";
+import { socket } from "../socket";
+import { getEraImageDisplay } from "../utils/gameImageDisplay";
 
 interface Props {
   game: GameState;
@@ -30,11 +31,7 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {} }) => {
   const eraGradient = card ? (ERA_GRADIENTS[card.themeColor] || ERA_GRADIENTS.blue) : ERA_GRADIENTS.blue;
   const eraNum = game.currentEra;
   const readyCount = game.readyPlayers?.length ?? 0;
-  const eraImgSrc = card
-    ? eraImages[card.era]
-      ? `${BACKEND_URL}/uploads_eras/${card.era}.jpg?v=${eraImages[card.era]}`
-      : `/images/eras/${card.era}.jpg?v=final1`
-    : "";
+  const eraImgSrc = card ? getEraImageDisplay(card.era, eraImages).src : "";
 
   return (
     <div

@@ -7,9 +7,10 @@ interface Props {
   cardId: string;
   buffImages?: Record<string, number>;
   compact?: boolean;
+  onImageBroken?: () => void;
 }
 
-export const BuffCardArt: React.FC<Props> = ({ cardId, buffImages = {}, compact }) => {
+export const BuffCardArt: React.FC<Props> = ({ cardId, buffImages = {}, compact, onImageBroken }) => {
   const def = BUFF_CARD_DEFS[cardId] || { name: cardId, desc: "", icon: "🃏", color: "#a855f7" };
   const v = buffImages[cardId];
   const hasImage = v != null && v > 0;
@@ -39,7 +40,10 @@ export const BuffCardArt: React.FC<Props> = ({ cardId, buffImages = {}, compact 
           src={`${BACKEND_URL}/uploads_buffs/${cardId}.jpg?v=${v}`}
           alt={def.name}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          onError={() => setBroken(true)}
+          onError={() => {
+            setBroken(true);
+            onImageBroken?.();
+          }}
         />
       ) : (
         <div
