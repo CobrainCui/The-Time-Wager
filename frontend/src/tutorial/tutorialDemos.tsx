@@ -1,5 +1,4 @@
 import React from "react";
-import { DemoGameStructure } from "./demos/DemoGameStructure";
 import { DemoResources } from "./demos/DemoResources";
 import { DemoProjectTypes } from "./demos/DemoProjectTypes";
 import { DemoDrafting } from "./demos/DemoDrafting";
@@ -14,7 +13,6 @@ export type { TutorialDemoKey } from "./demoKeys";
 export type TutorialDemoComponent = React.FC<{ playerName?: string }>;
 
 export const TUTORIAL_DEMO_BY_KEY: Record<TutorialDemoKey, TutorialDemoComponent> = {
-  gameStructure: DemoGameStructure,
   resources: DemoResources,
   projectTypes: DemoProjectTypes,
   drafting: DemoDrafting,

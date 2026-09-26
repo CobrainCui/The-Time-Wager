@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState } from "../types";
 import { socket } from "../socket";
+import { saveGameSession } from "../gameSession";
 
 interface Props {
   game: GameState;
@@ -12,11 +13,22 @@ export const Lobby: React.FC<Props> = ({ game }) => {
   const [roomId, setRoomId] = useState("");
   const [isJoining, setIsJoining] = useState(false);
 
+  useEffect(() => {
+    const clearJoining = () => setIsJoining(false);
+    socket.on("playerJoined", clearJoining);
+    socket.on("error", clearJoining);
+    return () => {
+      socket.off("playerJoined", clearJoining);
+      socket.off("error", clearJoining);
+    };
+  }, []);
+
   const joinGame = () => {
     const cleanRoomId = roomId.trim();
     const cleanName = name.trim();
     if (!cleanRoomId || !cleanName) return;
     setIsJoining(true);
+    saveGameSession(cleanRoomId, cleanName);
     socket.emit("joinGame", { roomId: cleanRoomId, name: cleanName });
   };
 
@@ -77,7 +89,7 @@ export const Lobby: React.FC<Props> = ({ game }) => {
               color: "var(--color-text-muted)",
             }}
           >
-            Time Stakes · 多人实时决策桌游
+            Time Stakes
           </div>
         </div>
 
@@ -90,52 +102,28 @@ export const Lobby: React.FC<Props> = ({ game }) => {
             boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
           }}
         >
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: uiRem(0.75),
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  color: "var(--color-text-muted)",
-                  marginBottom: "0.5rem",
-                }}
-              >
-                房间号
-              </label>
               <input
                 className="input input-mono"
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="输入房间号"
+                aria-label="房间号"
                 maxLength={6}
                 style={{ fontSize: "1.5rem", padding: "1rem" }}
               />
             </div>
 
             <div>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: uiRem(0.75),
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  color: "var(--color-text-muted)",
-                  marginBottom: "0.5rem",
-                }}
-              >
-                你的昵称
-              </label>
               <input
                 className="input"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="输入名字"
+                placeholder="输入昵称"
+                aria-label="昵称"
                 style={{ textAlign: "center" }}
               />
             </div>
@@ -144,7 +132,7 @@ export const Lobby: React.FC<Props> = ({ game }) => {
               onClick={joinGame}
               disabled={!name.trim() || !roomId.trim() || isJoining}
               className="btn btn-lg btn-full btn-primary"
-              style={{ marginTop: "0.5rem", fontSize: uiRem(1.1), letterSpacing: "0.05em" }}
+              style={{ fontSize: uiRem(1.1), letterSpacing: "0.05em" }}
             >
               {isJoining ? (
                 <span style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -196,13 +184,6 @@ export const Lobby: React.FC<Props> = ({ game }) => {
               </div>
             </div>
           )}
-        </div>
-
-        <div
-          className="text-center animate-fadeIn"
-          style={{ marginTop: "2rem", fontSize: uiRem(0.75), color: "var(--color-text-muted)" }}
-        >
-          2-6 人 · 约 90 分钟 · 建议线下进行
         </div>
       </div>
     </div>

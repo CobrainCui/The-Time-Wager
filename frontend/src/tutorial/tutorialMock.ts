@@ -120,4 +120,4 @@ export const TUTORIAL_NPCS: TutorialNpc[] = [
   { id: "npc-c", name: "美玲", wealth: 200 },
 ];
 
-export const TUTORIAL_SHOP_CARDS = ["buff_gold", "buff_spirit", "buff_insurance", "buff_lottery"] as const;
+export const TUTORIAL_SHOP_CARDS = ["buff_gold", "buff_spirit", "buff_insurance"] as const;

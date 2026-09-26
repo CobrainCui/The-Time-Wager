@@ -1,6 +1,7 @@
 import { GameState } from "./gameState.js";
 import { 
   isEveryoneReady, 
+  isEveryoneReadyToLeaveBuff,
   isDraftingComplete, 
   isInvestmentComplete, 
   resetAllReady 
@@ -13,12 +14,11 @@ import { AI_BOT_ENABLED } from "../config/features.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 import { beginAuctionSession } from "../logic/auctionCards.js";
 import { appendSessionEvent, ensureSessionStarted, recordPhaseChange } from "./sessionTelemetry.js";
-
-// 统一倒计时：10分钟 (包含 Buff 阶段和 Investment 阶段)
-const TOTAL_ACTION_TIME_MS = 10 * 60 * 1000;
+import { clearActionDeadline, startInvestmentDeadline } from "./actionDeadline.js";
 
 export function tryAdvancePhase(game: GameState) {
   const initialPhase = game.phase;
+  if (game.phase === "ROOM_WAITING") return;
   
   // 1. ERA_INTRO -> ...
   if (game.phase === "ERA_INTRO") {
@@ -39,8 +39,9 @@ export function tryAdvancePhase(game: GameState) {
           }
           
           game.phase = "INVESTMENT";
-          game.investmentEndsAt = Date.now() + TOTAL_ACTION_TIME_MS;
-      } 
+          startInvestmentDeadline(game);
+          game.logs.push("⏱️ 10 分钟倒计时开始（投资阶段）");
+      }
       // === Era 2+ 逻辑 (有 Buff 阶段) ===
       else {
           // Era 2+ 第1轮: 进入选座 (Drafting)
@@ -62,9 +63,8 @@ export function tryAdvancePhase(game: GameState) {
           }
           // Era 2+ 第2轮: 跳过选座，直接进入 Buff 阶段
           else {
+            clearActionDeadline(game);
             game.phase = "BUFF_USAGE";
-            game.investmentEndsAt = Date.now() + TOTAL_ACTION_TIME_MS; // 开始10分钟倒计时
-            game.buffPhaseEndsAt = game.investmentEndsAt; 
           }
       }
       
@@ -77,21 +77,20 @@ export function tryAdvancePhase(game: GameState) {
     if (isDraftingComplete(game)) {
       drawProjectsForEra(game); // 选完座后更新项目
       
-      // 选完座后进入 Buff 阶段，开始计时
+      // 选完座后进入 Buff 阶段（计时在全员「进入讨论和投资」后进 INVESTMENT 时开始）
+      clearActionDeadline(game);
       game.phase = "BUFF_USAGE";
-      game.investmentEndsAt = Date.now() + TOTAL_ACTION_TIME_MS;
-      game.buffPhaseEndsAt = game.investmentEndsAt;
       
       resetAllReady(game);
     }
   }
 
-  // 3. BUFF_USAGE -> INVESTMENT
+  // 3. BUFF_USAGE -> INVESTMENT（全员真实玩家「进入讨论和投资」后开表）
   else if (game.phase === "BUFF_USAGE") {
-      if (isEveryoneReady(game)) {
+      if (isEveryoneReadyToLeaveBuff(game)) {
           game.phase = "INVESTMENT";
-          // 倒计时继续
-          game.buffPhaseEndsAt = undefined;
+          startInvestmentDeadline(game);
+          game.logs.push("⏱️ 10 分钟倒计时开始（投资阶段）");
           resetAllReady(game);
       }
   }
@@ -100,7 +99,7 @@ export function tryAdvancePhase(game: GameState) {
   else if (game.phase === "INVESTMENT") {
     if (isInvestmentComplete(game)) {
       settlePhase(game);
-      game.investmentEndsAt = undefined; // 结束倒计时
+      clearActionDeadline(game);
       
       if (game.currentEra > 4) {
           game.phase = "COMMUNITY_NAMING";
@@ -139,12 +138,16 @@ export function tryAdvancePhase(game: GameState) {
 
   if (AI_BOT_ENABLED && game.phase !== initialPhase) {
     import("../ai/aiOrchestrator.js")
-      .then((m) => m.handleAIPhase(game))
+      .then(async (m) => {
+        const { getGameIo } = await import("../network/gameIo.js");
+        await m.handleAIPhase(game, getGameIo());
+      })
       .catch((e) => console.error("AI Error:", e));
   }
 }
 
 function advanceRound(game: GameState) {
+  clearActionDeadline(game);
   // 清理临时 Buff
   game.players.forEach(p => p.activeBuffs = []);
 

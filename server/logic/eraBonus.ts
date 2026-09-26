@@ -1,6 +1,7 @@
 import { GameState } from "../state/gameState.js";
 
 /**
+ * @deprecated 未使用。时代加成以 projectSettlement.applyRankAndEraBonus 为准（加 wealth，非 achievement）。
  * 判断是否满足时代加成
  */
 export function applyEraBonus(

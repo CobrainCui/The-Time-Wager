@@ -54,14 +54,13 @@ export function serializeGameForClient(
     drawnProjects: Array.from(game.drawnProjects),
 
     players: game.players.map((p) => {
-
-      const { socketId, ...rest } = p;
-
+      const { socketId, preSubmitInvestmentDraft: _preSubmit, ...rest } = p;
       return rest;
-
     }),
 
     transactions,
+
+    serverNow: Date.now(),
 
     ...extra,
 
@@ -74,22 +73,21 @@ export function serializeGameForClient(
 
 
 export function broadcastUpdate(io: Server, game: GameState) {
+  const memberIds = io.sockets.adapter.rooms.get(game.roomId);
+  if (!memberIds) return;
 
-  for (const socket of io.sockets.sockets.values()) {
-
-    if (!socket.rooms.has(game.roomId)) continue;
+  for (const socketId of memberIds) {
+    const socket = io.sockets.sockets.get(socketId);
+    if (!socket) continue;
 
     const player = game.players.find((p) => p.socketId === socket.id);
-
     const isGodView = socket.data.isSuperAdmin === true && !player;
 
     socket.emit(
       "gameUpdate",
       serializeGameForClient(game, isGodView ? { isGodView: true } : {}, player?.id ?? null)
     );
-
   }
-
 }
 
 

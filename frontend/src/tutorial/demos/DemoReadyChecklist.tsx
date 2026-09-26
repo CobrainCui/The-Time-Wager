@@ -6,7 +6,7 @@ const ITEMS = [
   { id: "long", label: "长期项目断供（<3）会放弃前期投入" },
   { id: "risk", label: "风险项目超上限会倒扣历史收益" },
   { id: "seat", label: "财富少者优先选座，影响长期占位" },
-  { id: "era", label: "投资契合时代主题可获额外奖励" },
+  { id: "era", label: "时代加成：短期恰好满额/长期满或超，契合主题第 1 名；短期爆与风险无" },
   { id: "auction", label: "拍卖会用财富竞拍 Buff 卡" },
   { id: "transfer", label: "右侧一对一对话框可转账；不填金额并留言即私信" },
 ];
@@ -19,11 +19,11 @@ export const DemoReadyChecklist: React.FC = () => {
   const toggle = (id: string) => setChecked((c) => ({ ...c, [id]: !c[id] }));
 
   return (
-    <div>
+    <div className="tutorial-ready-checklist">
       <p style={{ fontSize: uiRem(0.85), color: "var(--color-text-secondary)", marginBottom: "0.75rem" }}>
         勾选表示你已理解（仅本地记录）：
       </p>
-      <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+      <ul className="tutorial-ready-checklist__list" style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
         {ITEMS.map((item) => (
           <li key={item.id}>
             <label

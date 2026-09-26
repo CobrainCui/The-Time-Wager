@@ -72,7 +72,7 @@ export const EraThemeBanner: React.FC<{
             marginTop: "0.25rem",
           }}
         >
-          {currentEra != null ? `Era ${currentEra} · ` : ""}当前时代主题 · 【{eraCard.era}】
+          {currentEra != null ? `第 ${currentEra} 时代 · ` : ""}当前时代主题 · 【{eraCard.era}】
         </div>
       </div>
     </div>

@@ -1,13 +1,15 @@
-import { GameState, Player, ActiveProject } from "../state/gameState.js";
+import type { Server } from "socket.io";
+import { GameState, Player } from "../state/gameState.js";
 import { askLLM } from "./llmClient.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
 import { togglePlayerReady } from "../state/gameActions.js";
 import { applyInvestments } from "../logic/investmentLogic.js";
 import { useBuffCard } from "../logic/buffLogic.js";
+import { broadcastUpdate } from "../network/broadcast.js";
 
 import { PERSONA_PROMPTS } from "../secrets.js";
 
-export async function handleAIPhase(game: GameState) {
+export async function handleAIPhase(game: GameState, io: Server | null) {
     // Only process if there are AI players and they haven't finished this phase
     const aiPlayers = game.players.filter(p => p.isAI && !p.ready);
     if (aiPlayers.length === 0) return;
@@ -24,6 +26,7 @@ export async function handleAIPhase(game: GameState) {
 
     // After all AIs have moved, try advancing phase
     tryAdvancePhase(game);
+    if (io) broadcastUpdate(io, game);
 }
 
 async function processAITurn(game: GameState, ai: Player) {

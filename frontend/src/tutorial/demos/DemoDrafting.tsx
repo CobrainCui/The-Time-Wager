@@ -14,8 +14,6 @@ export const DemoDrafting: React.FC<{ playerName?: string }> = ({ playerName }) 
     setMySeat(seat);
   };
 
-  const reset = () => setMySeat(undefined);
-
   const queueLine = [
     ...TUTORIAL_NPCS.map((n) => `${n.name}(💰${n.wealth})`),
     `${displayName}(💰${TUTORIAL_PLAYER_WEALTH})`,
@@ -88,11 +86,6 @@ export const DemoDrafting: React.FC<{ playerName?: string }> = ({ playerName }) 
         💡 长期项目满额时，顺位 <strong>#1</strong> 先占坑，靠后顺位可能「投了也没收益」。
       </div>
 
-      {mySeat !== undefined && (
-        <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: "0.75rem" }} onClick={reset}>
-          重新选座
-        </button>
-      )}
     </div>
   );
 };

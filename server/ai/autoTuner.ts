@@ -58,7 +58,7 @@ export async function runAutoTuningSession(iterations: number = 10) {
         while ((game.phase as string) !== "GAME_OVER" && (game.phase as string) !== "COMMUNITY_NAMING") {
             const previousPhase = game.phase as string;
             
-            await handleAIPhase(game);
+            await handleAIPhase(game, null);
             
             // If the phase didn't change (e.g. AUCTION is skipped, or just everyone readied),
             // ensure we don't get stuck. In normal game tryAdvancePhase is called inside handleAIPhase.

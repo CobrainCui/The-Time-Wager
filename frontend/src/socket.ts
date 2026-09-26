@@ -5,7 +5,7 @@ import io from "socket.io-client";
 export const BACKEND_URL = "";
 
 export const socket = io(BACKEND_URL, {
-  transports: ["websocket"],
+  transports: ["websocket", "polling"],
   autoConnect: true,
   path: "/socket.io/",
 });

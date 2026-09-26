@@ -272,6 +272,7 @@ function settleOneProject(
   }
 
   // === B. Long (长期项目) ===
+  // 时代加成：累计 >= maxEnergy（含超填）结束时，主题契合的历史第一 +50（见 applyRankAndEraBonus）
   if (project.type === 'long') {
     // 处理本轮投资者的投入记录逻辑已经在上面完成了
     // Long项目的特性：未完成不发钱
@@ -316,6 +317,7 @@ function settleOneProject(
   }
 
   // === C. Short (短期项目) ===
+  // 时代加成：仅恰好满额（isCompleted && !isExploded）时发放；超上限爆掉无时代加成。风险项目永不参与。
   if (project.type === 'short') {
     // 1. 基础收益：只发给本轮投资者
     currentRoundInvestors.forEach(({ player, amount }) => {
@@ -399,15 +401,19 @@ function settleOneProject(
   return result;
 }
 
-// 通用函数：处理排名奖励(rankRewards) 和 时代加成(eraBonus)
-// 注意：传入的 rankedPlayers 必须是已经按贡献排序好的【全历史】投资人列表
+// 排名奖励(rankRewards) + 时代加成(eraBonus)，财富计入 player.wealth。
+// 时代加成规则（主题契合 + 历史总投入排名第一）：
+//   短期 +30：仅 totalAccumulated === maxEnergy（调用方须为 !isExploded 分支）
+//   长期 +50：totalAccumulated >= maxEnergy（含超填）
+//   风险：不进入本函数；短期爆雷：不进入本函数
+// rankedPlayers 须为按贡献排序好的【全历史】投资人列表
 function applyRankAndEraBonus(
     game: GameState, 
     project: ActiveProject, 
     rankedPlayers: { player: Player }[], 
     result: SettlementProjectResult,
     logs: string[],
-    onlyEraBonus: boolean = false // Short项目如果是爆雷情况，可能只发EraBonus不发Rank? (目前代码没用到这个参数)
+    _onlyEraBonus: boolean = false // 保留签名；短期爆雷不调用本函数，无单独发时代加成路径
 ) {
     if (rankedPlayers.length === 0) return;
     const currentTheme = game.currentEraCard?.era; 

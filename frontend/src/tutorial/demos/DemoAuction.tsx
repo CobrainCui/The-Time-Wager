@@ -47,7 +47,17 @@ export const DemoAuction: React.FC = () => {
           {toast}
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "0.75rem" }}>
+      <div
+        className="tutorial-auction-grid"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(240px, 1fr))",
+          gap: "1rem",
+          width: "100%",
+          justifyContent: "center",
+          alignItems: "stretch",
+        }}
+      >
         {TUTORIAL_SHOP_CARDS.map((cardId) => {
           const def = BUFF_CARD_DEFS[cardId];
           const price = BUFF_DEFS[cardId]?.price ?? 60;
@@ -56,15 +66,27 @@ export const DemoAuction: React.FC = () => {
             <div
               key={cardId}
               style={{
+                minWidth: 0,
+                height: "100%",
+                display: "flex",
+                flexDirection: "column",
                 border: "1px solid rgba(168,85,247,0.35)",
                 borderRadius: "0.875rem",
-                padding: "0.875rem",
+                padding: "1rem 1.125rem",
                 background: "var(--color-bg-card)",
               }}
             >
               <div style={{ fontSize: "1.75rem", marginBottom: "0.35rem" }}>{def?.icon}</div>
               <div style={{ fontWeight: 800, color: def?.color || "#c084fc", marginBottom: "0.25rem" }}>{def?.name}</div>
-              <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-muted)", marginBottom: "0.75rem", lineHeight: 1.4 }}>
+              <div
+                style={{
+                  flex: 1,
+                  fontSize: uiRem(0.75),
+                  color: "var(--color-text-muted)",
+                  marginBottom: "0.75rem",
+                  lineHeight: 1.4,
+                }}
+              >
                 {def?.desc}
               </div>
               <button type="button" className="btn btn-purple btn-sm btn-full" disabled={has} onClick={() => bid(cardId)}>

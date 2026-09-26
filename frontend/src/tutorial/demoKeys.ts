@@ -1,5 +1,4 @@
 export type TutorialDemoKey =
-  | "gameStructure"
   | "resources"
   | "projectTypes"
   | "drafting"

@@ -3,6 +3,7 @@ import { shuffleArray } from "../utils/shuffle.js";
 import { emptySessionTelemetry, SessionTelemetry } from "./sessionTelemetry.js";
 
 export type Phase =
+  | "ROOM_WAITING"
   | "ERA_INTRO"
   | "TUTORIAL"
   | "AUCTION"
@@ -234,7 +235,7 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
   return {
     roomId,
     players: [],
-    phase: "ERA_INTRO",
+    phase: "ROOM_WAITING",
     
     phaseFinished: new Set(),
     readyPlayers: new Set(),
@@ -366,7 +367,7 @@ export function finishTutorialExit(game: GameState): void {
   if (shouldResetAfterTutorial(game)) {
     resetGameSession(game);
   } else {
-    game.phase = "ERA_INTRO";
+    game.phase = "ROOM_WAITING";
     game.tutorialStep = 0;
     game.tutorialEntryPhase = undefined;
   }

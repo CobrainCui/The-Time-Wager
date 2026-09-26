@@ -12,13 +12,6 @@ export const DemoResources: React.FC<{ playerName?: string }> = ({ playerName })
 
   const remaining = energyTotal - spent;
 
-  const resetPlay = () => {
-    setEnergyTotal(INITIAL_ENERGY);
-    setSpent(0);
-    setWealth(INITIAL_WEALTH);
-    setRound(1);
-  };
-
   return (
     <div>
       <div
@@ -26,12 +19,11 @@ export const DemoResources: React.FC<{ playerName?: string }> = ({ playerName })
         style={{ borderRadius: "0.75rem", marginBottom: "1rem", padding: "0.75rem 1rem" }}
       >
         <div style={{ display: "flex", gap: "1.5rem", alignItems: "center", flexWrap: "wrap" }}>
-          <span>
+          <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: uiRem(0.85) }}>
             ⚡{" "}
-            <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: remaining < 0 ? "#ef4444" : "#34d399" }}>
-              {remaining}
-            </span>
-            <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}> / {energyTotal}</span>
+            <span style={{ color: remaining < 0 ? "#ef4444" : "#34d399" }}>{remaining}</span>
+            <span style={{ color: "var(--color-text-muted)", fontWeight: 600 }}> / </span>
+            <span style={{ color: "var(--color-text-muted)", fontWeight: 700 }}>{energyTotal}</span>
           </span>
           <span>
             💰{" "}
@@ -76,9 +68,6 @@ export const DemoResources: React.FC<{ playerName?: string }> = ({ playerName })
           }}
         >
           进入下一轮（精力重置为 {INITIAL_ENERGY})
-        </button>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={resetPlay}>
-          重置
         </button>
       </div>
     </div>

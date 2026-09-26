@@ -1,4 +1,5 @@
 export type Phase =
+  | "ROOM_WAITING"
   | "ERA_INTRO"
   | "TUTORIAL"
   | "AUCTION"
@@ -195,6 +196,8 @@ export interface GameState {
   discussionEndsAt?: number;
   investmentEndsAt?: number;
   buffPhaseEndsAt?: number;
+  /** 与 investmentEndsAt 同包下发，用于校正倒计时 */
+  serverNow?: number;
   tutorialStep?: number;
 
   activeProjects: ActiveProject[];

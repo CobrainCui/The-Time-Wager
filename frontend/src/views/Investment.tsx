@@ -4,35 +4,35 @@ import { GameState, Player } from "../types";
 import { socket } from "../socket";
 import { ProjectCard } from "../components/ProjectCard";
 import { EraThemeBanner } from "../components/EraThemeBanner";
-
+import { useActionCountdown } from "../hooks/useActionCountdown";
+import { getRemainingMs } from "../utils/actionCountdown";
 interface Props {
   game: GameState;
   me: Player;
   mode: "discussion" | "investment";
   projectImages?: Record<number, number>;
   onBackToBuff?: () => void;
+  /** 跨预览/正式阶段保留的预填（由 GameRoom 持有） */
+  draft: Record<number, number>;
+  onDraftChange: React.Dispatch<React.SetStateAction<Record<number, number>>>;
 }
 
 // ——— 顶部状态栏 ———
 const StatusBar: React.FC<{
   me: Player;
   remainingEnergy: number;
+  showCountdown: boolean;
   investmentEndsAt?: number;
-  buffPhaseEndsAt?: number;
+  serverNow?: number;
   onCoffee: () => void;
   coffeeLoading: boolean;
   coffeeLocked?: boolean;
-}> = ({ me, remainingEnergy, investmentEndsAt, buffPhaseEndsAt, onCoffee, coffeeLoading, coffeeLocked }) => {
-  const [timeLeft, setTimeLeft] = useState(0);
-
-  useEffect(() => {
-    const target = investmentEndsAt || buffPhaseEndsAt;
-    if (!target) return;
-    const timer = setInterval(() => {
-      setTimeLeft(Math.max(0, Math.floor((target - Date.now()) / 1000)));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [investmentEndsAt, buffPhaseEndsAt]);
+}> = ({ me, remainingEnergy, showCountdown, investmentEndsAt, serverNow, onCoffee, coffeeLoading, coffeeLocked }) => {
+  const timeLeft = useActionCountdown(
+    showCountdown && !!investmentEndsAt,
+    investmentEndsAt,
+    serverNow
+  );
 
   const mins = Math.floor(timeLeft / 60);
   const secs = (timeLeft % 60).toString().padStart(2, "0");
@@ -73,7 +73,7 @@ const StatusBar: React.FC<{
 
         {/* 右侧：倒计时 + 咖啡 */}
         <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          {(investmentEndsAt || buffPhaseEndsAt) && (
+          {showCountdown && investmentEndsAt && (
             <div
               style={{
                 fontFamily: "var(--font-mono)",
@@ -114,13 +114,21 @@ const StatusBar: React.FC<{
 };
 
 // ——— 主组件 ———
-export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}, onBackToBuff }) => {
-  const [investments, setInvestments] = useState<Record<number, number>>({});
+export const Investment: React.FC<Props> = ({
+  game,
+  me,
+  mode,
+  projectImages = {},
+  onBackToBuff,
+  draft: investments,
+  onDraftChange: setInvestments,
+}) => {
   const [coffeeLoading, setCoffeeLoading] = useState(false);
   const draftSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSubmittedRef = useRef(false);
-  const hydratedRoundRef = useRef<number | null>(null);
   const prevReadyRef = useRef(me.ready);
+  const [reopenEditHint, setReopenEditHint] = useState(false);
+  const isSubmittedRef = useRef(false);
   const investmentsRef = useRef(investments);
   investmentsRef.current = investments;
 
@@ -128,23 +136,37 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
   const remainingEnergy = me.energy - currentAllocated;
   const isWaitingPhase = game.phase === "BUFF_USAGE";
   const isSubmitted = me.ready && !isWaitingPhase;
+  isSubmittedRef.current = isSubmitted;
+  /** 道具阶段仅预览预填，尚未点「进入讨论和投资」 */
+  const isPreviewOnly = isWaitingPhase && mode === "discussion";
 
-  useEffect(() => {
-    if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") return;
-    if (hydratedRoundRef.current === game.globalRound) return;
-    hydratedRoundRef.current = game.globalRound;
-    if (me.investmentDraft && Object.keys(me.investmentDraft).length > 0) {
-      setInvestments(me.investmentDraft);
+  const flushDraftToServer = () => {
+    if (draftSyncTimerRef.current) {
+      clearTimeout(draftSyncTimerRef.current);
+      draftSyncTimerRef.current = null;
     }
-  }, [game.globalRound, game.phase, me.investmentDraft]);
+    if (isSubmittedRef.current) return;
+    if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") return;
+    socket.emit("syncInvestmentDraft", { investment: investmentsRef.current });
+  };
 
   useEffect(() => {
     const wasReady = prevReadyRef.current;
     prevReadyRef.current = me.ready;
     if (game.phase !== "INVESTMENT" || !wasReady || me.ready) return;
     autoSubmittedRef.current = false;
-    setInvestments(me.investmentDraft ? { ...me.investmentDraft } : {});
-  }, [game.phase, me.ready, me.investmentDraft, me.id]);
+    const nextDraft = me.investmentDraft ? { ...me.investmentDraft } : {};
+    setInvestments(nextDraft);
+    investmentsRef.current = nextDraft;
+    setReopenEditHint(true);
+    socket.emit("syncInvestmentDraft", { investment: nextDraft });
+  }, [game.phase, me.ready, me.investmentDraft, me.id, setInvestments]);
+
+  useEffect(() => {
+    if (!reopenEditHint) return;
+    const t = window.setTimeout(() => setReopenEditHint(false), 10_000);
+    return () => window.clearTimeout(t);
+  }, [reopenEditHint]);
 
   useEffect(() => {
     autoSubmittedRef.current = false;
@@ -163,6 +185,18 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
       if (draftSyncTimerRef.current) clearTimeout(draftSyncTimerRef.current);
     };
   }, [investments, isSubmitted, game.phase]);
+
+  useEffect(() => {
+    return () => {
+      flushDraftToServer();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.phase]);
+
+  const handleBackToBuff = () => {
+    flushDraftToServer();
+    onBackToBuff?.();
+  };
 
   const handleInputChange = (projectId: number, val: number) => {
     if (val < 0) return;
@@ -208,7 +242,11 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
         return;
       }
     } else {
-      if (!window.confirm("确认提交投资方案吗？提交后本轮将无法修改。")) {
+      if (
+        !window.confirm(
+          "确认提交投资方案吗？提交后将锁定方案；如需修改请联系主持人解锁。"
+        )
+      ) {
         return;
       }
     }
@@ -219,15 +257,15 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
   useEffect(() => {
     const end = game.investmentEndsAt;
     if (!end || isSubmitted) return;
-    if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") return;
+    if (game.phase !== "INVESTMENT") return;
 
     const tick = () => {
-      const msLeft = end - Date.now();
+      const msLeft = getRemainingMs(end, game.serverNow);
       if (msLeft <= 1500 && msLeft > 0) {
         socket.emit("syncInvestmentDraft", { investment: investmentsRef.current });
       }
       if (msLeft > 0) return;
-      if (game.phase !== "INVESTMENT" || autoSubmittedRef.current) return;
+      if (autoSubmittedRef.current) return;
       autoSubmittedRef.current = true;
       commitInvestment(investmentsRef.current);
     };
@@ -235,7 +273,7 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
     const id = setInterval(tick, 250);
     tick();
     return () => clearInterval(id);
-  }, [game.investmentEndsAt, game.phase, isSubmitted]);
+  }, [game.investmentEndsAt, game.phase, game.serverNow, isSubmitted]);
 
   const handleCoffee = () => {
     if (coffeeLoading || me.wealth < 15) return;
@@ -252,17 +290,25 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
       <StatusBar
         me={me}
         remainingEnergy={remainingEnergy}
+        showCountdown={game.phase === "INVESTMENT" && !!game.investmentEndsAt}
         investmentEndsAt={game.investmentEndsAt}
-        buffPhaseEndsAt={game.buffPhaseEndsAt}
+        serverNow={game.serverNow}
         onCoffee={handleCoffee}
         coffeeLoading={coffeeLoading}
         coffeeLocked={isSubmitted}
       />
 
-      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "1.5rem 1rem 8rem" }}>
+      <div
+        style={{
+          maxWidth: "1100px",
+          margin: "0 auto",
+          padding: isPreviewOnly ? "1.5rem 1rem 2rem" : "1.5rem 1rem 8rem",
+        }}
+      >
         {/* 等待提示 */}
         {isWaitingPhase && (
           <div
+            className={me.ready ? "buff-phase-waiting-inline" : undefined}
             style={{
               background: "rgba(168,85,247,0.08)",
               border: "1px solid rgba(168,85,247,0.25)",
@@ -273,19 +319,38 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
               fontSize: uiRem(0.9),
               fontWeight: 600,
               marginBottom: "1.5rem",
-              animation: "pulse 2s infinite",
+              ...(me.ready ? {} : { animation: "pulse 2s infinite" }),
             }}
           >
             {me.ready
-              ? "🔮 已完成道具使用，可预填投资；倒计时结束后将自动提交当前方案"
-              : "🔮 讨论阶段可预填投资；进入投资阶段后可正式提交，倒计时结束也会自动提交"}
+              ? "已进入讨论队列，等待其他玩家进入讨论和投资；可继续调整预填"
+              : "可预览并预填投资；全员点击「进入讨论和投资」后开始 10 分钟倒计时"}
             {onBackToBuff && (
               <div style={{ marginTop: "0.75rem" }}>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={onBackToBuff}>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={handleBackToBuff}>
                   ← 返回道具使用
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {reopenEditHint && game.phase === "INVESTMENT" && !isSubmitted && (
+          <div
+            role="status"
+            style={{
+              background: "rgba(59,130,246,0.12)",
+              border: "1px solid rgba(59,130,246,0.35)",
+              borderRadius: "0.875rem",
+              padding: "0.75rem 1.25rem",
+              marginBottom: "1.25rem",
+              color: "#93c5fd",
+              fontSize: uiRem(0.9),
+              fontWeight: 600,
+              textAlign: "center",
+            }}
+          >
+            主持人已允许修改：请调整分配后重新提交。
           </div>
         )}
 
@@ -298,7 +363,7 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
         {/* 标题 */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
           <h2 style={{ fontSize: "1.4rem", fontWeight: 800, color: "white" }}>
-            {mode === "discussion" || isWaitingPhase ? "📊 讨论与预填" : "📊 投资决策"}
+            {mode === "discussion" || isWaitingPhase ? "📊 投资预览" : "📊 投资决策"}
           </h2>
           {remainingEnergy !== 0 && (
             <div
@@ -315,7 +380,14 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
         </div>
 
         {/* 项目网格 */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: "1.25rem", marginBottom: "2rem" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gap: "1.25rem",
+            marginBottom: "2rem",
+          }}
+        >
           {game.activeProjects.map((proj) => (
             <ProjectCard
               key={proj.id}
@@ -346,7 +418,8 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
           )}
         </div>
 
-        {/* 提交区域 */}
+        {/* 提交区域（预览预填时不显示底栏） */}
+        {!isPreviewOnly && (
         <div
           style={{
             position: "fixed",
@@ -388,6 +461,10 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
                 已提交，等待其他玩家...
               </span>
             </div>
+          ) : isWaitingPhase && me.ready ? (
+            <div className="buff-phase-waiting buff-phase-waiting--in-bar">
+              等待其他玩家进入讨论和投资
+            </div>
           ) : (
             <button
               onClick={() => handleSubmit(false)}
@@ -401,13 +478,14 @@ export const Investment: React.FC<Props> = ({ game, me, mode, projectImages = {}
               }}
             >
               {isWaitingPhase
-                ? "⏳ 等待投资阶段..."
+                ? "⏳ 计时未开始，请先进入讨论和投资"
                 : remainingEnergy < 0
                 ? "⚠️ 精力超限"
                 : "🔒 锁定并提交投资"}
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
   );

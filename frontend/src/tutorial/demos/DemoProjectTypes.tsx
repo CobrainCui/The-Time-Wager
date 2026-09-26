@@ -8,6 +8,9 @@ import {
   createTutorialPlayer,
 } from "../tutorialMock";
 
+/** 与教程文案一致：试玩总精力池 */
+const DEMO_ENERGY_POOL = 20;
+
 export const DemoProjectTypes: React.FC = () => {
   const [investments, setInvestments] = useState<Record<number, number>>({});
   const riskPool = TUTORIAL_RISK_PROJECT.accumulatedInvested;
@@ -15,6 +18,7 @@ export const DemoProjectTypes: React.FC = () => {
   const me = useMemo(
     () =>
       createTutorialPlayer({
+        energy: DEMO_ENERGY_POOL,
         longTerm: {
           [TUTORIAL_LONG_PROJECT.id]: {
             projectId: TUTORIAL_LONG_PROJECT.id,
@@ -35,29 +39,65 @@ export const DemoProjectTypes: React.FC = () => {
   const riskOver = riskTotal > TUTORIAL_RISK_PROJECT.maxEnergy;
 
   const handleChange = (id: number, val: number) => {
-    setInvestments((prev) => ({ ...prev, [id]: val }));
+    const next = Math.max(0, Math.floor(Number(val) || 0));
+    setInvestments((prev) => {
+      const otherSum = Object.entries(prev).reduce(
+        (sum, [pid, amt]) => (Number(pid) === id ? sum : sum + (Number(amt) || 0)),
+        0
+      );
+      const capped = Math.min(next, DEMO_ENERGY_POOL - otherSum);
+      return { ...prev, [id]: capped };
+    });
   };
 
   return (
     <div>
       <div
+        className="status-bar"
+        style={{ borderRadius: "0.75rem", marginBottom: "0.75rem", padding: "0.75rem 1rem" }}
+      >
+        <div style={{ display: "flex", gap: "1.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ fontSize: uiRem(1.1) }}>⚡</span>
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontWeight: 700,
+                fontSize: uiRem(1.2),
+                color: remainingEnergy < 0 ? "#ef4444" : "#34d399",
+              }}
+            >
+              {remainingEnergy}
+            </span>
+            <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}>/ {me.energy}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ fontSize: uiRem(1.1) }}>💰</span>
+            <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: uiRem(1.2), color: "#fbbf24" }}>
+              {me.wealth}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div
+        className="tutorial-project-types-grid"
         style={{
-          display: "flex",
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
           gap: "1rem",
-          overflowX: "auto",
-          paddingBottom: "0.5rem",
-          scrollSnapType: "x mandatory",
+          alignItems: "stretch",
         }}
       >
         {projects.map((proj) => (
-          <div key={proj.id} style={{ minWidth: "min(290px, 85vw)", flexShrink: 0, scrollSnapAlign: "start" }}>
+          <div key={proj.id} style={{ minWidth: 0, display: "flex" }}>
             <ProjectCard
               project={proj}
               myInvest={investments[proj.id] || 0}
               onChange={handleChange}
               disabled={false}
-              remainingEnergy={remainingEnergy + (investments[proj.id] || 0)}
+              remainingEnergy={remainingEnergy}
               me={me}
+              balanceHeights
             />
           </div>
         ))}
@@ -81,9 +121,6 @@ export const DemoProjectTypes: React.FC = () => {
         </div>
       )}
 
-      <p style={{ marginTop: "0.75rem", fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>
-        长期项目已模拟为「参投中」：投入 1～2 精力会看到放弃警告；滑块会自动跳到 0 或 ≥3。
-      </p>
     </div>
   );
 };

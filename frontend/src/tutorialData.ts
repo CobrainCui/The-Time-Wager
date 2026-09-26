@@ -6,6 +6,8 @@ export interface TutorialSlide {
     hostNotes: string;
     icon: string;
     demoKey?: TutorialDemoKey;
+    /** 收束页：更大字号与留白（如「准备出发」） */
+    finale?: boolean;
 }
 
 export const TUTORIAL_SLIDES: TutorialSlide[] = [
@@ -18,7 +20,6 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
             "每一个决定，都将塑造独一无二的人生轨迹。"
         ],
         hostNotes: "欢迎大家。现在我们开始讲解规则。",
-        demoKey: "gameStructure",
     },
     {
         title: "认识你的核心资源",
@@ -34,9 +35,9 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
         title: "投资项目类型",
         icon: "📋",
         content: [
-            "🟦 短期项目：当轮投入，当轮结算收益。",
-            "🟪 长期项目：高回报，但需要持续投入。如果你中间断供（少于3精力），前期投入全部作废！",
-            "⬛ 风险项目：超高回报，但如果总投入超过上限，不仅本轮白干，还要倒扣历史收益！"
+            "短期项目：当轮投入，当轮结算收益。",
+            "长期项目：高回报，但需要持续投入。如果你中间断供（少于3精力），前期投入全部作废！",
+            "风险项目：超高回报，但如果总投入超过上限，不仅本轮白干，还要倒扣历史收益！"
         ],
         hostNotes: "着重强调长期项目的'断供风险'和风险项目的'倒扣机制'。这是游戏最刺激的地方。",
         demoKey: "projectTypes",
@@ -57,9 +58,10 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
         icon: "🌍",
         content: [
             "每个时代都有一个主题（如气候、科技、文化）。",
-            "如果你投资的项目契合当前时代主题，该项目投资的第一名将在项目完成/爆掉时获得额外奖励！"
+            "主题契合时，按历史总投入排名第一发放时代加成：短期恰好满额 +30，长期满额或超出上限 +50。",
+            "短期超上限爆掉无时代加成；风险项目不参与时代加成。"
         ],
-        hostNotes: "提醒大家关注屏幕上方的时代Banner，顺势而为能获得额外收益。",
+        hostNotes: "强调：短期要「恰好满额」才有加成，爆掉没有；长期填满或超填都可以；风险永远不参与。",
         demoKey: "eraTheme",
     },
     {
@@ -93,6 +95,6 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
             "祝各位在光阴的博弈中，此生无悔。"
         ],
         hostNotes: "规则讲解结束。主持人点击'结束教程'以进入游戏第一轮。",
-        demoKey: "readyChecklist",
+        finale: true,
     }
 ];

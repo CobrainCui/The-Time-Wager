@@ -3,7 +3,6 @@ import React, { useState, useEffect } from "react";
 import { GameState, Player } from "../types";
 import { socket, BACKEND_URL } from "../socket";
 import { adminApiUrl, adminAuthHeaders } from "../admin/adminFetch";
-import { TUTORIAL_SLIDES } from "../tutorialData";
 import { ALL_PROJECTS } from "../config/projects";
 import {
   AUCTION_CARDS_BY_ROUND,
@@ -12,6 +11,9 @@ import {
   BUFF_CARD_DEFS,
 } from "../config/buffCards";
 import { FATE_SKETCH_PERSONA_COLORS } from "../config/personaConfig";
+import { AdminTutorialHostSection } from "../components/admin/AdminTutorialHostSection";
+import { isAiPlayer } from "../utils/isAiPlayer";
+import { useActionCountdown } from "../hooks/useActionCountdown";
 
 const CARD_NAME_MAP: Record<string, string> = Object.fromEntries(
   Object.entries(BUFF_CARD_DEFS).map(([id, d]) => [id, d.name])
@@ -32,15 +34,8 @@ interface Props {
   onBuffImageVersion?: (cardId: string, version: number) => void;
 }
 
-function isAiPlayer(p: Player): boolean {
-  if (p.isAI) return true;
-  if (p.name.startsWith("🤖") || p.name.startsWith("AI_")) return true;
-  if (p.id.startsWith("ai_")) return true;
-  if (/^AI\d+$/i.test(p.id) || /^AI\d+$/i.test(p.name)) return true;
-  return false;
-}
-
 const PHASE_NAMES: Record<string, string> = {
+  ROOM_WAITING: "等候开局",
   ERA_INTRO: "时代介绍", TUTORIAL: "新手教程", DRAFTING: "选座阶段",
   INVESTMENT: "投资决策", BUFF_USAGE: "道具使用", SETTLEMENT: "本轮结算",
   AUCTION: "拍卖会", GAME_OVER: "游戏结束", COMMUNITY_NAMING: "社区命名",
@@ -56,17 +51,11 @@ export const AdminView: React.FC<Props> = ({
   onEraImageVersion,
   onBuffImageVersion,
 }) => {
-  const [timeLeft, setTimeLeft] = useState(0);
+  const showAdminTimer = game.phase === "INVESTMENT" && !!game.investmentEndsAt;
+  const timeLeft = useActionCountdown(showAdminTimer, game.investmentEndsAt, game.serverNow);
   const [cardAuctionCosts, setCardAuctionCosts] = useState<Record<string, number>>({});
   const [isImagePanelOpen, setIsImagePanelOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-
-  useEffect(() => {
-    const target = game.investmentEndsAt || game.buffPhaseEndsAt;
-    if (!target) { setTimeLeft(0); return; }
-    const t = setInterval(() => setTimeLeft(Math.max(0, Math.floor((target - Date.now()) / 1000))), 1000);
-    return () => clearInterval(t);
-  }, [game.investmentEndsAt, game.buffPhaseEndsAt]);
 
   const emit = (event: string, extra?: object) => socket.emit(event, { roomId: game.roomId, ...extra });
 
@@ -174,8 +163,6 @@ export const AdminView: React.FC<Props> = ({
   const humanPlayers = [...game.players]
     .filter((p) => !isAiPlayer(p))
     .sort((a, b) => b.wealth - a.wealth);
-  const currentStep = game.tutorialStep || 0;
-  const isLastStep = currentStep >= TUTORIAL_SLIDES.length - 1;
   const auctionRound = getAuctionRound(game.currentEra);
   const currentAuctionCards = getAuctionCardsForEra(game.currentEra);
   const distributedSet = new Set(game.auctionDistributedCardIds || []);
@@ -285,6 +272,11 @@ export const AdminView: React.FC<Props> = ({
               <span style={{ color: "#60a5fa", fontWeight: 700 }}>
                 {PHASE_NAMES[game.phase] || game.phase}
               </span>
+              {game.phase === "TUTORIAL" && (
+                <span style={{ color: "var(--color-text-muted)", fontWeight: 500, marginLeft: "0.5rem" }}>
+                  · 请在下方同步面板控场
+                </span>
+              )}
             </span>
             <span style={{ color: "var(--color-text-muted)" }}>Era {game.currentEra} · R{game.roundInEra}</span>
             {timeLeft > 0 && (
@@ -306,20 +298,19 @@ export const AdminView: React.FC<Props> = ({
         </div>
 
         <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-          {game.phase === "ERA_INTRO" && (
+          {(game.phase === "ROOM_WAITING" || game.phase === "ERA_INTRO") && (
             <>
               <button className="btn btn-primary btn-sm" onClick={() => emit("adminStartTutorial")}>🎓 教程</button>
-              <button className="btn btn-success btn-sm" onClick={() => { if (confirm("确认开局？")) emit("adminStartGame"); }}>▶ 开局</button>
-            </>
-          )}
-          {game.phase === "TUTORIAL" && (
-            <>
-              <button className="btn btn-ghost btn-sm" onClick={() => emit("adminTutorialPrev")} disabled={currentStep === 0}>←</button>
-              <span style={{ padding: "0.3rem 0.5rem", fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>{currentStep + 1}/{TUTORIAL_SLIDES.length}</span>
-              {isLastStep
-                ? <button className="btn btn-success btn-sm" onClick={() => emit("adminEndTutorial")}>✓ 完成</button>
-                : <button className="btn btn-primary btn-sm" onClick={() => emit("adminTutorialNext")}>→</button>
-              }
+              <button
+                className="btn btn-success btn-sm"
+                onClick={() => {
+                  if (confirm(game.phase === "ROOM_WAITING" ? "确认开局并进入第 1 时代？" : "确认强制进入投资阶段？")) {
+                    emit("adminStartGame");
+                  }
+                }}
+              >
+                ▶ 开局
+              </button>
             </>
           )}
           {game.phase === "AUCTION" ? (
@@ -327,7 +318,7 @@ export const AdminView: React.FC<Props> = ({
           ) : (
             <button className="btn btn-sm" style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.4)", color: "#c084fc" }} onClick={() => { if (confirm("开启拍卖阶段？")) emit("adminSkipPhase", { targetPhase: "AUCTION" }); }}>🔨 拍卖</button>
           )}
-          {game.phase !== "ERA_INTRO" && game.phase !== "TUTORIAL" && (
+          {game.phase !== "ERA_INTRO" && game.phase !== "TUTORIAL" && game.phase !== "ROOM_WAITING" && (
             <button className="btn btn-sm" style={{ background: "rgba(249,115,22,0.15)", border: "1px solid rgba(249,115,22,0.35)", color: "#fb923c" }} onClick={() => { if (confirm(`跳过 [${game.phase}]？`)) emit("adminSkipPhase"); }}>⏭ 跳过</button>
           )}
           <button
@@ -345,6 +336,15 @@ export const AdminView: React.FC<Props> = ({
       </div>
 
       <div style={{ padding: "1.5rem", maxWidth: "1400px", margin: "0 auto" }}>
+
+        {game.phase === "TUTORIAL" && (
+          <AdminTutorialHostSection
+            game={game}
+            onPrev={() => emit("adminTutorialPrev")}
+            onNext={() => emit("adminTutorialNext")}
+            onFinish={() => emit("adminEndTutorial")}
+          />
+        )}
 
         {/* 拍卖面板 */}
         {game.phase === "AUCTION" && (
@@ -477,7 +477,21 @@ export const AdminView: React.FC<Props> = ({
                         <td style={{ padding: "0.875rem", color: "var(--color-text-muted)" }}>{idx + 1}</td>
                         <td style={{ padding: "0.875rem", fontWeight: 700, color: "white" }}>{p.name}</td>
                         <td style={{ padding: "0.875rem" }}>
-                          {p.connected ? (p.ready ? <span style={{ color: "#34d399" }}>✅</span> : <span style={{ color: "#fbbf24" }}>⏳</span>) : <span style={{ color: "#f87171" }}>❌</span>}
+                          {game.phase === "ROOM_WAITING" ? (
+                            p.connected ? (
+                              <span style={{ color: "#34d399" }}>在线</span>
+                            ) : (
+                              <span style={{ color: "#f87171" }}>离线</span>
+                            )
+                          ) : p.connected ? (
+                            p.ready ? (
+                              <span style={{ color: "#34d399" }}>✅</span>
+                            ) : (
+                              <span style={{ color: "#fbbf24" }}>⏳</span>
+                            )
+                          ) : (
+                            <span style={{ color: "#f87171" }}>❌</span>
+                          )}
                         </td>
                         <td style={{ padding: "0.875rem" }}>
                           <select
@@ -546,8 +560,10 @@ export const AdminView: React.FC<Props> = ({
                                 onClick={() => {
                                   const msg =
                                     game.phase === "INVESTMENT"
-                                      ? `解锁 ${p.name} 并将退回本轮已提交的投资与精力，确认？`
-                                      : `解锁 ${p.name}？`;
+                                      ? `允许 ${p.name} 修改已提交的投资方案（退回已扣精力，保留原填写），确认？`
+                                      : game.phase === "BUFF_USAGE"
+                                        ? `取消 ${p.name} 的「进入讨论」确认，让其继续调整，确认？`
+                                        : `解锁 ${p.name}？`;
                                   if (confirm(msg)) emit("adminUnlockPlayer", { targetPlayerId: p.id });
                                 }}
                                 style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.35)", color: "#fbbf24" }}
@@ -616,7 +632,7 @@ export const AdminView: React.FC<Props> = ({
             onClick={() => setIsImagePanelOpen(!isImagePanelOpen)}
             style={{ width: "100%", padding: "1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none", color: "white", cursor: "pointer", fontWeight: 700 }}
           >
-            <span className="admin-panel-toggle">🖼 图片上传管理 {isImagePanelOpen ? "▼" : "▶"}</span>
+            <span className="admin-panel-toggle">📤 图片上传管理 {isImagePanelOpen ? "▼" : "▶"}</span>
             <span className="admin-panel-toggle-hint" style={{ color: "var(--color-text-muted)", fontWeight: "normal" }}>点击展开</span>
           </button>
           

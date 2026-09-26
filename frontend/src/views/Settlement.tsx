@@ -49,7 +49,7 @@ const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) =
         />
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: uiRem(0.75), color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
-        <span>{result.isExploded ? "---" : result.totalInvested} / {result.maxEnergy}</span>
+        <span>{result.totalInvested} / {result.maxEnergy}</span>
         <span style={{ color }}>{result.type === "short" ? "短期" : result.type === "long" ? "长期" : "风险"}</span>
       </div>
     </div>

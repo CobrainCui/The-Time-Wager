@@ -4,6 +4,14 @@ import { socket } from "./socket";
 import { GameState } from "./types";
 import GameRoom from "./GameRoom";
 import { Lobby } from "./views/Lobby";
+import { clearGameSession, loadGameSession } from "./gameSession";
+
+function tryRejoinFromSession() {
+  const session = loadGameSession();
+  if (session) {
+    socket.emit("joinGame", { roomId: session.roomId, name: session.playerName });
+  }
+}
 
 function App() {
   const [isConnected, setIsConnected] = useState(socket.connected);
@@ -12,20 +20,37 @@ function App() {
   const [projectImages, setProjectImages] = useState<Record<number, number>>({});
   const [eraImages, setEraImages] = useState<Record<string, number>>({});
   const [buffImages, setBuffImages] = useState<Record<string, number>>({});
+  const [playerNotify, setPlayerNotify] = useState<string | null>(null);
 
   useEffect(() => {
-    const onConnect = () => setIsConnected(true);
+    if (!playerNotify) return;
+    const t = window.setTimeout(() => setPlayerNotify(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [playerNotify]);
+
+  useEffect(() => {
+    const onConnect = () => {
+      setIsConnected(true);
+      tryRejoinFromSession();
+    };
     const onDisconnect = () => setIsConnected(false);
 
     const onGameUpdate = (newGame: GameState) => setGame(newGame);
     const onPlayerJoined = ({ playerId }: { playerId: string }) => setMyPlayerId(playerId);
     const onRoomDissolved = () => {
       alert("⚠️ 房间已被管理员解散！");
+      clearGameSession();
       setGame(null);
       setMyPlayerId("");
     };
     const onError = (msg: string) => alert(`❌ ${msg}`);
-    const onPlayerNotify = ({ message }: { message: string }) => alert(message);
+    const onPlayerKicked = ({ message }: { message?: string }) => {
+      alert(message || "你已被移出房间");
+      clearGameSession();
+      setGame(null);
+      setMyPlayerId("");
+    };
+    const onPlayerNotify = ({ message }: { message: string }) => setPlayerNotify(message);
     const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
     const onSyncEraImages = (images: Record<string, number>) => setEraImages(images);
     const onSyncBuffImages = (images: Record<string, number>) => setBuffImages(images);
@@ -36,10 +61,16 @@ function App() {
     socket.on("playerJoined", onPlayerJoined);
     socket.on("roomDissolved", onRoomDissolved);
     socket.on("error", onError);
+    socket.on("playerKicked", onPlayerKicked);
     socket.on("playerNotify", onPlayerNotify);
     socket.on("syncProjectImages", onSyncImages);
     socket.on("syncEraImages", onSyncEraImages);
     socket.on("syncBuffImages", onSyncBuffImages);
+
+    if (socket.connected) {
+      setIsConnected(true);
+      tryRejoinFromSession();
+    }
 
     return () => {
       socket.off("connect", onConnect);
@@ -48,6 +79,7 @@ function App() {
       socket.off("playerJoined", onPlayerJoined);
       socket.off("roomDissolved", onRoomDissolved);
       socket.off("error", onError);
+      socket.off("playerKicked", onPlayerKicked);
       socket.off("playerNotify", onPlayerNotify);
       socket.off("syncProjectImages", onSyncImages);
       socket.off("syncEraImages", onSyncEraImages);
@@ -55,7 +87,18 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || !loadGameSession()) return;
+      socket.emit("requestGameState");
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
   const handleExitRoom = () => {
+    socket.emit("leaveGame");
+    clearGameSession();
     setGame(null);
     setMyPlayerId("");
   };
@@ -92,20 +135,34 @@ function App() {
 
   const me = game?.players.find((p) => p.id === myPlayerId);
 
+  const notifyToast = playerNotify ? (
+    <div className="player-notify-toast" role="status" aria-live="polite">
+      {playerNotify}
+    </div>
+  ) : null;
+
   if (game && me) {
     return (
-      <GameRoom
-        game={game}
-        myPlayerId={myPlayerId}
-        projectImages={projectImages}
-        eraImages={eraImages}
-        buffImages={buffImages}
-        onExit={handleExitRoom}
-      />
+      <>
+        {notifyToast}
+        <GameRoom
+          game={game}
+          myPlayerId={myPlayerId}
+          projectImages={projectImages}
+          eraImages={eraImages}
+          buffImages={buffImages}
+          onExit={handleExitRoom}
+        />
+      </>
     );
   }
 
-  return <Lobby game={game || ({ players: [] } as unknown as GameState)} />;
+  return (
+    <>
+      {notifyToast}
+      <Lobby game={game || ({ players: [] } as unknown as GameState)} />
+    </>
+  );
 }
 
 export default App;

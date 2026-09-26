@@ -1,30 +1,25 @@
 import { GameState } from "./gameState.js";
-import {
-  togglePlayerReady,
-  forceSubmitPendingInvestments,
-  playersRequiringAction,
-} from "./gameActions.js";
+import { forceSubmitPendingInvestments } from "./gameActions.js";
 import { tryAdvancePhase } from "./phaseController.js";
+import { clearActionDeadline } from "./actionDeadline.js";
 
-/** 讨论+道具+投资共用倒计时结束 */
+/** 投资阶段倒计时结束；BUFF 阶段仅清除残留的 investmentEndsAt */
 export function handleActionTimeExpired(game: GameState): boolean {
-  if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") return false;
+  if (game.phase === "BUFF_USAGE") {
+    if (!game.investmentEndsAt) return false;
+    console.warn(
+      `Room ${game.roomId}: stale investmentEndsAt during BUFF_USAGE — clearing deadline`
+    );
+    clearActionDeadline(game);
+    return true;
+  }
+
+  if (game.phase !== "INVESTMENT") return false;
   if (!game.investmentEndsAt || Date.now() < game.investmentEndsAt) return false;
 
-  game.investmentEndsAt = undefined;
-  game.buffPhaseEndsAt = undefined;
-
-  if (game.phase === "BUFF_USAGE") {
-    for (const p of playersRequiringAction(game)) {
-      if (!p.ready) togglePlayerReady(game, p.id);
-    }
-    tryAdvancePhase(game);
-  }
-
-  if (game.phase === "INVESTMENT") {
-    forceSubmitPendingInvestments(game);
-    tryAdvancePhase(game);
-  }
-
+  clearActionDeadline(game);
+  console.log(`⏰ Room ${game.roomId}: investment deadline reached — auto-submitting drafts.`);
+  forceSubmitPendingInvestments(game);
+  tryAdvancePhase(game);
   return true;
 }

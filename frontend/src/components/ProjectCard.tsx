@@ -18,7 +18,19 @@ export const ProjectCard: React.FC<{
   eraTheme?: string;
   me: Player;
   uploadedVersion?: number;
-}> = ({ project, myInvest, onChange, disabled, remainingEnergy, eraTheme, me, uploadedVersion }) => {
+  /** 并排展示时预留长期提示/参投警告位，使卡片等高 */
+  balanceHeights?: boolean;
+}> = ({
+  project,
+  myInvest,
+  onChange,
+  disabled,
+  remainingEnergy,
+  eraTheme,
+  me,
+  uploadedVersion,
+  balanceHeights = false,
+}) => {
   const tc = TYPE_COLORS[project.type] || TYPE_COLORS.short;
   const isEraMatch = eraTheme && project.era === eraTheme && project.type !== "risk";
   const myLongStatus = me.longTerm[project.id];
@@ -33,8 +45,14 @@ export const ProjectCard: React.FC<{
     ? `${BACKEND_URL}/uploads/${project.id}.jpg?v=${uploadedVersion}`
     : `/images/projects/${project.name}.jpg?v=final2`;
 
+  const showLongHint = project.type === "long";
+  const showAtRiskBanner = isAtRisk && !isDisabled;
+  const reserveLongHint = balanceHeights || showLongHint;
+  const reserveAtRisk = balanceHeights || showAtRiskBanner;
+
   return (
     <div
+      className="project-card"
       style={{
         background: "var(--color-bg-card)",
         border: `1px solid ${isEraMatch ? "rgba(245,158,11,0.45)" : tc.border + "44"}`,
@@ -44,6 +62,9 @@ export const ProjectCard: React.FC<{
         opacity: isAbandoned ? 0.6 : 1,
         boxShadow: isEraMatch ? "0 0 20px rgba(245,158,11,0.15)" : `0 4px 20px rgba(0,0,0,0.3)`,
         position: "relative",
+        height: balanceHeights ? "100%" : undefined,
+        display: balanceHeights ? "flex" : undefined,
+        flexDirection: balanceHeights ? "column" : undefined,
       }}
       onMouseEnter={(e) => {
         if (!isAbandoned) (e.currentTarget as HTMLDivElement).style.transform = "translateY(-3px)";
@@ -53,6 +74,7 @@ export const ProjectCard: React.FC<{
       }}
     >
       <div
+        className="project-card-cover"
         style={{
           width: "100%",
           height: "160px",
@@ -108,7 +130,15 @@ export const ProjectCard: React.FC<{
         </div>
       </div>
 
-      <div style={{ padding: "1rem" }}>
+      <div
+        className="project-card-body"
+        style={{
+          padding: "1rem",
+          flex: balanceHeights ? 1 : undefined,
+          display: balanceHeights ? "flex" : undefined,
+          flexDirection: balanceHeights ? "column" : undefined,
+        }}
+      >
         <h3
           style={{
             fontWeight: 800,
@@ -121,22 +151,25 @@ export const ProjectCard: React.FC<{
           {project.name}
         </h3>
 
-        {project.type === "long" && (
+        {reserveLongHint && (
           <div
             style={{
               fontSize: uiRem(0.7),
               color: "#fbbf24",
               marginBottom: "0.5rem",
               padding: "0.2rem 0.4rem",
-              background: "rgba(251,191,36,0.1)",
-              border: "1px solid rgba(251,191,36,0.3)",
+              background: showLongHint ? "rgba(251,191,36,0.1)" : "transparent",
+              border: showLongHint ? "1px solid rgba(251,191,36,0.3)" : "1px solid transparent",
               borderRadius: "0.25rem",
               lineHeight: 1.2,
               overflow: "hidden",
               display: "-webkit-box",
               WebkitLineClamp: 2,
               WebkitBoxOrient: "vertical",
+              minHeight: "2.65rem",
+              visibility: showLongHint ? "visible" : "hidden",
             }}
+            aria-hidden={!showLongHint}
           >
             ⚠️ 提示：长期项目参投后，必须每轮至少投入3精力，不然视为“放弃”
           </div>
@@ -180,19 +213,24 @@ export const ProjectCard: React.FC<{
           </div>
         )}
 
-        {isAtRisk && !isDisabled && (
+        {reserveAtRisk && (
           <div
             style={{
-              background: "rgba(239,68,68,0.1)",
-              border: "1px solid rgba(239,68,68,0.3)",
+              background: showAtRiskBanner ? "rgba(239,68,68,0.1)" : "transparent",
+              border: showAtRiskBanner ? "1px solid rgba(239,68,68,0.3)" : "1px solid transparent",
               borderRadius: "0.5rem",
               padding: "0.375rem 0.75rem",
               fontSize: uiRem(0.75),
               color: "#fca5a5",
               fontWeight: 700,
               marginBottom: "0.75rem",
-              animation: "pulse 1.5s infinite",
+              minHeight: "2.1rem",
+              display: "flex",
+              alignItems: "center",
+              animation: showAtRiskBanner ? "pulse 1.5s infinite" : undefined,
+              visibility: showAtRiskBanner ? "visible" : "hidden",
             }}
+            aria-hidden={!showAtRiskBanner}
           >
             ⚠️ 已参投，须 ≥3 精力否则判放弃
           </div>
@@ -237,7 +275,14 @@ export const ProjectCard: React.FC<{
         </div>
 
         {!isAbandoned && (
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.75rem",
+              marginTop: balanceHeights ? "auto" : undefined,
+            }}
+          >
             <input
               type="range"
               min={0}
@@ -268,7 +313,9 @@ export const ProjectCard: React.FC<{
               value={myInvest}
               disabled={isDisabled}
               onChange={(e) => {
-                const val = parseInt(e.target.value) || 0;
+                const raw = parseInt(e.target.value, 10);
+                const max = myInvest + remainingEnergy;
+                const val = Math.min(Math.max(0, Number.isFinite(raw) ? raw : 0), max);
                 onChange(project.id, val);
               }}
               style={{

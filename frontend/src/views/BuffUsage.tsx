@@ -5,29 +5,39 @@ import { socket } from "../socket";
 
 import { BUFF_DEFS } from "../data/buffDefs";
 import { BuffCardArt } from "../components/BuffCardArt";
+import { isAiPlayer } from "../utils/isAiPlayer";
+
+function playersNeedingBuffGate(game: GameState): Player[] {
+  return game.players.filter((p) => p.connected && !isAiPlayer(p));
+}
 
 interface Props {
   game: GameState;
   me: Player;
   buffImages?: Record<string, number>;
   onOpenInvestmentPrefill?: () => void;
+  /** 进入讨论队列前同步预填并 ready */
+  onEnterDiscussion?: () => void;
 }
 
-export const BuffUsage: React.FC<Props> = ({ game, me, buffImages = {}, onOpenInvestmentPrefill }) => {
-  const [timeLeft, setTimeLeft] = useState(0);
+export const BuffUsage: React.FC<Props> = ({
+  game,
+  me,
+  buffImages = {},
+  onOpenInvestmentPrefill,
+  onEnterDiscussion,
+}) => {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [targetPlayer, setTargetPlayer] = useState("");
   const [targetProject, setTargetProject] = useState<number | undefined>(undefined);
   const [extraData, setExtraData] = useState("");
 
   useEffect(() => {
-    const end = game.investmentEndsAt || game.buffPhaseEndsAt;
-    if (!end) return;
-    const t = setInterval(() => setTimeLeft(Math.max(0, Math.floor((end - Date.now()) / 1000))), 1000);
-    return () => clearInterval(t);
-  }, [game.investmentEndsAt, game.buffPhaseEndsAt]);
+    if (me.ready) setSelectedCard(null);
+  }, [me.ready]);
 
   const handleUse = () => {
+    if (me.ready) return;
     if (!selectedCard) return;
     if ((selectedCard === "buff_slack" || selectedCard === "buff_swap") && !targetPlayer) { alert("请选择目标玩家"); return; }
     if (selectedCard === "buff_short") {
@@ -38,10 +48,10 @@ export const BuffUsage: React.FC<Props> = ({ game, me, buffImages = {}, onOpenIn
     setSelectedCard(null); setTargetPlayer(""); setTargetProject(undefined); setExtraData("");
   };
 
-  const mins = Math.floor(timeLeft / 60);
-  const secs = (timeLeft % 60).toString().padStart(2, "0");
-  const isUrgent = timeLeft < 60;
-  const isDanger = timeLeft < 20;
+  const gateTotal = playersNeedingBuffGate(game).length;
+  const gateReady = (game.readyPlayers ?? []).filter((id) =>
+    playersNeedingBuffGate(game).some((p) => p.id === id)
+  ).length;
 
   const selectedDef = selectedCard ? BUFF_DEFS[selectedCard] : null;
 
@@ -53,7 +63,7 @@ export const BuffUsage: React.FC<Props> = ({ game, me, buffImages = {}, onOpenIn
         padding: "1.5rem 1rem",
       }}
     >
-      <div style={{ maxWidth: "1000px", margin: "0 auto" }}>
+      <div style={{ maxWidth: "1000px", margin: "0 auto", opacity: me.ready ? 0.5 : 1, pointerEvents: me.ready ? "none" : "auto" }}>
         {/* 头部 */}
         <div style={{ textAlign: "center", marginBottom: "2rem" }}>
           <h1
@@ -72,20 +82,11 @@ export const BuffUsage: React.FC<Props> = ({ game, me, buffImages = {}, onOpenIn
           <p style={{ color: "var(--color-text-secondary)", fontSize: uiRem(0.9) }}>
             合理使用手牌改变战局，或保留至下一轮
           </p>
-          {/* 倒计时 */}
-          <div
-            style={{
-              marginTop: "1rem",
-              fontFamily: "var(--font-mono)",
-              fontWeight: 700,
-              fontSize: "3rem",
-              color: isDanger ? "#ef4444" : isUrgent ? "#f97316" : "#60a5fa",
-              animation: isDanger ? "pulse 0.5s infinite" : isUrgent ? "pulse 1s infinite" : undefined,
-              lineHeight: 1,
-            }}
-          >
-            {mins}:{secs}
-          </div>
+          {!me.ready && (
+            <p style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: uiRem(0.8) }}>
+              道具阶段不限时；全员点击「进入讨论和投资」后开始 10 分钟倒计时
+            </p>
+          )}
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1.5rem", alignItems: "start" }}>
@@ -287,19 +288,41 @@ export const BuffUsage: React.FC<Props> = ({ game, me, buffImages = {}, onOpenIn
             style={{
               position: "fixed",
               bottom: "2rem",
-              left: "50%",
-              transform: "translateX(-50%)",
-              background: "rgba(16,185,129,0.15)",
-              border: "1px solid rgba(16,185,129,0.4)",
-              borderRadius: "9999px",
-              padding: "0.875rem 2rem",
-              color: "#34d399",
-              fontWeight: 700,
-              backdropFilter: "blur(10px)",
-              animation: "pulse 2s infinite",
+              left: 0,
+              right: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "0.75rem",
+              zIndex: 40,
+              pointerEvents: "none",
             }}
           >
-            ✅ 已准备，等待其他玩家...
+            <div className="buff-phase-waiting" style={{ pointerEvents: "auto" }}>
+              等待其他玩家进入讨论和投资
+              {gateTotal > 0 && (
+                <span style={{ marginLeft: "0.5rem", opacity: 0.85, fontWeight: 600 }}>
+                  ({gateReady}/{gateTotal})
+                </span>
+              )}
+            </div>
+            {onOpenInvestmentPrefill && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{
+                  pointerEvents: "auto",
+                  border: "1px solid rgba(59,130,246,0.45)",
+                  color: "#93c5fd",
+                  background: "rgba(59,130,246,0.12)",
+                  padding: "0.5rem 1.25rem",
+                  fontWeight: 600,
+                }}
+                onClick={onOpenInvestmentPrefill}
+              >
+                预览投资
+              </button>
+            )}
           </div>
         ) : (
           <div
@@ -329,11 +352,11 @@ export const BuffUsage: React.FC<Props> = ({ game, me, buffImages = {}, onOpenIn
                   fontWeight: 600,
                 }}
               >
-                📋 讨论并预填投资
+                预览投资
               </button>
             )}
             <button
-              onClick={() => socket.emit("playerReady")}
+              onClick={() => (onEnterDiscussion ? onEnterDiscussion() : socket.emit("playerReady"))}
               style={{
                 background: "rgba(212,175,55,0.07)",
                 border: "1px solid rgba(212,175,55,0.35)",
@@ -357,7 +380,12 @@ export const BuffUsage: React.FC<Props> = ({ game, me, buffImages = {}, onOpenIn
                 (e.currentTarget as HTMLButtonElement).style.background = "rgba(212,175,55,0.07)";
               }}
             >
-              无需操作，直接进入下一阶段 →
+              进入讨论和投资 →
+              {gateTotal > 0 && (
+                <span style={{ marginLeft: "0.35rem", fontWeight: 700, opacity: 0.9 }}>
+                  ({gateReady}/{gateTotal})
+                </span>
+              )}
             </button>
           </div>
         )}

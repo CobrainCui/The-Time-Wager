@@ -163,3 +163,60 @@ export function revertInvestments(game: GameState, playerId: string): boolean {
 
   return true;
 }
+
+/**
+ * 主持解锁投资阶段：退回已扣精力并恢复可编辑 investmentDraft（与 applyInvestments 脱钩）。
+ * revertInvestments 失败时仍尽量从 investment / preSubmit 恢复表单，禁止清空已有 draft。
+ */
+export function reopenSubmittedInvestment(game: GameState, playerId: string): boolean {
+  const player = game.players.find((p) => p.id === playerId);
+  if (!player) return false;
+
+  if (revertInvestments(game, playerId)) {
+    return true;
+  }
+
+  const investments = { ...(player.investment ?? {}) };
+  let totalSpent = 0;
+  for (const amount of Object.values(investments)) {
+    totalSpent += Number(amount) || 0;
+  }
+
+  let restoredDraft: Record<number, number> | undefined;
+  if (totalSpent > 0) {
+    restoredDraft = sanitizeInvestments(game, player, investments);
+  } else {
+    const backup = player.preSubmitInvestmentDraft;
+    if (backup && Object.keys(backup).length > 0) {
+      restoredDraft = sanitizeInvestments(game, player, backup);
+      delete player.preSubmitInvestmentDraft;
+    }
+  }
+
+  if (restoredDraft !== undefined) {
+    player.investmentDraft = restoredDraft;
+  }
+
+  player.investment = {};
+
+  if (restoredDraft !== undefined) {
+    game.logs.push(`🔓 上帝解锁 ${player.name}，已恢复投资方案可修改`);
+    appendSessionEvent(
+      game,
+      "admin_investment_reverted",
+      {
+        globalRound: game.globalRound,
+        currentEra: game.currentEra,
+        roundInEra: game.roundInEra,
+        investments: { ...restoredDraft },
+        totalSpent: 0,
+        restoredFromFallback: true,
+      },
+      playerId
+    );
+  } else if (!player.investmentDraft) {
+    game.logs.push(`🔓 上帝解锁 ${player.name}，可重新填写投资`);
+  }
+
+  return true;
+}

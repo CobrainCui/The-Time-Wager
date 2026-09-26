@@ -3,6 +3,7 @@ import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import { registerSocketHandlers } from "./network/socketHandlers.js";
+import { setGameIo } from "./network/gameIo.js";
 import { broadcastUpdate } from "./network/broadcast.js";
 import { rooms, customImagesVersions, customEraImagesVersions, customBuffImagesVersions } from "./state/store.js";
 import { handleActionTimeExpired } from "./state/actionTimeExpiry.js";
@@ -231,6 +232,8 @@ const io = new Server(server, {
   cors: { origin: "*" },
 });
 
+setGameIo(io);
+
 const PORT = 3001;
 
 io.on("connection", (socket) => {
@@ -243,7 +246,6 @@ io.on("connection", (socket) => {
 setInterval(() => {
   Object.values(rooms).forEach((game) => {
     if (handleActionTimeExpired(game)) {
-      console.log(`⏰ Room ${game.roomId}: Discussion/investment time is up — auto-submitting drafts.`);
       broadcastUpdate(io, game);
     }
   });
