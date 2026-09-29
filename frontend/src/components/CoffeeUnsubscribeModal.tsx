@@ -6,9 +6,11 @@ interface Props {
   open: boolean;
   maxPurchased: number;
   onClose: () => void;
+  /** 退订成功（杯数减少）时通知父组件，用于无服务端计数字段时的本地兜底 */
+  onRefunded?: (count: number) => void;
 }
 
-export const CoffeeUnsubscribeModal: React.FC<Props> = ({ open, maxPurchased, onClose }) => {
+export const CoffeeUnsubscribeModal: React.FC<Props> = ({ open, maxPurchased, onClose, onRefunded }) => {
   const [countInput, setCountInput] = useState("1");
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -53,13 +55,15 @@ export const CoffeeUnsubscribeModal: React.FC<Props> = ({ open, maxPurchased, on
   useEffect(() => {
     if (!open || !confirming) return;
     if (maxPurchased < prevPurchasedRef.current) {
+      const refunded = prevPurchasedRef.current - maxPurchased;
       setConfirming(false);
       setInlineError(null);
       setCountInput("1");
       prevPurchasedRef.current = maxPurchased;
+      if (refunded > 0) onRefunded?.(refunded);
       onClose();
     }
-  }, [maxPurchased, open, confirming, onClose]);
+  }, [maxPurchased, open, confirming, onClose, onRefunded]);
 
   useEffect(() => {
     if (!open) return;

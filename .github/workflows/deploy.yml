@@ -65,6 +65,10 @@ jobs:
           cd /www/wwwroot/guangyinduidu.com/server/
           npm ci --omit=dev
           pm2 restart guangyin
+
+          # 咖啡功能：防止前端已部署、后端 dist 过旧
+          grep -q coffeePurchasesThisRound /www/wwwroot/guangyinduidu.com/server/dist/network/broadcast.js
+          grep -q performCoffee /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
           
           # 清理压缩包
           rm -f /root/dist_upload.zip

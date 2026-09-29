@@ -7,13 +7,16 @@ import { EraThemeBanner } from "../components/EraThemeBanner";
 import { useActionCountdown } from "../hooks/useActionCountdown";
 import { useServerClockSkewRef } from "../hooks/useServerClockSkewRef";
 import { getRemainingMs } from "../utils/actionCountdown";
-import { LONG_CONTINUE_MIN_ENERGY } from "../config/longTermRules";
+import { LONG_CONTINUE_MIN_ENERGY, needsLongContinueWarn } from "../config/longTermRules";
 import {
   resolveRankPlayerCountFromGame,
   resolveRankRewardTierCountFromGame,
 } from "../config/projectCatalog";
 import { CoffeeRoundIndicators } from "../components/CoffeeRoundIndicators";
 import { CoffeeUnsubscribeModal } from "../components/CoffeeUnsubscribeModal";
+
+const COFFEE_WEALTH_COST = 15;
+const COFFEE_ENERGY_GAIN = 1;
 import { ProjectDetailModal } from "../components/ProjectDetailModal";
 import type { ActiveProject } from "../types";
 
@@ -140,12 +143,12 @@ const StatusBar: React.FC<{
           )}
           <button
             onClick={onCoffee}
-            disabled={coffeeLoading || me.wealth < 15 || coffeeLocked}
+            disabled={coffeeLoading || me.wealth < COFFEE_WEALTH_COST || coffeeLocked}
             className="btn btn-sm"
             style={{
               background: "rgba(180,83,9,0.2)",
               border: "1px solid rgba(180,83,9,0.4)",
-              color: me.wealth >= 15 ? "#fcd34d" : "var(--color-text-muted)",
+              color: me.wealth >= COFFEE_WEALTH_COST ? "#fcd34d" : "var(--color-text-muted)",
             }}
             title="消耗15财富换1精力"
           >
@@ -169,6 +172,8 @@ export const Investment: React.FC<Props> = ({
   onDraftChange: setInvestments,
 }) => {
   const [coffeeLoading, setCoffeeLoading] = useState(false);
+  /** 服务端未下发 coffeePurchasesThisRound 时，用资源变化推断杯数 */
+  const [inferredCoffeeCups, setInferredCoffeeCups] = useState(0);
   const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
   const [detailProjectId, setDetailProjectId] = useState<number | null>(null);
   const detailReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -294,24 +299,25 @@ export const Investment: React.FC<Props> = ({
 
     const abandonWarnings: string[] = [];
     for (const proj of game.activeProjects) {
-      if (proj.type === 'long') {
-        const myLongStatus = me.longTerm[proj.id];
-        if (myLongStatus?.status === 'active') {
-           const val = payload[proj.id] || 0;
-           if (val > 0 && val < LONG_CONTINUE_MIN_ENERGY) {
-             alert(
-               `长期项目「${proj.name}」追加投资须至少 ${LONG_CONTINUE_MIN_ENERGY} 精力，或设为 0 以放弃参投。`
-             );
-             return;
-           } else if (val === 0) {
-             abandonWarnings.push(`「${proj.name}」`);
-           }
-        }
+      if (!needsLongContinueWarn(proj, me)) continue;
+      const val = payload[proj.id] || 0;
+      if (val > 0 && val < LONG_CONTINUE_MIN_ENERGY) {
+        alert(
+          `长期项目「${proj.name}」追加投资须至少 ${LONG_CONTINUE_MIN_ENERGY} 精力，或设为 0 以放弃参投。`
+        );
+        return;
+      }
+      if (val < LONG_CONTINUE_MIN_ENERGY) {
+        abandonWarnings.push(`「${proj.name}」`);
       }
     }
 
     if (abandonWarnings.length > 0) {
-      if (!window.confirm(`确认提交？注意：你对 ${abandonWarnings.join(", ")} 投入为 0，这将导致你永久退出该项目的分红排名！`)) {
+      if (
+        !window.confirm(
+          `确认提交？注意：你对 ${abandonWarnings.join(", ")} 本轮投入不足 ${LONG_CONTINUE_MIN_ENERGY}，将视为放弃并退回累计投入，且不能再参投分红！`
+        )
+      ) {
         return;
       }
     } else {
@@ -352,6 +358,12 @@ export const Investment: React.FC<Props> = ({
     const cups = me.coffeePurchasesThisRound ?? 0;
     const prevCups = prevCoffeePurchasesRef.current;
 
+    if (cups > prevCups) {
+      setInferredCoffeeCups(0);
+    } else if (cups < prevCups) {
+      setInferredCoffeeCups((n) => Math.max(0, Math.min(n, cups)));
+    }
+
     if (cups > prevCups && coffeePendingRef.current > 0) {
       const delta = Math.min(cups - prevCups, coffeePendingRef.current);
       coffeePendingRef.current -= delta;
@@ -365,18 +377,22 @@ export const Investment: React.FC<Props> = ({
     if (
       coffeePendingRef.current > 0 &&
       snap &&
-      me.energy > snap.energy &&
-      me.wealth <= snap.wealth - 15
+      me.energy >= snap.energy + COFFEE_ENERGY_GAIN &&
+      me.wealth <= snap.wealth - COFFEE_WEALTH_COST
     ) {
       coffeePendingRef.current = 0;
       coffeeAttemptSnapRef.current = null;
       setCoffeeLoading(false);
+      if (cups <= prevCups) {
+        setInferredCoffeeCups((n) => n + 1);
+      }
     }
 
     prevCoffeePurchasesRef.current = cups;
   }, [me.coffeePurchasesThisRound, me.energy, me.wealth]);
 
   useEffect(() => {
+    setInferredCoffeeCups(0);
     prevCoffeePurchasesRef.current = me.coffeePurchasesThisRound ?? 0;
   }, [game.globalRound, game.currentEra, game.roundInEra]);
 
@@ -407,9 +423,11 @@ export const Investment: React.FC<Props> = ({
   useEffect(() => {
     if (!coffeeLoading) return;
     const t = window.setTimeout(() => {
+      if (coffeePendingRef.current <= 0) return;
       coffeePendingRef.current = 0;
       coffeeAttemptSnapRef.current = null;
       setCoffeeLoading(false);
+      alert("购买咖啡未确认。若财富已扣除仍无 ☕ 图标，请硬刷新页面；持续异常请联系主持检查服务端是否已部署最新版本。");
     }, 4_000);
     return () => window.clearTimeout(t);
   }, [coffeeLoading]);
@@ -426,8 +444,11 @@ export const Investment: React.FC<Props> = ({
     };
   }, []);
 
+  const serverCoffeeCups = me.coffeePurchasesThisRound ?? 0;
+  const effectiveCoffeeCups = Math.max(serverCoffeeCups, inferredCoffeeCups);
+
   const handleCoffee = () => {
-    if (coffeeLoading || me.wealth < 15 || isSubmitted) return;
+    if (coffeeLoading || me.wealth < COFFEE_WEALTH_COST || isSubmitted) return;
     coffeeAttemptSnapRef.current = { energy: me.energy, wealth: me.wealth };
     coffeePendingRef.current += 1;
     setCoffeeLoading(true);
@@ -435,7 +456,7 @@ export const Investment: React.FC<Props> = ({
   };
 
   const eraCard = game.currentEraCard;
-  const coffeePurchases = me.coffeePurchasesThisRound ?? 0;
+  const coffeePurchases = effectiveCoffeeCups;
 
   const investSecondsLeft = useActionCountdown(
     game.phase === "INVESTMENT" && !!game.investmentEndsAt && !isSubmitted,
@@ -446,13 +467,12 @@ export const Investment: React.FC<Props> = ({
   const longAbandonRiskNames = useMemo(() => {
     const names: string[] = [];
     for (const proj of game.activeProjects) {
-      if (proj.type !== "long") continue;
-      if (me.longTerm[proj.id]?.status !== "active") continue;
+      if (!needsLongContinueWarn(proj, me)) continue;
       const val = investments[proj.id] ?? 0;
       if (val < LONG_CONTINUE_MIN_ENERGY) names.push(proj.name);
     }
     return names;
-  }, [game.activeProjects, me.longTerm, investments]);
+  }, [game.activeProjects, me, investments]);
 
   const showLongAutoAbandonWarn =
     game.phase === "INVESTMENT" &&
@@ -480,6 +500,9 @@ export const Investment: React.FC<Props> = ({
         open={unsubscribeOpen}
         maxPurchased={coffeePurchases}
         onClose={() => setUnsubscribeOpen(false)}
+        onRefunded={(count) =>
+          setInferredCoffeeCups((n) => Math.max(0, n - count))
+        }
       />
       <ProjectDetailModal
         project={detailProject}

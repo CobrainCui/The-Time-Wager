@@ -1,0 +1,87 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+  COFFEE_ENERGY_GAIN,
+  COFFEE_WEALTH_COST,
+  purchaseCoffee,
+  refundCoffee,
+} from "./coffeeLogic.js";
+import { serializeGameForClient } from "../network/broadcast.js";
+import { createInitialGame, Player } from "../state/gameState.js";
+
+function makePlayer(id: string, overrides: Partial<Player> = {}): Player {
+  return {
+    id,
+    name: id,
+    energy: 15,
+    wealth: 100,
+    connected: true,
+    ready: false,
+    rank: 0,
+    investment: {},
+    investmentDraft: {},
+    longTerm: {},
+    riskGains: {},
+    inventory: [],
+    usedCards: [],
+    activeBuffs: [],
+    slackedBy: [],
+    coffeePurchasesThisRound: 0,
+    totalEnergyConsumed: 15,
+    wealthHistory: [0],
+    investedRiskEnergy: 0,
+    investedLongEnergy: 0,
+    investedShortEnergy: 0,
+    socialRank: null,
+    reconnectToken: "tok",
+    ...overrides,
+  };
+}
+
+describe("coffee purchase and refund", () => {
+  it("purchaseCoffee updates wealth, energy, and coffeePurchasesThisRound", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "INVESTMENT";
+    const player = makePlayer("p1");
+    game.players = [player];
+
+    const result = purchaseCoffee(game, player);
+    assert.equal(result.ok, true);
+    assert.equal(player.wealth, 100 - COFFEE_WEALTH_COST);
+    assert.equal(player.energy, 15 + COFFEE_ENERGY_GAIN);
+    assert.equal(player.coffeePurchasesThisRound, 1);
+  });
+
+  it("refundCoffee restores resources when draft fits", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "BUFF_USAGE";
+    const player = makePlayer("p1", {
+      wealth: 85,
+      energy: 16,
+      coffeePurchasesThisRound: 1,
+      investmentDraft: { 1: 5 },
+    });
+    game.players = [player];
+    game.activeProjects = [];
+
+    const result = refundCoffee(game, player, 1);
+    assert.equal(result.ok, true);
+    assert.equal(player.wealth, 100);
+    assert.equal(player.energy, 15);
+    assert.equal(player.coffeePurchasesThisRound, 0);
+  });
+});
+
+describe("coffee in gameUpdate payload", () => {
+  it("serializeGameForClient includes coffeePurchasesThisRound for viewer", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "INVESTMENT";
+    const me = makePlayer("me", { coffeePurchasesThisRound: 2 });
+    game.players = [me, makePlayer("other", { coffeePurchasesThisRound: 0 })];
+
+    const payload = serializeGameForClient(game, {}, "me");
+    const self = payload.players.find((p) => p.id === "me");
+    assert.ok(self);
+    assert.equal(self!.coffeePurchasesThisRound, 2);
+  });
+});
