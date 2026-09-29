@@ -1,17 +1,48 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
 import { ProjectCard } from "../components/ProjectCard";
 import { EraThemeBanner } from "../components/EraThemeBanner";
 import { useActionCountdown } from "../hooks/useActionCountdown";
+import { useServerClockSkewRef } from "../hooks/useServerClockSkewRef";
 import { getRemainingMs } from "../utils/actionCountdown";
+import { LONG_CONTINUE_MIN_ENERGY } from "../config/longTermRules";
+import {
+  resolveRankPlayerCountFromGame,
+  resolveRankRewardTierCountFromGame,
+} from "../config/projectCatalog";
+import { CoffeeRoundIndicators } from "../components/CoffeeRoundIndicators";
+import { CoffeeUnsubscribeModal } from "../components/CoffeeUnsubscribeModal";
+import { ProjectDetailModal } from "../components/ProjectDetailModal";
+import type { ActiveProject } from "../types";
+
+function clampDraftToEnergy(
+  draft: Record<number, number>,
+  energy: number,
+  projects: ActiveProject[]
+): Record<number, number> {
+  const out: Record<number, number> = {};
+  let remaining = energy;
+  for (const proj of projects) {
+    let val = Math.max(0, Math.floor(Number(draft[proj.id] ?? 0)));
+    val = Math.min(val, remaining);
+    if (val > 0) {
+      out[proj.id] = val;
+      remaining -= val;
+    }
+  }
+  return out;
+}
+
 interface Props {
   game: GameState;
   me: Player;
   mode: "discussion" | "investment";
   projectImages?: Record<number, number>;
   onBackToBuff?: () => void;
+  /** 道具阶段预览内「进入讨论和投资」（与 BuffUsage 同源，不含人数计数） */
+  onEnterDiscussion?: () => void;
   /** 跨预览/正式阶段保留的预填（由 GameRoom 持有） */
   draft: Record<number, number>;
   onDraftChange: React.Dispatch<React.SetStateAction<Record<number, number>>>;
@@ -27,7 +58,20 @@ const StatusBar: React.FC<{
   onCoffee: () => void;
   coffeeLoading: boolean;
   coffeeLocked?: boolean;
-}> = ({ me, remainingEnergy, showCountdown, investmentEndsAt, serverNow, onCoffee, coffeeLoading, coffeeLocked }) => {
+  coffeePurchases: number;
+  onOpenUnsubscribe: () => void;
+}> = ({
+  me,
+  remainingEnergy,
+  showCountdown,
+  investmentEndsAt,
+  serverNow,
+  onCoffee,
+  coffeeLoading,
+  coffeeLocked,
+  coffeePurchases,
+  onOpenUnsubscribe,
+}) => {
   const timeLeft = useActionCountdown(
     showCountdown && !!investmentEndsAt,
     investmentEndsAt,
@@ -44,7 +88,12 @@ const StatusBar: React.FC<{
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: "1100px", margin: "0 auto" }}>
         {/* 左侧：精力 + 财富 */}
         <div style={{ display: "flex", gap: "1.5rem", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.15rem" }}>
+            <CoffeeRoundIndicators
+              count={coffeePurchases}
+              disabled={!!coffeeLocked}
+              onOpenUnsubscribe={onOpenUnsubscribe}
+            />
             <span style={{ fontSize: uiRem(1.1) }}>⚡</span>
             <span
               style={{
@@ -64,11 +113,6 @@ const StatusBar: React.FC<{
               {me.wealth}
             </span>
           </div>
-          {me.draftOrder && (
-            <div style={{ color: "#c084fc", fontSize: uiRem(0.85), fontWeight: 600 }}>
-              💺 #{me.draftOrder}
-            </div>
-          )}
         </div>
 
         {/* 右侧：倒计时 + 咖啡 */}
@@ -120,10 +164,30 @@ export const Investment: React.FC<Props> = ({
   mode,
   projectImages = {},
   onBackToBuff,
+  onEnterDiscussion,
   draft: investments,
   onDraftChange: setInvestments,
 }) => {
   const [coffeeLoading, setCoffeeLoading] = useState(false);
+  const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
+  const [detailProjectId, setDetailProjectId] = useState<number | null>(null);
+  const detailReturnFocusRef = useRef<HTMLElement | null>(null);
+
+  const handleOpenDetail = useCallback((id: number, trigger?: HTMLElement) => {
+    detailReturnFocusRef.current = trigger ?? null;
+    setDetailProjectId(id);
+  }, []);
+
+  const handleCloseDetail = useCallback(() => {
+    setDetailProjectId(null);
+    const el = detailReturnFocusRef.current;
+    detailReturnFocusRef.current = null;
+    requestAnimationFrame(() => el?.focus());
+  }, []);
+  const coffeePendingRef = useRef(0);
+  const coffeeAttemptSnapRef = useRef<{ energy: number; wealth: number } | null>(null);
+  const prevCoffeePurchasesRef = useRef(me.coffeePurchasesThisRound ?? 0);
+  const prevCoffeeForDraftRef = useRef(me.coffeePurchasesThisRound ?? 0);
   const draftSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSubmittedRef = useRef(false);
   const prevReadyRef = useRef(me.ready);
@@ -131,6 +195,7 @@ export const Investment: React.FC<Props> = ({
   const isSubmittedRef = useRef(false);
   const investmentsRef = useRef(investments);
   investmentsRef.current = investments;
+  const clockSkewRef = useServerClockSkewRef(game.serverNow);
 
   const currentAllocated = Object.values(investments).reduce((a, b) => a + b, 0);
   const remainingEnergy = me.energy - currentAllocated;
@@ -198,6 +263,12 @@ export const Investment: React.FC<Props> = ({
     onBackToBuff?.();
   };
 
+  const handleEnterDiscussion = () => {
+    flushDraftToServer();
+    if (onEnterDiscussion) onEnterDiscussion();
+    else socket.emit("playerReady");
+  };
+
   const handleInputChange = (projectId: number, val: number) => {
     if (val < 0) return;
     setInvestments((prev) => ({ ...prev, [projectId]: val }));
@@ -227,8 +298,10 @@ export const Investment: React.FC<Props> = ({
         const myLongStatus = me.longTerm[proj.id];
         if (myLongStatus?.status === 'active') {
            const val = payload[proj.id] || 0;
-           if (val > 0 && val < 3) {
-             alert(`长期项目「${proj.name}」追加投资必须至少 3 格，或者设为 0 彻底放弃。`);
+           if (val > 0 && val < LONG_CONTINUE_MIN_ENERGY) {
+             alert(
+               `长期项目「${proj.name}」追加投资须至少 ${LONG_CONTINUE_MIN_ENERGY} 精力，或设为 0 以放弃参投。`
+             );
              return;
            } else if (val === 0) {
              abandonWarnings.push(`「${proj.name}」`);
@@ -260,7 +333,7 @@ export const Investment: React.FC<Props> = ({
     if (game.phase !== "INVESTMENT") return;
 
     const tick = () => {
-      const msLeft = getRemainingMs(end, game.serverNow);
+      const msLeft = getRemainingMs(end, clockSkewRef.current);
       if (msLeft <= 1500 && msLeft > 0) {
         socket.emit("syncInvestmentDraft", { investment: investmentsRef.current });
       }
@@ -273,19 +346,149 @@ export const Investment: React.FC<Props> = ({
     const id = setInterval(tick, 250);
     tick();
     return () => clearInterval(id);
-  }, [game.investmentEndsAt, game.phase, game.serverNow, isSubmitted]);
+  }, [game.investmentEndsAt, game.phase, game.serverNow, isSubmitted, clockSkewRef]);
+
+  useEffect(() => {
+    const cups = me.coffeePurchasesThisRound ?? 0;
+    const prevCups = prevCoffeePurchasesRef.current;
+
+    if (cups > prevCups && coffeePendingRef.current > 0) {
+      const delta = Math.min(cups - prevCups, coffeePendingRef.current);
+      coffeePendingRef.current -= delta;
+      if (coffeePendingRef.current <= 0) {
+        coffeeAttemptSnapRef.current = null;
+        setCoffeeLoading(false);
+      }
+    }
+
+    const snap = coffeeAttemptSnapRef.current;
+    if (
+      coffeePendingRef.current > 0 &&
+      snap &&
+      me.energy > snap.energy &&
+      me.wealth <= snap.wealth - 15
+    ) {
+      coffeePendingRef.current = 0;
+      coffeeAttemptSnapRef.current = null;
+      setCoffeeLoading(false);
+    }
+
+    prevCoffeePurchasesRef.current = cups;
+  }, [me.coffeePurchasesThisRound, me.energy, me.wealth]);
+
+  useEffect(() => {
+    prevCoffeePurchasesRef.current = me.coffeePurchasesThisRound ?? 0;
+  }, [game.globalRound, game.currentEra, game.roundInEra]);
+
+  useEffect(() => {
+    const curr = me.coffeePurchasesThisRound ?? 0;
+    if (curr < prevCoffeeForDraftRef.current) {
+      const serverDraft = me.investmentDraft;
+      if (serverDraft && Object.keys(serverDraft).length > 0) {
+        setInvestments({ ...serverDraft });
+      } else {
+        setInvestments((prev) => clampDraftToEnergy(prev, me.energy, game.activeProjects));
+      }
+    }
+    prevCoffeeForDraftRef.current = curr;
+  }, [me.coffeePurchasesThisRound, me.investmentDraft, me.energy, game.activeProjects, setInvestments]);
+
+  useEffect(() => {
+    if (isSubmitted) return;
+    const allocated = Object.values(investments).reduce((a, b) => a + b, 0);
+    if (allocated <= me.energy) return;
+    setInvestments((prev) => clampDraftToEnergy(prev, me.energy, game.activeProjects));
+  }, [me.energy, isSubmitted, game.activeProjects, investments, setInvestments]);
+
+  useEffect(() => {
+    if (isSubmitted) setUnsubscribeOpen(false);
+  }, [isSubmitted]);
+
+  useEffect(() => {
+    if (!coffeeLoading) return;
+    const t = window.setTimeout(() => {
+      coffeePendingRef.current = 0;
+      coffeeAttemptSnapRef.current = null;
+      setCoffeeLoading(false);
+    }, 4_000);
+    return () => window.clearTimeout(t);
+  }, [coffeeLoading]);
+
+  useEffect(() => {
+    const onError = () => {
+      coffeePendingRef.current = 0;
+      coffeeAttemptSnapRef.current = null;
+      setCoffeeLoading(false);
+    };
+    socket.on("error", onError);
+    return () => {
+      socket.off("error", onError);
+    };
+  }, []);
 
   const handleCoffee = () => {
-    if (coffeeLoading || me.wealth < 15) return;
+    if (coffeeLoading || me.wealth < 15 || isSubmitted) return;
+    coffeeAttemptSnapRef.current = { energy: me.energy, wealth: me.wealth };
+    coffeePendingRef.current += 1;
     setCoffeeLoading(true);
     socket.emit("performCoffee");
-    setTimeout(() => setCoffeeLoading(false), 1200);
   };
 
   const eraCard = game.currentEraCard;
+  const coffeePurchases = me.coffeePurchasesThisRound ?? 0;
+
+  const investSecondsLeft = useActionCountdown(
+    game.phase === "INVESTMENT" && !!game.investmentEndsAt && !isSubmitted,
+    game.investmentEndsAt,
+    game.serverNow
+  );
+
+  const longAbandonRiskNames = useMemo(() => {
+    const names: string[] = [];
+    for (const proj of game.activeProjects) {
+      if (proj.type !== "long") continue;
+      if (me.longTerm[proj.id]?.status !== "active") continue;
+      const val = investments[proj.id] ?? 0;
+      if (val < LONG_CONTINUE_MIN_ENERGY) names.push(proj.name);
+    }
+    return names;
+  }, [game.activeProjects, me.longTerm, investments]);
+
+  const showLongAutoAbandonWarn =
+    game.phase === "INVESTMENT" &&
+    !isSubmitted &&
+    investSecondsLeft > 0 &&
+    investSecondsLeft <= 60 &&
+    longAbandonRiskNames.length > 0;
+
+  const detailProject = useMemo(
+    () => (detailProjectId != null ? game.activeProjects.find((p) => p.id === detailProjectId) ?? null : null),
+    [detailProjectId, game.activeProjects]
+  );
+
+  useEffect(() => {
+    if (detailProjectId == null) return;
+    if (!game.activeProjects.some((p) => p.id === detailProjectId)) {
+      setDetailProjectId(null);
+      detailReturnFocusRef.current = null;
+    }
+  }, [detailProjectId, game.activeProjects]);
 
   return (
     <div style={{ minHeight: "100vh", background: "#070b14" }}>
+      <CoffeeUnsubscribeModal
+        open={unsubscribeOpen}
+        maxPurchased={coffeePurchases}
+        onClose={() => setUnsubscribeOpen(false)}
+      />
+      <ProjectDetailModal
+        project={detailProject}
+        eraTheme={eraCard?.era}
+        uploadedVersion={detailProject ? projectImages[detailProject.id] : undefined}
+        playerCount={resolveRankRewardTierCountFromGame(game)}
+        seatedPlayerCount={resolveRankPlayerCountFromGame(game)}
+        onClose={handleCloseDetail}
+      />
       {/* 顶部状态栏 */}
       <StatusBar
         me={me}
@@ -296,6 +499,11 @@ export const Investment: React.FC<Props> = ({
         onCoffee={handleCoffee}
         coffeeLoading={coffeeLoading}
         coffeeLocked={isSubmitted}
+        coffeePurchases={coffeePurchases}
+        onOpenUnsubscribe={() => {
+          if (isSubmitted || coffeePurchases <= 0) return;
+          setUnsubscribeOpen(true);
+        }}
       />
 
       <div
@@ -326,10 +534,74 @@ export const Investment: React.FC<Props> = ({
               ? "已进入讨论队列，等待其他玩家进入讨论和投资；可继续调整预填"
               : "可预览并预填投资；全员点击「进入讨论和投资」后开始 10 分钟倒计时"}
             {onBackToBuff && (
-              <div style={{ marginTop: "0.75rem" }}>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={handleBackToBuff}>
+              <div
+                style={{
+                  marginTop: "0.75rem",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.75rem",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={handleBackToBuff}
+                  style={{
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.18)",
+                    borderRadius: "9999px",
+                    color: "var(--color-text-secondary)",
+                    cursor: "pointer",
+                    fontSize: uiRem(1.05),
+                    fontWeight: 600,
+                    padding: "0.75rem 2rem",
+                    letterSpacing: "0.03em",
+                    transition: "all 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.35)";
+                    (e.currentTarget as HTMLButtonElement).style.color = "white";
+                    (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.08)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.18)";
+                    (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-secondary)";
+                    (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
+                  }}
+                >
                   ← 返回道具使用
                 </button>
+                {!me.ready && (
+                  <button
+                    type="button"
+                    onClick={handleEnterDiscussion}
+                    style={{
+                      background: "rgba(212,175,55,0.07)",
+                      border: "1px solid rgba(212,175,55,0.35)",
+                      borderRadius: "9999px",
+                      color: "var(--color-text-secondary)",
+                      cursor: "pointer",
+                      fontSize: uiRem(1.05),
+                      fontWeight: 600,
+                      padding: "0.75rem 2rem",
+                      letterSpacing: "0.03em",
+                      transition: "all 0.2s ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(212,175,55,0.7)";
+                      (e.currentTarget as HTMLButtonElement).style.color = "#d4af37";
+                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(212,175,55,0.14)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(212,175,55,0.35)";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-secondary)";
+                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(212,175,55,0.07)";
+                    }}
+                  >
+                    进入讨论和投资 →
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -351,6 +623,27 @@ export const Investment: React.FC<Props> = ({
             }}
           >
             主持人已允许修改：请调整分配后重新提交。
+          </div>
+        )}
+
+        {showLongAutoAbandonWarn && (
+          <div
+            role="alert"
+            style={{
+              background: "rgba(239,68,68,0.12)",
+              border: "1px solid rgba(239,68,68,0.4)",
+              borderRadius: "0.875rem",
+              padding: "0.75rem 1.25rem",
+              marginBottom: "1.25rem",
+              color: "#fecaca",
+              fontSize: uiRem(0.9),
+              fontWeight: 600,
+              textAlign: "center",
+              animation: investSecondsLeft <= 20 ? "pulse 0.8s infinite" : undefined,
+            }}
+          >
+            倒计时结束将自动提交当前方案：{longAbandonRiskNames.join("、")} 未满 {LONG_CONTINUE_MIN_ENERGY}{" "}
+            精力，将视为放弃并退回累计投入。
           </div>
         )}
 
@@ -399,6 +692,7 @@ export const Investment: React.FC<Props> = ({
               eraTheme={eraCard?.era}
               me={me}
               uploadedVersion={projectImages[proj.id]}
+              onOpenDetail={handleOpenDetail}
             />
           ))}
           {game.activeProjects.length === 0 && (

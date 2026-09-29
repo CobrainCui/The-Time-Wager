@@ -5,10 +5,9 @@ import { GameState, Player } from "../types";
 interface Props {
   game: GameState;
   me: Player;
-  onExit?: () => void;
 }
 
-export const RoomWaiting: React.FC<Props> = ({ game, me, onExit }) => {
+export const RoomWaiting: React.FC<Props> = ({ game, me }) => {
   const online = game.players.filter((p) => p.connected);
 
   return (
@@ -101,12 +100,6 @@ export const RoomWaiting: React.FC<Props> = ({ game, me, onExit }) => {
               )}
             </ul>
           </div>
-
-          {onExit && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onExit}>
-              退出房间
-            </button>
-          )}
         </div>
       </div>
     </div>

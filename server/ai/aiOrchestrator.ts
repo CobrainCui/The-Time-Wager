@@ -49,25 +49,7 @@ async function processAITurn(game: GameState, ai: Player) {
         }))
     };
 
-    if (game.phase === "DRAFTING") {
-        if (ai.draftOrder !== undefined) return; 
-        
-        const availableSlots = game.draftingState.availableSlots;
-        const prompt = `当前是选座阶段。可选座位为: ${availableSlots.join(", ")}。\n请输出: {"seat": 数字}`;
-        
-        const res = await askLLM(baseSystemPrompt, JSON.stringify(stateSummary) + "\n\n" + prompt);
-        let seat = res?.seat;
-        if (!availableSlots.includes(seat)) seat = availableSlots[0];
-        
-        ai.draftOrder = seat;
-        game.draftingState.availableSlots = game.draftingState.availableSlots.filter(s => s !== seat);
-        game.draftingState.currentIndex++;
-        
-        if (game.draftingState.currentIndex >= game.draftingState.queue.length) {
-            game.players.forEach(p => p.ready = true);
-        }
-    } 
-    else if (game.phase === "BUFF_USAGE") {
+    if (game.phase === "BUFF_USAGE") {
         // Decide whether to use a buff
         const availableBuffs = ai.inventory;
         if (availableBuffs.length === 0) {

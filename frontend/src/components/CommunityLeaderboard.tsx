@@ -4,7 +4,6 @@ import { uiRem } from "../utils/typography";
 export interface CommunityLeaderboardEntry {
   name: string;
   score: number;
-  roomId?: string;
   recordedAt?: number;
 }
 
@@ -63,7 +62,7 @@ export const CommunityLeaderboard: React.FC<Props> = ({
       <ol style={{ listStyle: "none", margin: 0, padding: "0.75rem 1rem" }}>
         {entries.map((rec, i) => {
           const isHighlight = Boolean(highlightName && rec.name === highlightName);
-          const rankKey = rec.roomId ? `${rec.roomId}-${rec.recordedAt ?? i}` : `${rec.name}-${i}`;
+          const rankKey = `${rec.name}-${rec.recordedAt ?? i}`;
           return (
             <li
               key={rankKey}

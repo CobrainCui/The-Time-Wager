@@ -8,27 +8,32 @@ import { ImageLightbox } from "../components/ImageLightbox";
 import {
   getEraImageDisplay,
   getProjectImageDisplay,
-  getBuffCustomImageSrc,
+  getBuffImageDisplay,
   hasBuffCustomImage,
+  getPersonaImageDisplay,
+  hasPersonaCustomImage,
   type ResolvedImage,
 } from "../utils/gameImageDisplay";
+import { FATE_SKETCH_CONFIG, FATE_SKETCH_IMAGE_SLUG } from "../config/personaConfig";
 
 const ALL_AUCTION_BUFF_IDS = Array.from(
   new Set(Object.values(AUCTION_CARDS_BY_ROUND).flat().map((c) => c.id)),
 );
 
 const ERA_NAMES = ["气候", "科技", "文化", "健康", "心理"];
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
-type SectionId = "era" | "buff" | "project";
+type SectionId = "era" | "buff" | "project" | "persona";
 
 interface Props {
   projectImages: Record<number, number>;
   eraImages: Record<string, number>;
   buffImages: Record<string, number>;
+  personaImages: Record<string, number>;
   onProjectImageVersion: (id: number, version: number) => void;
   onEraImageVersion: (eraName: string, version: number) => void;
   onBuffImageVersion: (cardId: string, version: number) => void;
+  onPersonaImageVersion: (slug: string, version: number) => void;
   onBack: () => void;
 }
 
@@ -144,13 +149,20 @@ const ProjectRasterPreview: React.FC<{
   );
 };
 
+const PERSONA_ENTRIES = Object.entries(FATE_SKETCH_CONFIG).map(([name, cfg]) => ({
+  name: cfg.name,
+  slug: FATE_SKETCH_IMAGE_SLUG[name] ?? "Poet",
+}));
+
 export const AdminImageManager: React.FC<Props> = ({
   projectImages,
   eraImages,
   buffImages,
+  personaImages,
   onProjectImageVersion,
   onEraImageVersion,
   onBuffImageVersion,
+  onPersonaImageVersion,
   onBack,
 }) => {
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
@@ -161,6 +173,7 @@ export const AdminImageManager: React.FC<Props> = ({
     era: null,
     buff: null,
     project: null,
+    persona: null,
   });
 
   const busy = uploadingKey !== null;
@@ -169,11 +182,21 @@ export const AdminImageManager: React.FC<Props> = ({
     sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const handleDeleteImage = async (id: number | string, type: "project" | "era" | "buff", itemKey: string) => {
+  const handleDeleteImage = async (
+    id: number | string,
+    type: "project" | "era" | "buff" | "persona",
+    itemKey: string,
+  ) => {
     if (busy) return;
     if (!window.confirm("确定要删除这张自定义图片吗？删除后将恢复为玩家端默认展示。")) return;
     const path =
-      type === "era" ? "delete-era-image" : type === "buff" ? "delete-buff-image" : "delete-image";
+      type === "era"
+        ? "delete-era-image"
+        : type === "buff"
+          ? "delete-buff-image"
+          : type === "persona"
+            ? "delete-persona-image"
+            : "delete-image";
     setUploadingKey(`delete-${itemKey}`);
     try {
       const res = await fetch(adminApiUrl(`/api/${path}`), {
@@ -192,6 +215,7 @@ export const AdminImageManager: React.FC<Props> = ({
         }
         if (type === "era") onEraImageVersion(String(id), ts);
         if (type === "project") onProjectImageVersion(Number(id), ts);
+        if (type === "persona") onPersonaImageVersion(String(id), ts);
       }
     } catch (err) {
       console.error("Delete failed", err);
@@ -203,7 +227,7 @@ export const AdminImageManager: React.FC<Props> = ({
 
   const handleImageUpload = (
     id: string | number,
-    type: "project" | "era" | "buff",
+    type: "project" | "era" | "buff" | "persona",
     itemKey: string,
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -275,7 +299,15 @@ export const AdminImageManager: React.FC<Props> = ({
           try {
             const res = await fetch(
               adminApiUrl(
-                `/api/${type === "era" ? "upload-era-image" : type === "buff" ? "upload-buff-image" : "upload-image"}`,
+                `/api/${
+                  type === "era"
+                    ? "upload-era-image"
+                    : type === "buff"
+                      ? "upload-buff-image"
+                      : type === "persona"
+                        ? "upload-persona-image"
+                        : "upload-image"
+                }`,
               ),
               {
                 method: "POST",
@@ -294,6 +326,7 @@ export const AdminImageManager: React.FC<Props> = ({
               }
               if (type === "era") onEraImageVersion(String(id), ts);
               if (type === "project") onProjectImageVersion(Number(id), ts);
+              if (type === "persona") onPersonaImageVersion(String(id), ts);
             }
           } catch (err) {
             console.error(err);
@@ -345,6 +378,7 @@ export const AdminImageManager: React.FC<Props> = ({
             ["era", "时代图片"],
             ["buff", "道具卡面"],
             ["project", "项目图片"],
+            ["persona", "人格立绘"],
           ] as [SectionId, string][]
         ).map(([id, label]) => (
           <button key={id} type="button" className="btn btn-ghost btn-sm" onClick={() => scrollToSection(id)}>
@@ -444,17 +478,26 @@ export const AdminImageManager: React.FC<Props> = ({
             {ALL_AUCTION_BUFF_IDS.map((cardId) => {
               const def = BUFF_CARD_DEFS[cardId];
               const custom = hasBuffCustomImage(cardId, buffImages);
-              const customSrc = getBuffCustomImageSrc(cardId, buffImages);
+              const display = getBuffImageDisplay(cardId, buffImages);
               const loadFailed = buffLoadFailed[cardId];
               const key = `buff-${cardId}`;
               const itemBusy = uploadingKey === `upload-${key}` || uploadingKey === `delete-${key}`;
-              const badgeLabel = loadFailed && custom ? "加载失败" : custom ? "自定义" : "占位";
+              const badgeLabel =
+                loadFailed && custom
+                  ? "加载失败"
+                  : custom
+                    ? "自定义"
+                    : loadFailed
+                      ? "缺失"
+                      : "默认";
               const badgeColor =
                 loadFailed && custom
                   ? "rgba(239,68,68,0.9)"
                   : custom
                     ? "rgba(251,191,36,0.9)"
-                    : "rgba(100,116,139,0.85)";
+                    : loadFailed
+                      ? "rgba(239,68,68,0.75)"
+                      : "rgba(34,197,94,0.85)";
 
               return (
                 <div
@@ -479,11 +522,11 @@ export const AdminImageManager: React.FC<Props> = ({
                   </div>
                   <div style={{ position: "relative" }}>
                     <span style={badgeStyle(badgeColor)}>{badgeLabel}</span>
-                    {customSrc && !loadFailed ? (
+                    {!loadFailed ? (
                       <button
                         type="button"
                         aria-label={`放大预览：${def?.name || cardId}`}
-                        onClick={() => setLightbox({ src: customSrc, alt: def?.name || cardId })}
+                        onClick={() => setLightbox({ src: display.src, alt: def?.name || cardId })}
                         style={{
                           display: "block",
                           width: "100%",
@@ -602,6 +645,75 @@ export const AdminImageManager: React.FC<Props> = ({
                         className="admin-delete-btn"
                         disabled={busy}
                         onClick={() => handleDeleteImage(p.id, "project", key)}
+                      >
+                        删除自定义
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section ref={(el) => { sectionRefs.current.persona = el; }}>
+          <h2 style={{ fontSize: uiRem(1.05), color: "#d8b4fe", marginBottom: "1rem" }} id="admin-images-persona">
+            人格立绘（竖版 2:3）
+          </h2>
+          <p style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)", marginBottom: "1rem" }}>
+            终局页主立绘与「色彩」弹窗使用；未上传时默认采用 PDF 模板封面图。
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "1rem" }}>
+            {PERSONA_ENTRIES.map(({ name, slug }) => {
+              const display = getPersonaImageDisplay(name, personaImages);
+              const key = `persona-${slug}`;
+              const itemBusy = uploadingKey === `upload-${key}` || uploadingKey === `delete-${key}`;
+              const hasCustom = hasPersonaCustomImage(slug, personaImages);
+              return (
+                <div
+                  key={slug}
+                  style={{
+                    background: "rgba(255,255,255,0.03)",
+                    borderRadius: "0.75rem",
+                    padding: "0.75rem",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <div style={{ fontSize: uiRem(0.75), fontWeight: 700, marginBottom: "0.5rem", textAlign: "center" }}>
+                    {name}
+                  </div>
+                  <RasterPreview
+                    display={display}
+                    alt={name}
+                    aspectRatio="2/3"
+                    onZoom={(src) => setLightbox({ src, alt: name })}
+                    badgeLabel={display.source === "custom" ? "自定义" : "默认"}
+                    badgeColor={display.source === "custom" ? "rgba(251,191,36,0.9)" : "rgba(148,163,184,0.85)"}
+                  />
+                  <input
+                    ref={(el) => {
+                      uploadInputRefs.current[key] = el;
+                    }}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/*"
+                    style={{ display: "none" }}
+                    onChange={(e) => handleImageUpload(slug, "persona", key, e)}
+                  />
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", marginTop: "0.5rem" }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm btn-full"
+                      disabled={busy}
+                      onClick={() => triggerUpload(key)}
+                    >
+                      {itemBusy ? "处理中…" : "更换图片"}
+                    </button>
+                    {hasCustom && (
+                      <button
+                        type="button"
+                        className="admin-delete-btn"
+                        disabled={busy}
+                        onClick={() => handleDeleteImage(slug, "persona", key)}
                       >
                         删除自定义
                       </button>

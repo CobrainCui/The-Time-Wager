@@ -27,9 +27,6 @@ export const DemoAuction: React.FC = () => {
 
   return (
     <div>
-      <p style={{ fontSize: uiRem(0.85), color: "var(--color-text-secondary)", marginBottom: "0.75rem" }}>
-        正式对局在 <strong>拍卖会</strong> 阶段由主持人发卡，玩家用财富成交后道具进入手牌。
-      </p>
       <div style={{ marginBottom: "0.75rem", fontFamily: "var(--font-mono)", color: "#fbbf24", fontWeight: 700 }}>
         试玩财富：{wealth} 💰
       </div>

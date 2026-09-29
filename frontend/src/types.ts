@@ -4,11 +4,8 @@ export type Phase =
   | "TUTORIAL"
   | "AUCTION"
   | "BUFF_USAGE"
-  | "PROJECT_SETUP"
-  | "DRAFTING"
   | "INVESTMENT"
   | "SETTLEMENT"
-  | "ERA_TRANSITION"
   | "COMMUNITY_NAMING"
   | "GAME_OVER";
 
@@ -22,6 +19,8 @@ export interface Transaction {
   note: string;
   status: "pending" | "accepted" | "rejected";
   timestamp: number;
+  /** 客户端乐观发送 id，用于一对一对账去重 */
+  clientTempId?: string;
 }
 
 export interface ActiveProject {
@@ -70,11 +69,12 @@ export interface LongTermProgress {
 
 export interface PersonaAnalysis {
   scores: {
-    longTermism: number;    
-    riskTaking: number;     
-    ruleIntervention: number; 
-    socialConnection: number; 
-    resourceConversion: number; 
+    longTermism: number;
+    shortTermism: number;
+    riskTaking: number;
+    ruleIntervention: number;
+    socialConnection: number;
+    resourceConversion: number;
   };
   personaScores: {
     compass: number;
@@ -106,7 +106,6 @@ export interface Player {
   connected: boolean;
   ready: boolean; 
   rank: number;
-  draftOrder?: number; 
   investment: Record<number, number>;
   investmentDraft?: Record<number, number>;
   longTerm: Record<number, LongTermProgress>;
@@ -118,6 +117,9 @@ export interface Player {
   // ✅ 新增：记录本轮被谁使用了摸鱼传染，用于反弹琵琶的回溯判定
   slackedBy: string[];
 
+  /** 本轮已购咖啡杯数（服务端权威） */
+  coffeePurchasesThisRound?: number;
+
   totalEnergyConsumed: number; 
   wealthHistory: number[];     
   investedRiskEnergy: number;  
@@ -125,8 +127,6 @@ export interface Player {
   socialRank: 'A' | 'B' | 'C' | 'D' | 'E' | null; 
   
   analysisResult?: PersonaAnalysis; 
-  personaVote?: "fate" | "gene" | "neither" | null;
-  longTermStatus?: Record<number, 'investing' | 'abandoned'>;
 
   isAI?: boolean;
   aiPersona?: string;
@@ -183,15 +183,13 @@ export interface GameState {
 
   transactions: Transaction[];
 
-  draftingState: {
-    queue: string[];
-    currentIndex: number;
-    availableSlots: number[];
-  };
-
   currentEra: number;
   roundInEra: number;
   globalRound: number;
+  /** 开局锁定的人数；第 1 轮消耗前可能随座位重锁 */
+  energyTableSize?: number;
+  /** 服务端按锁定人数算出的下一轮精力；终局为 null */
+  nextRoundEnergy?: number | null;
 
   discussionEndsAt?: number;
   investmentEndsAt?: number;
@@ -203,7 +201,9 @@ export interface GameState {
   activeProjects: ActiveProject[];
   uncompletedProjects: ActiveProject[];
   completedProjects: ActiveProject[];
-  
+  /** 本局曾抽出的项目 id（含已离场） */
+  drawnProjects?: number[];
+
   totalRiskEnergyAvailable: number;
 
   currentEraCard?: EraCard;
@@ -217,7 +217,17 @@ export interface GameState {
   };
   
   communityName?: string;
-  globalLeaderboard?: { name: string; score: number; roomId?: string; recordedAt?: number }[];
+  globalLeaderboard?: { name: string; score: number; recordedAt?: number }[];
   /** 本轮拍卖已成功成交的道具卡 id */
   auctionDistributedCardIds?: string[];
+  /** 本场拍卖成交明细（主持撤销发放用） */
+  auctionCompletedDeals?: { cardId: string; playerId: string; cost: number }[];
+  /** 仅管理端上帝视图：待玩家确认的拍卖报价 */
+  pendingAuctionOffers?: { offerId: string; playerId: string; cardId: string; cost: number }[];
+  /** 仅管理端：待玩家确认的彩票开奖 */
+  pendingLotteryOffers?: { offerId: string; playerId: string; amount: number }[];
+  /** 仅本人：待确认的彩票开奖（刷新/重连后仍显示弹窗） */
+  pendingLotteryOffer?: { offerId: string; playerId: string; amount: number };
+  /** 仅管理端：已确认彩票开奖 */
+  lotteryCompletedDeals?: { playerId: string; amount: number }[];
 }

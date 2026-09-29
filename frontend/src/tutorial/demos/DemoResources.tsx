@@ -4,7 +4,7 @@ import { uiRem } from "../../utils/typography";
 const INITIAL_ENERGY = 10;
 const INITIAL_WEALTH = 100;
 
-export const DemoResources: React.FC<{ playerName?: string }> = ({ playerName }) => {
+export const DemoResources: React.FC<{ playerName?: string }> = () => {
   const [energyTotal, setEnergyTotal] = useState(INITIAL_ENERGY);
   const [spent, setSpent] = useState(0);
   const [wealth, setWealth] = useState(INITIAL_WEALTH);
@@ -13,13 +13,13 @@ export const DemoResources: React.FC<{ playerName?: string }> = ({ playerName })
   const remaining = energyTotal - spent;
 
   return (
-    <div>
+    <div className="tutorial-resources-demo">
       <div
         className="status-bar"
-        style={{ borderRadius: "0.75rem", marginBottom: "1rem", padding: "0.75rem 1rem" }}
+        style={{ borderRadius: "0.75rem", marginBottom: "1rem", padding: "0.85rem 1.1rem" }}
       >
         <div style={{ display: "flex", gap: "1.5rem", alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: uiRem(0.85) }}>
+          <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: uiRem(1.05) }}>
             ⚡{" "}
             <span style={{ color: remaining < 0 ? "#ef4444" : "#34d399" }}>{remaining}</span>
             <span style={{ color: "var(--color-text-muted)", fontWeight: 600 }}> / </span>
@@ -29,12 +29,12 @@ export const DemoResources: React.FC<{ playerName?: string }> = ({ playerName })
             💰{" "}
             <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "#fbbf24" }}>{wealth}</span>
           </span>
-          <span style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>试玩轮次 {round}</span>
+          <span style={{ fontSize: uiRem(0.95), color: "var(--color-text-muted)" }}>试玩轮次 {round}</span>
         </div>
       </div>
 
-      <p style={{ fontSize: uiRem(0.85), color: "var(--color-text-secondary)", marginBottom: "0.75rem" }}>
-        {playerName ? `${playerName}，` : ""}拖动滑块模拟把精力投进项目（仅本地）：
+      <p style={{ fontSize: uiRem(1.05), color: "var(--color-text-secondary)", marginBottom: "0.75rem", lineHeight: 1.5 }}>
+        拖动滑块模拟把精力投进项目：
       </p>
       <input
         type="range"

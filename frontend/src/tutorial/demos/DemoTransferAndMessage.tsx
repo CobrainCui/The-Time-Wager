@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { uiRem } from "../../utils/typography";
 
 const NOTE_MAX = 500;
@@ -125,6 +125,7 @@ const TutorialChatComposer: React.FC<{
 };
 
 export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
+  const [wealth, setWealth] = useState(DEMO_WEALTH);
   const [threads, setThreads] = useState<Record<string, DemoThread>>(() => {
     const init: Record<string, DemoThread> = {};
     for (const n of TUTORIAL_TRANSFER_PEERS) {
@@ -150,6 +151,37 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
     return init;
   });
   const [threadOrder, setThreadOrder] = useState<string[]>(() => TUTORIAL_TRANSFER_PEERS.map((n) => n.id));
+  const dockRef = useRef<HTMLDivElement>(null);
+
+  const hasExpandedPanel = useMemo(() => Object.values(threads).some((t) => t.expanded), [threads]);
+
+  const collapseAllExpanded = useCallback(() => {
+    setThreads((prev) => {
+      let changed = false;
+      const next: Record<string, DemoThread> = { ...prev };
+      for (const id of Object.keys(next)) {
+        if (next[id].expanded) {
+          changed = true;
+          next[id] = { ...next[id], expanded: false };
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!hasExpandedPanel) return;
+
+    const onPointerDown = (e: PointerEvent) => {
+      const dock = dockRef.current;
+      if (!dock || !(e.target instanceof Node)) return;
+      if (dock.contains(e.target)) return;
+      collapseAllExpanded();
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [hasExpandedPanel, collapseAllExpanded]);
 
   const displayOrder = useMemo(() => {
     const ids = TUTORIAL_TRANSFER_PEERS.map((n) => n.id);
@@ -180,6 +212,14 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
   };
 
   const respond = (peerId: string, msgId: string, accept: boolean) => {
+    const thread = threads[peerId];
+    const target = thread?.messages.find((m) => m.id === msgId);
+    if (!target || target.status !== "pending" || target.direction !== "in") return;
+
+    if (accept && target.amount > 0) {
+      setWealth((w) => w + target.amount);
+    }
+
     setThreads((prev) => ({
       ...prev,
       [peerId]: {
@@ -193,6 +233,10 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
 
   const onTutorialSend = (peerId: string, amount: number, note: string) => {
     const trimmed = note.trim();
+    if (amount > 0) {
+      if (amount > wealth) return;
+      setWealth((w) => w - amount);
+    }
     setThreads((prev) => {
       const thread = prev[peerId];
       if (!thread) return prev;
@@ -225,10 +269,10 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
         <strong>不填金额</strong>（或填 0）并留言即私信；对方仅在与你之间的会话里接收或退回。
       </p>
       <div style={{ marginBottom: "0.5rem", fontFamily: "var(--font-mono)", color: "#fbbf24", fontWeight: 700 }}>
-        示例财富：{DEMO_WEALTH} 💰（试玩不变）
+        示例财富：{wealth} 💰
       </div>
       <div className="tutorial-chat-demo">
-        <div className="player-chat-dock tutorial-chat-demo__dock" aria-label="试玩对话框">
+        <div ref={dockRef} className="player-chat-dock tutorial-chat-demo__dock" aria-label="试玩对话框">
           {displayOrder.map((playerId) => {
             const thread = threads[playerId];
             if (!thread) return null;
@@ -286,7 +330,7 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
                   </div>
                   <TutorialChatComposer
                     peerId={playerId}
-                    maxWealth={DEMO_WEALTH}
+                    maxWealth={wealth}
                     onTutorialSend={onTutorialSend}
                   />
                 </div>

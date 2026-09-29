@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { uiRem } from "../../utils/typography";
 import { ProjectCard } from "../../components/ProjectCard";
+import { ProjectDetailModal } from "../../components/ProjectDetailModal";
+import { ActiveProject } from "../../types";
 import {
   TUTORIAL_LONG_PROJECT,
   TUTORIAL_RISK_PROJECT,
@@ -11,8 +13,11 @@ import {
 /** 与教程文案一致：试玩总精力池 */
 const DEMO_ENERGY_POOL = 20;
 
+const TUTORIAL_DEMO_PROJECTS = [TUTORIAL_SHORT_PROJECT, TUTORIAL_LONG_PROJECT, TUTORIAL_RISK_PROJECT];
+
 export const DemoProjectTypes: React.FC = () => {
   const [investments, setInvestments] = useState<Record<number, number>>({});
+  const [detailProjectId, setDetailProjectId] = useState<number | null>(null);
   const riskPool = TUTORIAL_RISK_PROJECT.accumulatedInvested;
 
   const me = useMemo(
@@ -30,7 +35,10 @@ export const DemoProjectTypes: React.FC = () => {
     []
   );
 
-  const projects = [TUTORIAL_SHORT_PROJECT, TUTORIAL_LONG_PROJECT, TUTORIAL_RISK_PROJECT];
+  const detailProject = useMemo((): ActiveProject | null => {
+    if (detailProjectId == null) return null;
+    return TUTORIAL_DEMO_PROJECTS.find((p) => p.id === detailProjectId) ?? null;
+  }, [detailProjectId]);
   const allocated = Object.values(investments).reduce((a, b) => a + b, 0);
   const remainingEnergy = me.energy - allocated;
 
@@ -52,6 +60,11 @@ export const DemoProjectTypes: React.FC = () => {
 
   return (
     <div>
+      <ProjectDetailModal
+        project={detailProject}
+        playerCount={6}
+        onClose={() => setDetailProjectId(null)}
+      />
       <div
         className="status-bar"
         style={{ borderRadius: "0.75rem", marginBottom: "0.75rem", padding: "0.75rem 1rem" }}
@@ -88,7 +101,7 @@ export const DemoProjectTypes: React.FC = () => {
           alignItems: "stretch",
         }}
       >
-        {projects.map((proj) => (
+        {TUTORIAL_DEMO_PROJECTS.map((proj) => (
           <div key={proj.id} style={{ minWidth: 0, display: "flex" }}>
             <ProjectCard
               project={proj}
@@ -98,6 +111,7 @@ export const DemoProjectTypes: React.FC = () => {
               remainingEnergy={remainingEnergy}
               me={me}
               balanceHeights
+              onOpenDetail={setDetailProjectId}
             />
           </div>
         ))}

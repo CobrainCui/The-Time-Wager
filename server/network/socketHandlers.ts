@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Server, Socket } from "socket.io";
 import {
   createInitialGame,
@@ -5,28 +6,50 @@ import {
   resetGameSession,
   needsSessionReset,
   finishTutorialExit,
-  getWealthiestPlayer,
+  getCommunityNamer,
+  GameState,
+  Phase,
 } from "../state/gameState.js";
 import { togglePlayerReady, forceSubmitPendingInvestments, adminUnlockPlayer, resetAllReady } from "../state/gameActions.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
 import { clearActionDeadline, startInvestmentDeadline } from "../state/actionDeadline.js";
 import { applyInvestments, sanitizeInvestments } from "../logic/investmentLogic.js"; 
+import { purchaseCoffee, refundCoffee } from "../logic/coffeeLogic.js";
 import { broadcastUpdate, serializeGameForClient } from "./broadcast.js"; 
 import { AI_BOT_ENABLED } from "../config/features.js";
 import { TUTORIAL_MAX_STEP } from "../config/tutorial.js";
-import { rooms, customImagesVersions, customEraImagesVersions, customBuffImagesVersions } from "../state/store.js";
+import { rooms, customImagesVersions, customEraImagesVersions, customBuffImagesVersions, customPersonaImagesVersions } from "../state/store.js";
 import {
-  recordCommunityScore,
   broadcastLeaderboardToAllRooms,
   sanitizeCommunityName,
-} from "../state/communityLeaderboard.js"; 
+} from "../state/communityLeaderboard.js";
+import { archiveCompletedSession } from "../state/sessionArchive.js"; 
 import { drawProjectsForEra } from "../state/gameEra.js";
-import { shuffleArray } from "../utils/shuffle.js";
+import { applyRoundEnergy, syncEnergyAfterRosterChange } from "../logic/energySchedule.js";
 import { useBuffCard } from "../logic/buffLogic.js";
 import { analyzeGamePersona } from "../logic/analysisLogic.js";
 import { verifyAdminToken } from "../config/adminAuth.js";
-import { beginAuctionSession, isAuctionCardAvailable, markAuctionCardDistributed } from "../logic/auctionCards.js";
-import { pruneSettledTransactions } from "../util/pruneTransactions.js";
+import {
+  beginAuctionSession,
+  clearAuctionOffers,
+  claimAuctionResponse,
+  createAuctionOffer,
+  isAuctionCardAvailable,
+  isValidAuctionCost,
+  markAuctionCardDistributed,
+  recordAuctionCompletedDeal,
+  revokeAuctionGrant,
+} from "../logic/auctionCards.js";
+import {
+  applyLotteryAccept,
+  claimLotteryResponse,
+  findPendingLotteryOffer,
+  proposeLotterySettle,
+  revokeLotteryGrant,
+} from "../logic/lotterySettle.js";
+import { pruneSettledTransactions, pendingCountFrom, MAX_PENDING_PER_SENDER } from "../util/pruneTransactions.js";
+import { allow } from "../util/rateLimit.js";
+import { canCreateRoom } from "../logic/roomCreatePolicy.js";
 import {
   appendSessionEvent,
   ensureSessionStarted,
@@ -50,6 +73,19 @@ function broadcastRoomList(io: Server, socket?: Socket) {
 
 const MAX_ROOM_ID_LENGTH = 48;
 const MAX_PLAYER_NAME_LENGTH = 24;
+const MAX_ROOMS = 50;
+
+const JUMPABLE_PHASES: ReadonlySet<string> = new Set([
+  "ROOM_WAITING",
+  "ERA_INTRO",
+  "TUTORIAL",
+  "AUCTION",
+  "BUFF_USAGE",
+  "INVESTMENT",
+  "SETTLEMENT",
+  "COMMUNITY_NAMING",
+  "GAME_OVER",
+]);
 
 /** 离开所有游戏房间频道，保留 super_admin_room */
 function leaveAllGameRooms(socket: Socket) {
@@ -61,6 +97,38 @@ function leaveAllGameRooms(socket: Socket) {
   delete socket.data.gameRoomId;
 }
 
+/** 主持认领座位后离房时，把该玩家标为离线并放开昵称 */
+function detachClaimedPlayer(socket: Socket): GameState | null {
+  for (const game of Object.values(rooms)) {
+    const player = game.players.find((p) => p.socketId === socket.id);
+    if (!player) continue;
+    player.connected = false;
+    player.ready = false;
+    game.readyPlayers.delete(player.id);
+    player.socketId = undefined;
+    syncEnergyAfterRosterChange(game);
+    return game;
+  }
+  return null;
+}
+
+function clientIp(socket: Socket): string {
+  const fwd = socket.handshake.headers["x-forwarded-for"];
+  const first = Array.isArray(fwd) ? fwd[0] : fwd?.split(",")[0];
+  return (first ?? socket.handshake.address ?? "unknown").trim();
+}
+
+function issueReconnectToken(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+function reconnectTokenMatches(expected: string, provided: unknown): boolean {
+  if (typeof provided !== "string" || !provided) return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 function detachKickedPlayerSocket(io: Server, roomId: string, socketId: string | undefined) {
   if (!socketId) return;
   const kickedSocket = io.sockets.sockets.get(socketId);
@@ -70,6 +138,18 @@ function detachKickedPlayerSocket(io: Server, roomId: string, socketId: string |
   kickedSocket.emit("playerKicked", { message: "你已被主持人移出房间" });
 }
 
+function finalizeCommunityName(io: Server, game: GameState, communityName: string, source: string): void {
+  const prevPhase = game.phase;
+  game.communityName = communityName;
+  game.phase = "GAME_OVER";
+  analyzeGamePersona(game);
+  appendSessionEvent(game, "community_named", { communityName, source });
+  recordPhaseChange(game, prevPhase, game.phase, source);
+  archiveCompletedSession(game);
+  broadcastUpdate(io, game);
+  broadcastLeaderboardToAllRooms(io);
+}
+
 export function registerSocketHandlers(io: Server, socket: Socket) {
   console.log(`🔌 Socket connected: ${socket.id}`);
   
@@ -77,34 +157,70 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
   socket.emit("syncProjectImages", customImagesVersions);
   socket.emit("syncEraImages", customEraImagesVersions);
   socket.emit("syncBuffImages", customBuffImagesVersions);
+  socket.emit("syncPersonaImages", customPersonaImagesVersions);
 
 
   // 1. 加入房间
-  socket.on("joinGame", ({ roomId, name }: { roomId: string, name: string }) => {
+  socket.on("joinGame", ({ roomId, name, reconnectToken }: { roomId: string, name: string, reconnectToken?: string }) => {
+    if (!allow(`join:${socket.id}`, 10, 60_000)) {
+      socket.emit("error", "加入过于频繁，请稍后再试");
+      return;
+    }
     roomId = String(roomId).trim().slice(0, MAX_ROOM_ID_LENGTH);
     const playerName = String(name).trim().slice(0, MAX_PLAYER_NAME_LENGTH);
     if (!roomId || !playerName) return;
 
-    if (!rooms[roomId]) {
-      rooms[roomId] = createInitialGame(roomId, []);
-    }
-    const game = rooms[roomId];
+    const existingGame = rooms[roomId];
+    let player = existingGame?.players.find(p => p.name === playerName);
 
-    let player = game.players.find(p => p.name === playerName);
-
-    if (!player && game.players.length >= 6) {
+    if (!player && existingGame && existingGame.players.length >= 6) {
       socket.emit("error", "房间已满 (Max 6)");
       return;
     }
 
-    if (
-      player &&
-      player.connected &&
-      player.socketId &&
-      player.socketId !== socket.id
-    ) {
-      socket.emit("error", "该昵称已在房间中在线，请更换昵称或等待对方离线");
-      return;
+    let replacedSocketId: string | undefined;
+    if (player) {
+      if (player.isAI) {
+        socket.emit("error", "该昵称已被占用，请更换昵称");
+        return;
+      }
+      if (player.reconnectToken) {
+        if (!reconnectTokenMatches(player.reconnectToken, reconnectToken)) {
+          socket.emit("error", "该昵称已被占用，如需恢复身份请联系主持人");
+          return;
+        }
+        if (player.connected && player.socketId && player.socketId !== socket.id) {
+          replacedSocketId = player.socketId;
+        }
+      } else if (player.connected && player.socketId && player.socketId !== socket.id) {
+        socket.emit("error", "该昵称已在房间中在线，请更换昵称或等待对方离线");
+        return;
+      }
+    }
+
+    if (!rooms[roomId]) {
+      if (Object.keys(rooms).length >= MAX_ROOMS) {
+        socket.emit("error", "服务器房间已满，请稍后再试");
+        return;
+      }
+      const ip = clientIp(socket);
+      const gate = canCreateRoom(rooms, ip);
+      if (!gate.ok) {
+        socket.emit("error", gate.message);
+        return;
+      }
+      rooms[roomId] = createInitialGame(roomId, []);
+      rooms[roomId].createdByIp = ip;
+    }
+    const game = rooms[roomId];
+
+    if (replacedSocketId) {
+      const oldSocket = io.sockets.sockets.get(replacedSocketId);
+      if (oldSocket) {
+        oldSocket.leave(roomId);
+        delete oldSocket.data.gameRoomId;
+        oldSocket.emit("sessionReplaced", { message: "你的身份已在其他页面登录" });
+      }
     }
 
     leaveAllGameRooms(socket);
@@ -112,17 +228,21 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     socket.data.gameRoomId = roomId;
 
     if (player) {
+      const rejoining = !player.connected;
+      if (!player.reconnectToken) player.reconnectToken = issueReconnectToken();
       player.socketId = socket.id;
       player.connected = true;
       if (game.phase === "ROOM_WAITING") {
         player.ready = false;
         game.readyPlayers.delete(player.id);
       }
+      if (rejoining) syncEnergyAfterRosterChange(game, player);
     } else {
       const newPlayer: Player = {
         id: socket.id,
         name: playerName,
         socketId: socket.id,
+        reconnectToken: issueReconnectToken(),
         connected: true,
         ready: false,
         energy: 15, 
@@ -135,19 +255,29 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         usedCards: [],
         activeBuffs: [],
         slackedBy: [], // ✅ 初始化新增字段
+        coffeePurchasesThisRound: 0,
         totalEnergyConsumed: 15,
         wealthHistory: [0], 
         investedRiskEnergy: 0,
         investedLongEnergy: 0,
+        investedShortEnergy: 0,
         socialRank: null
       };
       game.players.push(newPlayer);
+      syncEnergyAfterRosterChange(game, newPlayer);
       player = newPlayer;
       game.logs.push(`👤 玩家 ${player.name} 加入游戏`);
     }
 
-    socket.emit("playerJoined", { playerId: player.id });
+    socket.emit("playerJoined", { playerId: player.id, reconnectToken: player.reconnectToken });
     broadcastUpdate(io, game);
+    const pendingLottery = findPendingLotteryOffer(game, player.id);
+    if (pendingLottery) {
+      socket.emit("lotterySettleRequest", {
+        offerId: pendingLottery.offerId,
+        amount: pendingLottery.amount,
+      });
+    }
     
     broadcastRoomList(io);
   });
@@ -164,6 +294,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       player.connected = false;
       player.ready = false;
       game.readyPlayers.delete(player.id);
+      syncEnergyAfterRosterChange(game);
     }
     leaveAllGameRooms(socket);
     broadcastUpdate(io, game);
@@ -176,7 +307,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (!roomId || !rooms[roomId]) return;
     const game = rooms[roomId];
     const player = game.players.find((p) => p.socketId === socket.id);
-    const isGodView = socket.data.isSuperAdmin === true && !player;
+    const isGodView = socket.data.isSuperAdmin === true;
     socket.emit(
       "gameUpdate",
       serializeGameForClient(game, isGodView ? { isGodView: true } : {}, player?.id ?? null)
@@ -186,11 +317,17 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
   // === Admin ===
   socket.on("adminAuthenticate", ({ token }: { token?: string }) => {
     console.log("[admin] authenticate request socket=%s", socket.id);
+    if (!allow(`admin-auth:${socket.id}`, 5, 60_000)) {
+      socket.emit("adminAuthFailed", { message: "尝试过于频繁，请稍后再试" });
+      return;
+    }
     if (!verifyAdminToken(token)) {
       console.log("[admin] authenticate rejected (invalid token)");
       socket.data.isSuperAdmin = false;
       socket.leave("super_admin_room");
-      socket.emit("adminAuthFailed", { message: "密钥无效" });
+      setTimeout(() => {
+        socket.emit("adminAuthFailed", { message: "密钥无效" });
+      }, 400);
       return;
     }
     console.log("[admin] authenticate ok socket=%s", socket.id);
@@ -208,14 +345,20 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       socket.emit("error", "房间不存在或已解散");
       return;
     }
+    const detached = detachClaimedPlayer(socket);
     leaveAllGameRooms(socket);
+    if (detached) broadcastUpdate(io, detached);
     socket.join(rid);
+    socket.data.gameRoomId = rid;
     socket.emit("gameUpdate", serializeGameForClient(game, { isGodView: true }));
   });
 
   socket.on("adminLeaveRoom", ({ roomId }) => {
     if (!socket.data.isSuperAdmin) return;
+    const detached = detachClaimedPlayer(socket);
     socket.leave(roomId);
+    delete socket.data.gameRoomId;
+    if (detached) broadcastUpdate(io, detached);
     broadcastRoomList(io, socket);
   });
 
@@ -282,6 +425,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       resetAllReady(game);
       const prevPhase = game.phase;
       ensureSessionStarted(game);
+      applyRoundEnergy(game, { relock: true });
       game.phase = "ERA_INTRO";
       game.logs.push("👑 主持开局，进入第 1 时代");
       recordPhaseChange(game, prevPhase, game.phase, "adminStartGame");
@@ -297,13 +441,11 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         resetGameSession(game);
       }
 
-      const shuffledIds = shuffleArray(game.players.map(p => p.id));
-      game.players.forEach(p => { p.draftOrder = shuffledIds.indexOf(p.id) + 1; });
-      appendSessionEvent(game, "draft_seat_chosen", {
-        mode: "random",
-        orders: Object.fromEntries(game.players.map((p) => [p.id, p.draftOrder])),
-      });
-      game.logs.push(`🎲 初始随机座次已分配`);
+      const prevPhase = game.phase;
+      ensureSessionStarted(game);
+      if (game.energyTableSize == null) {
+        applyRoundEnergy(game, { relock: true });
+      }
 
       if (game.currentEra === 1 && game.roundInEra === 1) {
         game.activeProjects = [];
@@ -315,9 +457,6 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       } else if (game.activeProjects.length === 0) {
         drawProjectsForEra(game);
       }
-
-      const prevPhase = game.phase;
-      ensureSessionStarted(game);
       game.phase = "INVESTMENT";
       startInvestmentDeadline(game);
 
@@ -335,29 +474,67 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (playerIndex !== -1) {
       const [removed] = game.players.splice(playerIndex, 1);
       detachKickedPlayerSocket(io, roomId, removed.socketId);
+      syncEnergyAfterRosterChange(game);
       broadcastUpdate(io, game);
       broadcastRoomList(io);
     }
+  });
+
+  socket.on("adminReleasePlayerClaim", ({ roomId, targetPlayerId }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game) return;
+    const player = game.players.find((p) => p.id === targetPlayerId);
+    if (!player || player.isAI) {
+      socket.emit("error", "找不到该玩家");
+      return;
+    }
+    if (player.connected) {
+      socket.emit("error", "玩家在线，无需重新认领");
+      return;
+    }
+
+    const previous = detachClaimedPlayer(socket);
+    if (previous && previous.roomId !== game.roomId) {
+      broadcastUpdate(io, previous);
+    }
+
+    // 主持直接接管离线座位，无需再回大厅用同昵称进入
+    player.reconnectToken = undefined;
+    player.socketId = socket.id;
+    player.connected = true;
+    if (game.phase === "ROOM_WAITING") {
+      player.ready = false;
+      game.readyPlayers.delete(player.id);
+    }
+    socket.data.gameRoomId = game.roomId;
+    syncEnergyAfterRosterChange(game, player);
+    game.logs.push(`🔑 主持认领并进入玩家 ${player.name}`);
+    broadcastUpdate(io, game);
   });
 
   socket.on("adminUnlockPlayer", ({ roomId, targetPlayerId }) => {
     if (!socket.data.isSuperAdmin) return;
     const game = rooms[roomId];
     if (!game) return;
-    if (!adminUnlockPlayer(game, targetPlayerId)) {
-      socket.emit("error", "解锁失败：该玩家未处于已确认状态");
+
+    const result = adminUnlockPlayer(game, targetPlayerId);
+    if (!result.ok) {
+      const messages: Record<typeof result.reason, string> = {
+        not_found: "解锁失败：找不到该玩家",
+        not_ready: "解锁失败：该玩家未处于已锁定状态",
+        wrong_phase: "倒计时已结束或已进入结算，无法解锁",
+        timer_closed: "倒计时已结束或已进入结算，无法解锁",
+        ai_player: "无法解锁 AI 玩家",
+      };
+      socket.emit("error", messages[result.reason]);
       return;
     }
 
     const unlocked = game.players.find((p) => p.id === targetPlayerId);
     if (unlocked?.socketId) {
       io.to(unlocked.socketId).emit("playerNotify", {
-        message:
-          game.phase === "INVESTMENT"
-            ? "主持人允许你修改已提交的投资方案，精力已退回，请调整后重新提交。"
-            : game.phase === "BUFF_USAGE"
-              ? "主持人已取消你的「进入讨论」确认，可继续调整。"
-              : "主持人已解锁你的本阶段操作，请继续。",
+        message: "主持人允许你修改已提交的投资方案，精力已退回，请调整后重新提交。",
       });
     }
     broadcastUpdate(io, game);
@@ -385,43 +562,52 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (!game) return;
 
     if (targetPhase) {
+        if (typeof targetPhase !== "string" || !JUMPABLE_PHASES.has(targetPhase)) {
+          socket.emit("error", `阶段 ${targetPhase} 不可跳转`);
+          return;
+        }
+        const nextPhase = targetPhase as Phase;
         const prevPhase = game.phase;
-        if (targetPhase === "ERA_INTRO" && needsSessionReset(game)) {
+        if (nextPhase === "ERA_INTRO" && needsSessionReset(game)) {
           resetGameSession(game);
           game.phase = "ERA_INTRO";
+          applyRoundEnergy(game, { relock: true });
           resetAllReady(game);
-          game.logs.push(`⏭️ 上帝强制跳转至 [${targetPhase}]（已重置局内状态）`);
-        } else if (targetPhase === "ROOM_WAITING") {
+          game.logs.push(`⏭️ 上帝强制跳转至 [${nextPhase}]（已重置局内状态）`);
+        } else if (nextPhase === "ROOM_WAITING") {
           resetGameSession(game);
           resetAllReady(game);
-          game.logs.push(`⏭️ 上帝强制跳转至 [${targetPhase}]（已重置局内状态）`);
+          game.logs.push(`⏭️ 上帝强制跳转至 [${nextPhase}]（已重置局内状态）`);
         } else {
-          game.phase = targetPhase;
-          if (targetPhase === "AUCTION") beginAuctionSession(game);
-          if (targetPhase === "INVESTMENT") {
+          game.phase = nextPhase;
+          if (nextPhase === "AUCTION") beginAuctionSession(game);
+          if (
+            (nextPhase === "ERA_INTRO" || nextPhase === "INVESTMENT") &&
+            game.energyTableSize == null
+          ) {
+            applyRoundEnergy(game, { relock: true });
+          }
+          if (nextPhase === "INVESTMENT") {
             clearActionDeadline(game);
             startInvestmentDeadline(game);
           }
-          if (targetPhase === "BUFF_USAGE") {
+          if (nextPhase === "BUFF_USAGE") {
             clearActionDeadline(game);
             resetAllReady(game);
           }
-          game.logs.push(`⏭️ 上帝强制跳转至 [${targetPhase}]`);
+          game.logs.push(`⏭️ 上帝强制跳转至 [${nextPhase}]`);
         }
         recordPhaseChange(game, prevPhase, game.phase, "adminSkipPhase");
         broadcastUpdate(io, game);
         return;
     }
 
-    if (game.phase === "DRAFTING") {
-        const { draftingState } = game;
-        game.players.forEach(p => {
-            if (p.draftOrder === undefined) {
-                const slot = draftingState.availableSlots.shift();
-                if (slot) p.draftOrder = slot;
-            }
-        });
+    if (game.phase === "COMMUNITY_NAMING") {
+      const fallback = sanitizeCommunityName(`社区-${game.roomId}`) || "未命名社区";
+      finalizeCommunityName(io, game, fallback, "adminSkipPhase");
+      return;
     }
+
     if (game.phase === "BUFF_USAGE") {
       clearActionDeadline(game);
     }
@@ -454,31 +640,58 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (!socket.data.isSuperAdmin) return;
       const game = rooms[roomId];
       if (!game || game.phase !== "AUCTION") return;
-      if (!isAuctionCardAvailable(game, cardId)) {
+      if (typeof cardId !== "string" || !isAuctionCardAvailable(game, cardId)) {
           socket.emit("error", "该道具已成交或不在本轮拍卖池");
+          return;
+      }
+      if (!isValidAuctionCost(cost)) {
+          socket.emit("error", "拍卖价格必须为非负整数");
           return;
       }
 
       const player = game.players.find(p => p.id === playerId);
-      if (player && player.socketId) {
-          io.to(player.socketId).emit("auctionTradeRequest", { cardId, cost });
-          game.logs.push(`🔨 上帝向 ${player.name} 发起拍卖确认：[${cardId}] 价格 ${cost}`);
-          appendSessionEvent(game, "auction_offered", {
-            targetPlayerId: playerId,
-            cardId,
-            cost,
-          });
-          broadcastUpdate(io, game);
+      if (!player || player.isAI) {
+          socket.emit("error", "拍卖得主无效");
+          return;
       }
+      if (!player.socketId) {
+          socket.emit("error", "玩家未在线，无法发送拍卖确认");
+          return;
+      }
+      const { offer, replaced } = createAuctionOffer(game, player.id, cardId, cost);
+      if (replaced && replaced.playerId !== player.id) {
+        const previousTarget = game.players.find((p) => p.id === replaced.playerId);
+        if (previousTarget?.socketId) {
+          io.to(previousTarget.socketId).emit("auctionOfferCancelled", {
+            offerId: replaced.offerId,
+            cardId,
+          });
+        }
+      }
+      io.to(player.socketId).emit("auctionTradeRequest", { offerId: offer.offerId, cardId, cost });
+      game.logs.push(`🔨 上帝向 ${player.name} 发起拍卖确认：[${cardId}] 价格 ${cost}`);
+      appendSessionEvent(game, "auction_offered", {
+        targetPlayerId: playerId,
+        cardId,
+        cost,
+      });
+      broadcastUpdate(io, game);
   });
 
-  socket.on("playerRespondAuction", ({ cardId, cost, accept }) => {
+  socket.on("playerRespondAuction", (data) => {
       const roomId = getRoomId(socket);
       if (!roomId || !rooms[roomId]) return;
       const game = rooms[roomId];
       const player = game.players.find(p => p.socketId === socket.id);
       
       if (!player) return;
+      const accept = data?.accept === true;
+      const claimed = claimAuctionResponse(game, player.id, data?.offerId, accept);
+      if (!claimed.ok) {
+          socket.emit("error", claimed.message);
+          return;
+      }
+      const { cardId, cost } = claimed;
 
       let accepted = false;
       let costPaid = 0;
@@ -489,6 +702,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
               player.wealth -= cost;
               player.inventory.push(cardId);
               markAuctionCardDistributed(game, cardId);
+              recordAuctionCompletedDeal(game, cardId, player.id, cost);
               accepted = true;
               costPaid = cost;
               cardEnteredInventory = true;
@@ -510,13 +724,60 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       broadcastUpdate(io, game);
   });
 
+  socket.on("adminRevokeAuctionCard", ({ roomId, cardId }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game || game.phase !== "AUCTION") {
+      socket.emit("error", "仅拍卖阶段可撤销发放");
+      return;
+    }
+    if (typeof cardId !== "string" || !cardId) {
+      socket.emit("error", "道具无效");
+      return;
+    }
+    const result = revokeAuctionGrant(game, cardId);
+    if (!result.ok) {
+      socket.emit("error", result.message);
+      return;
+    }
+    const target = game.players.find((p) => p.id === result.playerId);
+    if (result.kind === "pending") {
+      if (target?.socketId) {
+        io.to(target.socketId).emit("auctionOfferCancelled", {
+          offerId: result.offerId,
+          cardId,
+        });
+      }
+      game.logs.push(
+        `↩️ 上帝撤回了 [${cardId}] 的待确认报价（${target?.name ?? result.playerId}）`
+      );
+      appendSessionEvent(game, "auction_offer_cancelled", {
+        cardId,
+        playerId: result.playerId,
+        offerId: result.offerId,
+      });
+    } else {
+      game.logs.push(
+        `↩️ 上帝撤销了 [${cardId}] 的成交（${target?.name ?? result.playerId}，退还 ${result.cost} 财富）`
+      );
+      appendSessionEvent(game, "auction_revoked", {
+        cardId,
+        playerId: result.playerId,
+        costRefunded: result.cost,
+      });
+    }
+    broadcastUpdate(io, game);
+  });
+
   socket.on("adminEndAuction", ({ roomId }) => {
       if (!socket.data.isSuperAdmin) return;
       const game = rooms[roomId];
       if (game && game.phase === "AUCTION") {
           const prevPhase = game.phase;
+          clearAuctionOffers(game);
           game.phase = "ERA_INTRO";
           recordPhaseChange(game, prevPhase, game.phase, "adminEndAuction");
+          io.to(game.roomId).emit("auctionOffersCleared");
           broadcastUpdate(io, game);
       }
   });
@@ -539,22 +800,106 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       }
   });
 
-  // ✅ 新增：上帝手动结算彩票
+  // 上帝提议彩票开奖（待玩家确认后才入账）
   socket.on("adminSettleLottery", ({ roomId, targetPlayerId, amount }) => {
       if (!socket.data.isSuperAdmin) return;
       const game = rooms[roomId];
       if (!game) return;
-      
-      const player = game.players.find(p => p.id === targetPlayerId);
-      if (player) {
-          player.wealth += amount;
-          game.logs.push(`🎲 彩票开奖！上帝给 ${player.name} 发放了 ${amount} 财富`);
-          appendSessionEvent(game, "lottery_settled", {
-            targetPlayerId,
-            amount,
-          });
-          broadcastUpdate(io, game);
+
+      const proposed = proposeLotterySettle(game, targetPlayerId, amount);
+      if (!proposed.ok) {
+          socket.emit("error", proposed.message);
+          return;
       }
+      const { offer, replaced, player } = proposed;
+      if (replaced && player.socketId) {
+        io.to(player.socketId).emit("lotteryOfferCancelled", { offerId: replaced.offerId });
+      }
+      if (player.socketId) {
+        io.to(player.socketId).emit("lotterySettleRequest", {
+          offerId: offer.offerId,
+          amount: offer.amount,
+        });
+      }
+      game.logs.push(`🎲 上帝向 ${player.name} 发起彩票开奖确认：${offer.amount} 财富`);
+      appendSessionEvent(game, "lottery_offered", {
+        targetPlayerId,
+        amount: offer.amount,
+        offerId: offer.offerId,
+      });
+      broadcastUpdate(io, game);
+  });
+
+  socket.on("playerRespondLottery", (data) => {
+      const roomId = getRoomId(socket);
+      if (!roomId || !rooms[roomId]) return;
+      const game = rooms[roomId];
+      const player = game.players.find(p => p.socketId === socket.id);
+      if (!player) return;
+
+      const accept = data?.accept === true;
+      const claimed = claimLotteryResponse(game, player.id, data?.offerId, accept);
+      if (!claimed.ok) {
+          socket.emit("error", claimed.message);
+          return;
+      }
+
+      if (accept) {
+          applyLotteryAccept(game, player, claimed.amount);
+          game.logs.push(`🎲 彩票开奖！${player.name} 确认领取 ${claimed.amount} 财富`);
+          appendSessionEvent(
+            game,
+            "lottery_settled",
+            { targetPlayerId: player.id, amount: claimed.amount, accepted: true },
+            player.id
+          );
+      } else {
+          game.logs.push(`🚫 ${player.name} 拒绝了彩票开奖金额 ${claimed.amount}`);
+          appendSessionEvent(
+            game,
+            "lottery_offer_cancelled",
+            { playerId: player.id, amount: claimed.amount, declined: true },
+            player.id
+          );
+      }
+      broadcastUpdate(io, game);
+  });
+
+  socket.on("adminRevokeLottery", ({ roomId, targetPlayerId }) => {
+      if (!socket.data.isSuperAdmin) return;
+      const game = rooms[roomId];
+      if (!game) return;
+      if (typeof targetPlayerId !== "string" || !targetPlayerId) {
+          socket.emit("error", "玩家无效");
+          return;
+      }
+      const result = revokeLotteryGrant(game, targetPlayerId);
+      if (!result.ok) {
+          socket.emit("error", result.message);
+          return;
+      }
+      const target = game.players.find((p) => p.id === result.playerId);
+      if (result.kind === "pending") {
+          if (target?.socketId) {
+              io.to(target.socketId).emit("lotteryOfferCancelled", { offerId: result.offerId });
+          }
+          game.logs.push(
+            `↩️ 上帝撤回了 ${target?.name ?? result.playerId} 的彩票待确认开奖`
+          );
+          appendSessionEvent(game, "lottery_offer_cancelled", {
+            playerId: result.playerId,
+            offerId: result.offerId,
+          });
+      } else {
+          game.logs.push(
+            `↩️ 上帝撤回了 ${target?.name ?? result.playerId} 的彩票开奖（回滚 ${result.amount} 财富）`
+          );
+          appendSessionEvent(game, "lottery_revoked", {
+            playerId: result.playerId,
+            amountReversed: result.amount,
+          });
+      }
+      broadcastUpdate(io, game);
   });
 
   // === AI 与自动调优 ===
@@ -590,12 +935,15 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
           usedCards: [],
           activeBuffs: [],
           slackedBy: [],
+          coffeePurchasesThisRound: 0,
           totalEnergyConsumed: 15,
           wealthHistory: [0],
           investedRiskEnergy: 0,
           investedLongEnergy: 0,
+        investedShortEnergy: 0,
           socialRank: null
       });
+      syncEnergyAfterRosterChange(game, game.players[game.players.length - 1]);
       game.logs.push(`🤖 AI 玩家 [${persona}] 加入游戏`);
       broadcastUpdate(io, game);
   });
@@ -655,37 +1003,43 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     broadcastUpdate(io, game);
   });
 
-  socket.on("draftSeat", ({ seatIndex }) => {
+  socket.on("createTransaction", ({ toId, amount, note, clientTempId }) => {
     const roomId = getRoomId(socket);
     if (!roomId || !rooms[roomId]) return;
     const game = rooms[roomId];
-    if (game.phase !== 'DRAFTING') return;
-    const player = game.players.find(p => p.socketId === socket.id);
-    if (player && game.draftingState.availableSlots.includes(seatIndex)) {
-        player.draftOrder = seatIndex;
-        game.draftingState.availableSlots = game.draftingState.availableSlots.filter(s => s !== seatIndex);
-        game.draftingState.currentIndex++;
-        appendSessionEvent(game, "draft_seat_chosen", { seatIndex }, player.id);
-        if (game.draftingState.currentIndex >= game.draftingState.queue.length) { game.players.forEach(p => p.ready = true); tryAdvancePhase(game); }
-        broadcastUpdate(io, game);
+    if (game.phase === "ROOM_WAITING" || game.phase === "ERA_INTRO" || game.phase === "TUTORIAL") {
+      socket.emit("error", "当前阶段无法发送私信或转账");
+      return;
     }
-  });
-
-  socket.on("createTransaction", ({ toId, amount, note }) => {
-    const roomId = getRoomId(socket);
-    if (!roomId || !rooms[roomId]) return;
-    const game = rooms[roomId];
-    if (game.phase === "ROOM_WAITING" || game.phase === "ERA_INTRO" || game.phase === "TUTORIAL") return;
     const sender = game.players.find(p => p.socketId === socket.id);
     const receiver = game.players.find(p => p.id === toId);
     // 严格一对一：单条记录仅绑定发送方与唯一接收方
-    if (!sender || !receiver || sender.id === receiver.id) return;
+    if (!sender || !receiver || sender.id === receiver.id) {
+      socket.emit("error", "无法发送：目标玩家无效");
+      return;
+    }
+    if (!allow(`tx:${sender.id}`, 20, 60_000)) {
+      socket.emit("error", "发送过于频繁，请稍后再试");
+      return;
+    }
+    pruneSettledTransactions(game);
+    if (pendingCountFrom(game, sender.id) >= MAX_PENDING_PER_SENDER) {
+      socket.emit("error", "未完成的转账过多，请等待对方确认");
+      return;
+    }
 
     const amt = Math.floor(Number(amount) || 0);
     const message = (typeof note === "string" ? note.trim() : "").slice(0, 500);
+    const tempId =
+      typeof clientTempId === "string" && clientTempId.length > 0 && clientTempId.length <= 64
+        ? clientTempId
+        : undefined;
 
     if (amt === 0) {
-      if (!message) return;
+      if (!message) {
+        socket.emit("error", "私信内容不能为空");
+        return;
+      }
       const tx = {
         id: Math.random().toString(),
         fromId: sender.id,
@@ -696,6 +1050,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         note: message,
         status: "accepted" as const,
         timestamp: Date.now(),
+        clientTempId: tempId,
       };
       game.transactions.push(tx);
       appendSessionEvent(game, "transaction_created", { txId: tx.id, ...tx }, sender.id);
@@ -704,23 +1059,31 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       return;
     }
 
-    if (amt > 0 && sender.wealth >= amt) {
-      const tx = {
-        id: Math.random().toString(),
-        fromId: sender.id,
-        fromName: sender.name,
-        toId: receiver.id,
-        toName: receiver.name,
-        amount: amt,
-        note: message,
-        status: "pending" as const,
-        timestamp: Date.now(),
-      };
-      game.transactions.push(tx);
-      appendSessionEvent(game, "transaction_created", { txId: tx.id, ...tx }, sender.id);
-      pruneSettledTransactions(game);
-      broadcastUpdate(io, game);
+    if (amt <= 0) {
+      socket.emit("error", "转账金额无效");
+      return;
     }
+    if (sender.wealth < amt) {
+      socket.emit("error", "财富不足，无法转账");
+      return;
+    }
+
+    const tx = {
+      id: Math.random().toString(),
+      fromId: sender.id,
+      fromName: sender.name,
+      toId: receiver.id,
+      toName: receiver.name,
+      amount: amt,
+      note: message,
+      status: "pending" as const,
+      timestamp: Date.now(),
+      clientTempId: tempId,
+    };
+    game.transactions.push(tx);
+    appendSessionEvent(game, "transaction_created", { txId: tx.id, ...tx }, sender.id);
+    pruneSettledTransactions(game);
+    broadcastUpdate(io, game);
   });
 
   socket.on("respondTransaction", ({ txId, accept }) => {
@@ -763,21 +1126,42 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const game = rooms[roomId];
     const player = game.players.find(p => p.socketId === socket.id);
     if (!player) return;
-    if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") return;
-    if (player.ready && game.phase === "INVESTMENT") return;
-    if (player && player.wealth >= 15) { 
-        player.wealth -= 15; 
-        player.energy += 1; 
-        player.totalEnergyConsumed += 1;
-        game.logs.push(`☕ ${player.name} 购买了咖啡 (精力+1)`);
-        appendSessionEvent(
-          game,
-          "coffee_purchased",
-          { wealthCost: 15, energyGain: 1 },
-          player.id
-        );
-        broadcastUpdate(io, game);
+    if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") {
+      socket.emit("error", "当前阶段无法购买咖啡");
+      return;
     }
+    if (player.ready && game.phase === "INVESTMENT") {
+      socket.emit("error", "已提交投资，无法购买咖啡");
+      return;
+    }
+    const result = purchaseCoffee(game, player);
+    if (!result.ok) {
+      socket.emit("error", result.message);
+      return;
+    }
+    broadcastUpdate(io, game);
+  });
+
+  socket.on("cancelCoffee", ({ count }: { count?: number }) => {
+    const roomId = getRoomId(socket);
+    if (!roomId || !rooms[roomId]) return;
+    const game = rooms[roomId];
+    const player = game.players.find((p) => p.socketId === socket.id);
+    if (!player) return;
+    if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") {
+      socket.emit("error", "当前阶段无法退订咖啡");
+      return;
+    }
+    if (player.ready && game.phase === "INVESTMENT") {
+      socket.emit("error", "已提交投资，无法退订咖啡");
+      return;
+    }
+    const result = refundCoffee(game, player, Number(count));
+    if (!result.ok) {
+      socket.emit("error", result.message);
+      return;
+    }
+    broadcastUpdate(io, game);
   });
 
   socket.on("useBuffCard", (data) => {
@@ -805,21 +1189,6 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     }
   });
 
-  socket.on("submitPersonaVote", ({ vote }: { vote: "fate" | "gene" | "neither" }) => {
-    const roomId = getRoomId(socket);
-    if (!roomId || !rooms[roomId]) return;
-    const game = rooms[roomId];
-    if (game.phase !== "GAME_OVER") return;
-    const player = game.players.find(p => p.socketId === socket.id);
-    if (player) {
-      player.personaVote = vote;
-      const voteLabel = vote === "fate" ? "命运素描" : vote === "gene" ? "决策基因" : "都不准";
-      game.logs.push(`🗳️ ${player.name} 投票：${voteLabel}`);
-      appendSessionEvent(game, "persona_voted", { vote }, player.id);
-      broadcastUpdate(io, game);
-    }
-  });
-
   socket.on("submitCommunityName", ({ name }) => {
     const roomId = getRoomId(socket);
     if (!roomId || !rooms[roomId]) return;
@@ -837,9 +1206,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const player = game.players.find((p) => p.socketId === socket.id);
     if (!player) return;
 
-    const richest = getWealthiestPlayer(game);
-    if (!richest || player.id !== richest.id) {
-      socket.emit("error", "仅首富可为社区命名");
+    const namer = getCommunityNamer(game);
+    if (!namer || player.id !== namer.id) {
+      socket.emit("error", "仅当前在线的首富可为社区命名");
       return;
     }
 
@@ -849,28 +1218,48 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       return;
     }
 
-    game.communityName = communityName;
-    game.phase = "GAME_OVER";
+    finalizeCommunityName(io, game, communityName, "player");
+  });
 
-    const totalScore = game.players.reduce((sum, p) => sum + p.wealth, 0);
-    recordCommunityScore(communityName, totalScore, roomId);
-
-    analyzeGamePersona(game);
-
-    appendSessionEvent(game, "community_named", { communityName });
-    broadcastLeaderboardToAllRooms(io);
+  socket.on("adminSubmitCommunityName", ({ roomId, name }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game) return;
+    if (game.phase !== "COMMUNITY_NAMING") {
+      socket.emit("error", "当前阶段不能为社区命名");
+      return;
+    }
+    if (game.communityName) {
+      socket.emit("error", "社区已命名，请勿重复提交");
+      return;
+    }
+    const communityName = sanitizeCommunityName(name);
+    if (!communityName) {
+      socket.emit("error", "请输入有效的社区名称");
+      return;
+    }
+    finalizeCommunityName(io, game, communityName, "admin");
   });
 
   socket.on("disconnect", () => {
     const boundRoom = socket.data.gameRoomId as string | undefined;
     if (boundRoom && rooms[boundRoom]) {
-      const player = rooms[boundRoom].players.find((p) => p.socketId === socket.id);
-      if (player) player.connected = false;
+      const game = rooms[boundRoom];
+      const player = game.players.find((p) => p.socketId === socket.id);
+      if (player) {
+        player.connected = false;
+        syncEnergyAfterRosterChange(game);
+        broadcastUpdate(io, game);
+      }
       return;
     }
     for (const game of Object.values(rooms)) {
       const player = game.players.find((p) => p.socketId === socket.id);
-      if (player) player.connected = false;
+      if (player) {
+        player.connected = false;
+        syncEnergyAfterRosterChange(game);
+        broadcastUpdate(io, game);
+      }
     }
   });
 }

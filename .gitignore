@@ -40,7 +40,9 @@ coverage/
 
 # Runtime leaderboard (persisted on server)
 server/data/community_leaderboard.json
+server/data/session_archive.json
 
 # Misc
 .npm
 eslintcache
+*.zip

@@ -1,4 +1,15 @@
 /** 命运素描六类在 UI / 终局页中的主题色 */
+export const FATE_SKETCH_IMAGE_SLUG: Record<string, string> = {
+  "桥梁架构师": "Bridge",
+  "瞬刻炼金士": "Moment",
+  "罗盘精算师": "Navigator",
+  "时荫植者": "Planter",
+  "随机诗人": "Poet",
+  "涌机触发者": "Wave",
+};
+
+export const PERSONA_IMAGE_SLUGS = Object.values(FATE_SKETCH_IMAGE_SLUG);
+
 export const FATE_SKETCH_PERSONA_COLORS: Record<string, string> = {
   "罗盘精算师": "#3b82f6",
   "时荫植者": "#10b981",
@@ -8,14 +19,41 @@ export const FATE_SKETCH_PERSONA_COLORS: Record<string, string> = {
   "随机诗人": "#6b7280",
 };
 
+/** 玩家可见命运素描简介；须与 server/logic/personaConfig.ts 中 FATE_SKETCH_CONFIG 保持一致 */
 export const FATE_SKETCH_CONFIG: Record<string, { name: string; desc: string }> = {
-  "桥梁架构师": { name: "桥梁架构师", desc: "善于整合资源与人脉，通过高超的社交连结达成目标。" },
-  "瞬刻炼金士": { name: "瞬刻炼金士", desc: "能在瞬间捕捉机遇，将微小的优势放大并转化为实质财富。" },
-  "罗盘精算师": { name: "罗盘精算师", desc: "以长期稳健为核心，步步为营，精密计算每一次投入的风险与回报。" },
-  "时荫植者": { name: "时荫植者", desc: "相信延迟满足的力量，在时代的洪流中耐心耕耘，等待最终的丰收。" },
-  "随机诗人": { name: "随机诗人", desc: "不拘一格，充满创造力，在不确定性中寻找属于自己的破局点。" },
-  "涌机触发者": { name: "涌机触发者", desc: "善于打破常规，通过积极干预和使用道具来重塑游戏规则。" }
+  "桥梁架构师": {
+    name: "桥梁架构师",
+    desc: "你擅长在博弈场中编织人际联结与信任网络，依靠协作拿到单人无法企及的机会。对你而言，关系本身就是资源。",
+  },
+  "瞬刻炼金士": {
+    name: "瞬刻炼金士",
+    desc: "你偏好见效迅速的短期机会，重视本轮就能落袋的周转收益；善于借卡牌调整对局节奏，抢占每一轮即时的行动空间。",
+  },
+  "罗盘精算师": {
+    name: "罗盘精算师",
+    desc: "你本能规避会造成毁灭性回撤的高风险博弈，无意干预他人策略。习惯在既定规则下审慎推演，算清每一轮投入与精力分配，谋定而后动。",
+  },
+  "时荫植者": {
+    name: "时荫植者",
+    desc: "你倾向深耕需要漫长周期兑现价值的长期布局，能够忍耐前期缓慢的收益，在旁人观望迟疑时，默默培育未来的回报。",
+  },
+  "随机诗人": {
+    name: "随机诗人",
+    desc: "你的策略不被单一框架束缚，长线布局、短线套利、灵活扰动交替使用，走出一条贴合自身直觉、无法复刻的独特对局路径。",
+  },
+  "涌机触发者": {
+    name: "涌机触发者",
+    desc: "你敢于重仓高风险机会，善用杠杆、做空与干扰类卡牌；在局势动荡的不确定性里捕捉机会，借波动攫取收益。",
+  },
 };
+
+/** 玩家可见描述（终局 / 弹窗）；以本地文案为准，服务端快照仅作兜底 */
+export function getFateSketchPlayerDesc(
+  personaName: string,
+  serverDesc?: string
+): string {
+  return FATE_SKETCH_CONFIG[personaName]?.desc ?? serverDesc ?? "";
+}
 
 export const DECISION_GENE_CONFIG: Record<string, { name: string; desc: string }> = {
   // L (长线) / Q (短线), A (激进) / G (稳健), D (干预) / C (顺应), V (利益) / R (社交)

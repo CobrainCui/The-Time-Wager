@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { uiRem } from "../utils/typography";
+import { LONG_CONTINUE_MIN_ENERGY } from "../config/longTermRules";
+import { CatalogProjectType, SETTLEMENT_TIMING_SHORT } from "../config/projectCatalog";
 import { ActiveProject, Player } from "../types";
 import { getProjectImageDisplay } from "../utils/gameImageDisplay";
 
@@ -20,6 +22,7 @@ export const ProjectCard: React.FC<{
   uploadedVersion?: number;
   /** 并排展示时预留长期提示/参投警告位，使卡片等高 */
   balanceHeights?: boolean;
+  onOpenDetail?: (projectId: number, trigger?: HTMLElement) => void;
 }> = ({
   project,
   myInvest,
@@ -30,16 +33,20 @@ export const ProjectCard: React.FC<{
   me,
   uploadedVersion,
   balanceHeights = false,
+  onOpenDetail,
 }) => {
   const tc = TYPE_COLORS[project.type] || TYPE_COLORS.short;
   const isEraMatch = eraTheme && project.era === eraTheme && project.type !== "risk";
   const myLongStatus = me.longTerm[project.id];
   const isAbandoned = myLongStatus?.status === "abandoned";
-  const isAtRisk = project.type === "long" && myLongStatus?.status === "active" && myInvest < 3;
-  const isDisabled = disabled || isAbandoned;
+  const isLongCompleted = myLongStatus?.status === "completed";
+  const isLongActive = myLongStatus?.status === "active";
+  const isDisabled = disabled || isAbandoned || isLongCompleted;
   const progress = Math.min((project.accumulatedInvested / project.maxEnergy) * 100, 100);
   const myContrib = (myInvest / project.maxEnergy) * 100;
   const typeName = tc.label;
+  const settlementHint =
+    SETTLEMENT_TIMING_SHORT[project.type as CatalogProjectType] ?? SETTLEMENT_TIMING_SHORT.short;
 
   const [coverBroken, setCoverBroken] = useState(false);
   useEffect(() => {
@@ -52,10 +59,23 @@ export const ProjectCard: React.FC<{
       ? getProjectImageDisplay(project.id, project.name, {}, 0).src
       : display.src;
 
-  const showLongHint = project.type === "long";
-  const showAtRiskBanner = isAtRisk && !isDisabled;
-  const reserveLongHint = balanceHeights || showLongHint;
-  const reserveAtRisk = balanceHeights || showAtRiskBanner;
+  const showRedLongHint =
+    project.type === "long" && isLongActive && myInvest < LONG_CONTINUE_MIN_ENERGY && !isDisabled;
+  const showYellowLongHint =
+    project.type === "long" && !isLongActive && !isAbandoned && !isLongCompleted;
+  const showLongHint = showRedLongHint || showYellowLongHint;
+  const longHintUrgent = showRedLongHint;
+  const reserveLongHint = balanceHeights || project.type === "long";
+
+  const myCumulativeOnProject =
+    project.type === "long" && isLongActive && myLongStatus
+      ? myLongStatus.totalInvested
+      : project.type !== "long"
+        ? project.investorRecords?.[me.id] ?? 0
+        : 0;
+  const showMyCumulative = myCumulativeOnProject > 0;
+
+  const openDetailFrom = (trigger: HTMLElement) => onOpenDetail?.(project.id, trigger);
 
   return (
     <div
@@ -80,22 +100,19 @@ export const ProjectCard: React.FC<{
         (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)";
       }}
     >
-      <div
-        className="project-card-cover"
-        style={{
-          width: "100%",
-          height: "160px",
-          position: "relative",
-          overflow: "hidden",
-          background: "transparent",
-        }}
-      >
-        <img
-          src={imageUrl}
-          alt={project.name}
-          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          onError={() => setCoverBroken(true)}
-        />
+      {onOpenDetail ? (
+        <button
+          type="button"
+          className="project-card-detail-hit project-card-cover"
+          aria-label={`查看${project.name}详情`}
+          onClick={(e) => openDetailFrom(e.currentTarget)}
+        >
+          <img
+            src={imageUrl}
+            alt=""
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            onError={() => setCoverBroken(true)}
+          />
         {isEraMatch && (
           <div
             style={{
@@ -133,7 +150,54 @@ export const ProjectCard: React.FC<{
         >
           {typeName}
         </div>
-      </div>
+        </button>
+      ) : (
+        <div className="project-card-cover" style={{ width: "100%", height: "160px", position: "relative", overflow: "hidden" }}>
+          <img
+            src={imageUrl}
+            alt={project.name}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            onError={() => setCoverBroken(true)}
+          />
+          {isEraMatch && (
+            <div
+              style={{
+                position: "absolute",
+                top: "0.5rem",
+                right: "0.5rem",
+                background: "rgba(245,158,11,0.85)",
+                borderRadius: "9999px",
+                padding: "0.2rem 0.6rem",
+                fontSize: uiRem(0.7),
+                fontWeight: 700,
+                color: "#1a1000",
+                boxShadow: "0 2px 8px rgba(245,158,11,0.4)",
+              }}
+              className="animate-pulse"
+            >
+              🔥 时代UP
+            </div>
+          )}
+          <div
+            style={{
+              position: "absolute",
+              top: "0.5rem",
+              left: "0.5rem",
+              background: tc.bg.replace("0.08", "0.85"),
+              backdropFilter: "blur(4px)",
+              border: `1px solid ${tc.border}66`,
+              borderRadius: "9999px",
+              padding: "0.2rem 0.6rem",
+              fontSize: uiRem(0.65),
+              fontWeight: 700,
+              color: tc.text,
+              letterSpacing: "0.05em",
+            }}
+          >
+            {typeName}
+          </div>
+        </div>
+      )}
 
       <div
         className="project-card-body"
@@ -145,6 +209,15 @@ export const ProjectCard: React.FC<{
         }}
       >
         <h3
+          className={onOpenDetail ? "project-card-title-detail" : undefined}
+          onClick={
+            onOpenDetail
+              ? (e) => {
+                  e.stopPropagation();
+                  openDetailFrom(e.currentTarget);
+                }
+              : undefined
+          }
           style={{
             fontWeight: 800,
             fontSize: uiRem(1.05),
@@ -156,27 +229,53 @@ export const ProjectCard: React.FC<{
           {project.name}
         </h3>
 
+        <div
+          style={{
+            fontSize: uiRem(0.72),
+            color: "var(--color-text-muted)",
+            marginBottom: "0.5rem",
+            lineHeight: 1.35,
+          }}
+        >
+          <span style={{ color: tc.text, fontWeight: 600 }}>结算</span>
+          <span style={{ margin: "0 0.35rem" }}>·</span>
+          {settlementHint}
+        </div>
+
         {reserveLongHint && (
           <div
             style={{
-              fontSize: uiRem(0.7),
-              color: "#fbbf24",
+              fontSize: longHintUrgent ? uiRem(0.75) : uiRem(0.7),
+              fontWeight: longHintUrgent ? 700 : 400,
+              color: longHintUrgent ? "#fca5a5" : "#fbbf24",
               marginBottom: "0.5rem",
-              padding: "0.2rem 0.4rem",
-              background: showLongHint ? "rgba(251,191,36,0.1)" : "transparent",
-              border: showLongHint ? "1px solid rgba(251,191,36,0.3)" : "1px solid transparent",
-              borderRadius: "0.25rem",
-              lineHeight: 1.2,
-              overflow: "hidden",
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
-              minHeight: "2.65rem",
+              padding: longHintUrgent ? "0.375rem 0.75rem" : "0.2rem 0.4rem",
+              background: showLongHint
+                ? longHintUrgent
+                  ? "rgba(239,68,68,0.1)"
+                  : "rgba(251,191,36,0.1)"
+                : "transparent",
+              border: showLongHint
+                ? longHintUrgent
+                  ? "1px solid rgba(239,68,68,0.35)"
+                  : "1px solid rgba(251,191,36,0.3)"
+                : "1px solid transparent",
+              borderRadius: longHintUrgent ? "0.5rem" : "0.25rem",
+              lineHeight: 1.45,
+              // 侧栏拉开导致卡片变窄时完整换行显示，不截断
+              whiteSpace: "normal",
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+              height: "auto",
+              minHeight: showLongHint ? undefined : "2.65rem",
               visibility: showLongHint ? "visible" : "hidden",
+              animation: longHintUrgent ? "pulse 1.5s infinite" : undefined,
             }}
             aria-hidden={!showLongHint}
           >
-            ⚠️ 提示：长期项目参投后，必须每轮至少投入3精力，不然视为“放弃”
+            {longHintUrgent
+              ? `已参投，本轮需投入>=${LONG_CONTINUE_MIN_ENERGY}精力，否则将1：1结算该项目且不能再参投和分红`
+              : `⚠️ 提示：长期项目参投后，必须每轮至少投入 ${LONG_CONTINUE_MIN_ENERGY} 精力，否则视为放弃`}
           </div>
         )}
 
@@ -200,6 +299,17 @@ export const ProjectCard: React.FC<{
               {project.accumulatedInvested}
             </span>
           </span>
+          {showMyCumulative && (
+            <>
+              <span>·</span>
+              <span>
+                我的累计{" "}
+                <span style={{ color: "#fbbf24", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+                  {myCumulativeOnProject}
+                </span>
+              </span>
+            </>
+          )}
         </div>
 
         {isAbandoned && (
@@ -214,30 +324,25 @@ export const ProjectCard: React.FC<{
               marginBottom: "0.75rem",
             }}
           >
-            🚫 已退出
+            🚫 已放弃
           </div>
         )}
 
-        {reserveAtRisk && (
+        {isLongCompleted && (
           <div
             style={{
-              background: showAtRiskBanner ? "rgba(239,68,68,0.1)" : "transparent",
-              border: showAtRiskBanner ? "1px solid rgba(239,68,68,0.3)" : "1px solid transparent",
+              background: "rgba(16,185,129,0.12)",
               borderRadius: "0.5rem",
-              padding: "0.375rem 0.75rem",
-              fontSize: uiRem(0.75),
-              color: "#fca5a5",
-              fontWeight: 700,
+              padding: "0.5rem",
+              textAlign: "center",
+              fontSize: uiRem(0.8),
+              color: "#6ee7b7",
               marginBottom: "0.75rem",
-              minHeight: "2.1rem",
-              display: "flex",
-              alignItems: "center",
-              animation: showAtRiskBanner ? "pulse 1.5s infinite" : undefined,
-              visibility: showAtRiskBanner ? "visible" : "hidden",
             }}
-            aria-hidden={!showAtRiskBanner}
           >
-            ⚠️ 已参投，须 ≥3 精力否则判放弃
+            {project.accumulatedInvested > project.maxEnergy
+              ? `超额完成（${project.accumulatedInvested}/${project.maxEnergy}）`
+              : `恰好完成（${project.accumulatedInvested}/${project.maxEnergy}）`}
           </div>
         )}
 
@@ -281,6 +386,9 @@ export const ProjectCard: React.FC<{
 
         {!isAbandoned && (
           <div
+            className="project-card-invest-controls"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
             style={{
               display: "flex",
               alignItems: "center",

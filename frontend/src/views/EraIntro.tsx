@@ -152,22 +152,6 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {} }) => {
             >
               💰 财富 {me.wealth}
             </div>
-            {me.draftOrder && (
-              <div
-                style={{
-                  background: "rgba(168,85,247,0.1)",
-                  border: "1px solid rgba(168,85,247,0.25)",
-                  borderRadius: "9999px",
-                  padding: "0.4rem 1rem",
-                  fontFamily: "var(--font-mono)",
-                  fontWeight: 700,
-                  fontSize: uiRem(0.85),
-                  color: "#c084fc",
-                }}
-              >
-                💺 座次 #{me.draftOrder}
-              </div>
-            )}
           </div>
 
           {me.ready ? (

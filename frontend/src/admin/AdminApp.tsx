@@ -4,13 +4,14 @@ import { socket } from "../socket";
 import { GameState } from "../types";
 import { AdminView } from "../views/AdminView";
 import { AdminImageManager } from "./AdminImageManager";
+import { AdminSessionHistory } from "./AdminSessionHistory";
 import { AdminLogin } from "./AdminLogin";
 import { clearAdminToken, getAdminToken, setAdminToken } from "./adminToken";
 import { ConnectionGate } from "../components/ConnectionGate";
 import { useSocketConnection } from "../hooks/useSocketConnection";
 
 type AuthState = "connecting" | "login" | "authenticated";
-type AdminScreen = "rooms" | "images";
+type AdminScreen = "rooms" | "images" | "sessions";
 
 interface AdminRoomSummary {
   roomId: string;
@@ -30,6 +31,7 @@ export default function AdminApp() {
   const [projectImages, setProjectImages] = useState<Record<number, number>>({});
   const [eraImages, setEraImages] = useState<Record<string, number>>({});
   const [buffImages, setBuffImages] = useState<Record<string, number>>({});
+  const [personaImages, setPersonaImages] = useState<Record<string, number>>({});
   const [adminScreen, setAdminScreen] = useState<AdminScreen>("rooms");
 
   const spectatingRoomIdRef = useRef<string | null>(null);
@@ -160,6 +162,7 @@ export default function AdminApp() {
     const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
     const onSyncEraImages = (images: Record<string, number>) => setEraImages(images);
     const onSyncBuffImages = (images: Record<string, number>) => setBuffImages(images);
+    const onSyncPersonaImages = (images: Record<string, number>) => setPersonaImages(images);
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
@@ -170,6 +173,7 @@ export default function AdminApp() {
     socket.on("syncProjectImages", onSyncImages);
     socket.on("syncEraImages", onSyncEraImages);
     socket.on("syncBuffImages", onSyncBuffImages);
+    socket.on("syncPersonaImages", onSyncPersonaImages);
 
     if (socket.connected) onConnect();
 
@@ -184,6 +188,7 @@ export default function AdminApp() {
       socket.off("syncProjectImages", onSyncImages);
       socket.off("syncEraImages", onSyncEraImages);
       socket.off("syncBuffImages", onSyncBuffImages);
+      socket.off("syncPersonaImages", onSyncPersonaImages);
     };
   }, [authenticate, clearAuthTimeout]);
 
@@ -248,11 +253,14 @@ export default function AdminApp() {
         <AdminLogin onSubmit={handleLogin} error={authError} pending={authPending} />
       ) : game ? (
         <AdminView game={game} onExit={handleExitRoom} />
+      ) : adminScreen === "sessions" ? (
+        <AdminSessionHistory onBack={() => setAdminScreen("rooms")} />
       ) : adminScreen === "images" ? (
         <AdminImageManager
           projectImages={projectImages}
           eraImages={eraImages}
           buffImages={buffImages}
+          personaImages={personaImages}
           onProjectImageVersion={(id, version) =>
             setProjectImages((prev) => ({ ...prev, [id]: version }))
           }
@@ -261,6 +269,9 @@ export default function AdminApp() {
           }
           onBuffImageVersion={(cardId, version) =>
             setBuffImages((prev) => ({ ...prev, [cardId]: version }))
+          }
+          onPersonaImageVersion={(slug, version) =>
+            setPersonaImages((prev) => ({ ...prev, [slug]: version }))
           }
           onBack={() => setAdminScreen("rooms")}
         />
@@ -285,6 +296,13 @@ export default function AdminApp() {
               </p>
             </div>
             <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setAdminScreen("sessions")}
+              >
+                历史场次
+              </button>
               <button
                 type="button"
                 className="btn btn-primary btn-sm"
@@ -336,7 +354,7 @@ export default function AdminApp() {
                   className="btn btn-primary btn-full"
                   style={{ fontSize: uiRem(0.9) }}
                 >
-                  进入监视
+                  进入
                 </button>
               </div>
             ))}

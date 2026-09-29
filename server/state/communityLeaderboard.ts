@@ -8,6 +8,13 @@ export type CommunityLeaderboardEntry = {
   score: number;
   roomId: string;
   recordedAt: number;
+  sessionId?: string;
+};
+
+export type PublicLeaderboardEntry = {
+  name: string;
+  score: number;
+  recordedAt: number;
 };
 
 const TOP_N = 10;
@@ -15,6 +22,7 @@ const MAX_NAME_LENGTH = 20;
 
 let persistPath: string | null = null;
 
+/** 只读加载历史榜单，供档案为空时一次性迁移；运行期不再写回磁盘 */
 export function initCommunityLeaderboardPersistence(filePath: string): void {
   persistPath = filePath;
   loadFromDisk();
@@ -25,7 +33,10 @@ function loadFromDisk(): void {
   try {
     const raw = fs.readFileSync(persistPath, "utf-8");
     const parsed = JSON.parse(raw) as { entries?: CommunityLeaderboardEntry[] };
-    if (!Array.isArray(parsed.entries)) return;
+    if (!Array.isArray(parsed.entries)) {
+      console.error("Community leaderboard parse: missing entries; ignoring file");
+      return;
+    }
     globalLeaderboard.length = 0;
     for (const e of parsed.entries) {
       if (typeof e.name !== "string" || typeof e.score !== "number") continue;
@@ -34,26 +45,12 @@ function loadFromDisk(): void {
         score: e.score,
         roomId: typeof e.roomId === "string" ? e.roomId : "",
         recordedAt: typeof e.recordedAt === "number" ? e.recordedAt : 0,
+        sessionId: typeof e.sessionId === "string" ? e.sessionId : undefined,
       });
     }
     sortAndTrimInPlace();
   } catch (err) {
     console.error("Failed to load community leaderboard:", err);
-  }
-}
-
-function persistToDisk(): void {
-  if (!persistPath) return;
-  try {
-    const dir = persistPath.replace(/[/\\][^/\\]+$/, "");
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      persistPath,
-      JSON.stringify({ entries: getCommunityLeaderboard() }, null, 2),
-      "utf-8"
-    );
-  } catch (err) {
-    console.error("Failed to persist community leaderboard:", err);
   }
 }
 
@@ -77,24 +74,42 @@ export function getCommunityLeaderboard(): CommunityLeaderboardEntry[] {
   return globalLeaderboard.map((e) => ({ ...e }));
 }
 
-/** 同一 roomId 只保留最新一条（同房重开一局后更新分数，不重复占榜） */
+/** 对外（玩家端 / 公开接口）可见的榜单投影，不含房间号、场次 ID 等内部标识 */
+export function getPublicCommunityLeaderboard(): PublicLeaderboardEntry[] {
+  return globalLeaderboard.map(({ name, score, recordedAt }) => ({ name, score, recordedAt }));
+}
+
+/** @deprecated 排行榜由 sessionArchive.rebuildCommunityLeaderboardFromArchive 维护 */
 export function recordCommunityScore(
   name: string,
   score: number,
-  roomId: string
+  roomId: string,
+  sessionId?: string
 ): CommunityLeaderboardEntry[] {
   const safeScore = Number.isFinite(score) ? Math.round(score) : 0;
   const recordedAt = Date.now();
   const idx = globalLeaderboard.findIndex((e) => e.roomId === roomId);
-  const entry: CommunityLeaderboardEntry = { name, score: safeScore, roomId, recordedAt };
+  const entry: CommunityLeaderboardEntry = {
+    name,
+    score: safeScore,
+    roomId,
+    recordedAt,
+    sessionId,
+  };
   if (idx >= 0) {
     globalLeaderboard[idx] = entry;
   } else {
     globalLeaderboard.push(entry);
   }
   sortAndTrimInPlace();
-  persistToDisk();
   return getCommunityLeaderboard();
+}
+
+export function replaceCommunityLeaderboard(entries: CommunityLeaderboardEntry[]): void {
+  globalLeaderboard.length = 0;
+  for (const e of entries) {
+    globalLeaderboard.push({ ...e });
+  }
 }
 
 export function broadcastLeaderboardToAllRooms(io: Server): void {

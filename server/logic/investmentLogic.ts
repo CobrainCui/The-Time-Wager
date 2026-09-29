@@ -1,5 +1,6 @@
 import { GameState, Player } from "../state/gameState.js";
 import { appendSessionEvent } from "../state/sessionTelemetry.js";
+import { sanitizeLongContribution } from "./longTermLogic.js";
 
 /** 将预填投资裁剪为合法方案（精力上限、长期项目规则等） */
 export function sanitizeInvestments(
@@ -13,12 +14,7 @@ export function sanitizeInvestments(
   for (const proj of game.activeProjects) {
     let val = Math.max(0, Math.floor(Number(investments[proj.id] ?? 0)));
     if (proj.type === "long") {
-      const longStatus = player.longTerm[proj.id];
-      if (longStatus?.status === "abandoned") {
-        val = 0;
-      } else if (longStatus?.status === "active" && val > 0 && val < 3) {
-        val = 0;
-      }
+      val = sanitizeLongContribution(player.longTerm[proj.id]?.status, val);
     }
     val = Math.min(val, remaining);
     if (val > 0) {
@@ -69,6 +65,8 @@ export function applyInvestments(
               player.investedRiskEnergy += amount;
           } else if (project.type === 'long') {
               player.investedLongEnergy += amount;
+          } else if (project.type === 'short') {
+              player.investedShortEnergy += amount;
           }
       }
   }
@@ -137,6 +135,8 @@ export function revertInvestments(game: GameState, playerId: string): boolean {
       player.investedRiskEnergy = Math.max(0, player.investedRiskEnergy - amt);
     } else if (project?.type === "long") {
       player.investedLongEnergy = Math.max(0, player.investedLongEnergy - amt);
+    } else if (project?.type === "short") {
+      player.investedShortEnergy = Math.max(0, player.investedShortEnergy - amt);
     }
   }
 

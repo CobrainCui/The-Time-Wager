@@ -94,32 +94,6 @@ export function useBuffCard(
         game.logs.push(`🎲 ${player.name} 购买了【彩票】，请主持人开奖...`);
         // 不加钱，只挂状态
     }
-    
-    // --- 偷天换日 (交换顺位) ---
-    else if (cardId === 'buff_swap') {
-        const target = game.players.find(p => p.id === params.targetPlayerId);
-        if (!target) return { success: false, msg: "未指定目标" };
-
-        const myOrder = player.draftOrder;
-        const targetOrder = target.draftOrder;
-
-        player.draftOrder = targetOrder;
-        target.draftOrder = myOrder;
-
-        game.logs.push(`🔀 ${player.name} 使用【偷天换日】，与 ${target.name} 互换了结算顺位 (#${myOrder} <-> #${targetOrder})`);
-
-        appendSessionEvent(
-          game,
-          "draft_order_swapped",
-          {
-            playerIdA: player.id,
-            playerIdB: target.id,
-            orderBefore: { [player.id]: myOrder, [target.id]: targetOrder },
-            orderAfter: { [player.id]: targetOrder, [target.id]: myOrder },
-          },
-          playerId
-        );
-    }
 
     // --- 延迟生效类 ---
     else {

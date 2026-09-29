@@ -48,7 +48,6 @@ export function joinRoom(io: Server, socket: Socket, playerId: string, roomId: s
         usedCards: [],
         longTerm: {},
         wealthHistory: [],
-        draftOrder: 0,
       } as any);
     }
   }
@@ -95,7 +94,6 @@ export function addAIPlayer(io: Server, roomId: string) {
     usedCards: [],
     longTerm: {},
     wealthHistory: [],
-    draftOrder: 0,
   } as any);
 
   // 检查是否可以开局

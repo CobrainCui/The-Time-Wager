@@ -7,6 +7,10 @@ import {
   eraCards
 } from "../data/game_data.js";
 import { shuffleArray } from "../utils/shuffle.js";
+import {
+  resolveRankPlayerCount,
+  scaleRankRewardsForPlayerCount,
+} from "../logic/rankRewardSchedule.js";
 
 export function updateEraCard(game: GameState) {
     const index = game.currentEra - 1; 
@@ -44,7 +48,10 @@ export function drawProjectsForEra(game: GameState) {
       currentInvested: 0,
       roundsNoInvestment: 0,
       investedThisRound: false,
-      rankRewards: card.rankRewards,
+      rankRewards: scaleRankRewardsForPlayerCount(
+        card.rankRewards,
+        resolveRankPlayerCount(game)
+      ),
       overInvestPenalty: card.overInvestPenalty,
       startRound: card.startRound,
       

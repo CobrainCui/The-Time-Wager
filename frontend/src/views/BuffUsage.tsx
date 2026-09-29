@@ -39,7 +39,7 @@ export const BuffUsage: React.FC<Props> = ({
   const handleUse = () => {
     if (me.ready) return;
     if (!selectedCard) return;
-    if ((selectedCard === "buff_slack" || selectedCard === "buff_swap") && !targetPlayer) { alert("请选择目标玩家"); return; }
+    if (selectedCard === "buff_slack" && !targetPlayer) { alert("请选择目标玩家"); return; }
     if (selectedCard === "buff_short") {
       if (!targetProject) { alert("请选择目标项目"); return; }
       if (!extraData) { alert("请选择猜测结果"); return; }
@@ -222,7 +222,7 @@ export const BuffUsage: React.FC<Props> = ({
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
                   {/* 目标玩家 */}
-                  {(selectedCard === "buff_slack" || selectedCard === "buff_swap") && (
+                  {selectedCard === "buff_slack" && (
                     <div>
                       <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
                         目标玩家
@@ -381,11 +381,6 @@ export const BuffUsage: React.FC<Props> = ({
               }}
             >
               进入讨论和投资 →
-              {gateTotal > 0 && (
-                <span style={{ marginLeft: "0.35rem", fontWeight: 700, opacity: 0.9 }}>
-                  ({gateReady}/{gateTotal})
-                </span>
-              )}
             </button>
           </div>
         )}

@@ -2,6 +2,12 @@ import React, { useMemo } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player, SettlementProjectResult } from "../types";
 import { socket } from "../socket";
+import {
+  longSettlementStatusLabel,
+  shortExactSettlementStatusLabel,
+  settlementHidesInvestedRatio,
+  LONG_COMPLETE_CHIP_COLOR,
+} from "../utils/projectHelpTable";
 
 interface Props {
   game: GameState;
@@ -12,14 +18,40 @@ const TYPE_COLORS: Record<string, string> = {
   short: "#3b82f6", long: "#10b981", risk: "#ef4444",
 };
 
+const ERA_NAMES: Record<number, string> = { 1: "青年", 2: "壮年", 3: "中年", 4: "老年" };
+
+/** 结算分解项：负数用括号，避免 160+-35+0 */
+function formatGainPart(n: number): string {
+  return n < 0 ? `(${n})` : String(n);
+}
+
+function formatGainBreakdown(base: number, rank: number, era: number): string {
+  return `${formatGainPart(base)}+${formatGainPart(rank)}+${formatGainPart(era)}`;
+}
+
 const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) => {
   const pct = Math.min((result.totalInvested / result.maxEnergy) * 100, 100);
   const color = TYPE_COLORS[result.type] || "#60a5fa";
+  const longLabel = longSettlementStatusLabel(result);
+  const shortExactLabel = shortExactSettlementStatusLabel(result);
+  const burstExploded = result.isExploded && result.type !== "long";
   let statusText = "进行中";
   let statusColor = color;
-  if (result.isExploded) { statusText = "💥 爆雷"; statusColor = "#ef4444"; }
-  else if (result.isCompleted) { statusText = "✅ 完成"; statusColor = "#34d399"; }
-  else if (result.type === "long") { statusText = `${Math.round(pct)}%`; }
+  if (longLabel) {
+    statusText = longLabel.text;
+    statusColor = longLabel.color;
+  } else if (burstExploded) {
+    statusText = "💥 投爆";
+    statusColor = "#ef4444";
+  } else if (shortExactLabel) {
+    statusText = shortExactLabel.text;
+    statusColor = shortExactLabel.color;
+  } else if (result.isCompleted) {
+    statusText = "✅ 完成";
+    statusColor = "#34d399";
+  } else if (result.type === "long") {
+    statusText = `${Math.round(pct)}%`;
+  }
 
   return (
     <div
@@ -42,14 +74,18 @@ const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) =
           style={{
             height: "100%",
             width: `${pct}%`,
-            background: result.isExploded ? "#ef4444" : `linear-gradient(90deg, ${color}, ${color}bb)`,
+            background: burstExploded ? "#ef4444" : `linear-gradient(90deg, ${color}, ${color}bb)`,
             borderRadius: "9999px",
             transition: "width 1s ease",
           }}
         />
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: uiRem(0.75), color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
-        <span>{result.totalInvested} / {result.maxEnergy}</span>
+        <span>
+          {settlementHidesInvestedRatio(result)
+            ? "—"
+            : `${result.totalInvested} / ${result.maxEnergy}`}
+        </span>
         <span style={{ color }}>{result.type === "short" ? "短期" : result.type === "long" ? "长期" : "风险"}</span>
       </div>
     </div>
@@ -78,9 +114,11 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
     ) || [];
 
   const isNextNewEra = game.roundInEra === 2;
-  const energyMap: Record<number, number> = { 1: 15, 2: 13, 3: 11, 4: 9 };
+  const matchOver = game.nextRoundEnergy === null;
+  const nextEnergy = game.nextRoundEnergy ?? 0;
   const nextEra = isNextNewEra ? game.currentEra + 1 : game.currentEra;
-  const nextEnergy = energyMap[nextEra] ?? 0;
+  const nextRoundInEra = isNextNewEra ? 1 : game.roundInEra + 1;
+  const nextStageLabel = `${ERA_NAMES[nextEra] ?? `第${nextEra}时代`} 第${nextRoundInEra}轮`;
 
   if (!snapshot) {
     return (
@@ -160,11 +198,30 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
             }}
           >
             <div style={{ fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
-              🚀 下一轮预告
+              {matchOver ? "终局" : "🚀 下一轮预告"}
             </div>
             <div style={{ fontSize: uiRem(0.9), color: "var(--color-text-secondary)", lineHeight: 1.7 }}>
-              <div>阶段：{isNextNewEra ? <span style={{ color: "#c084fc", fontWeight: 700 }}>拍卖 & 新时代</span> : "讨论轮"}</div>
-              <div>精力重置：<span style={{ color: "white", fontWeight: 700, fontFamily: "var(--font-mono)" }}>{nextEnergy}</span></div>
+              {matchOver ? (
+                <div>阶段：<span style={{ color: "#fbbf24", fontWeight: 700 }}>终局</span></div>
+              ) : (
+                <>
+                  <div>
+                    阶段：
+                    <span
+                      style={{
+                        color: isNextNewEra ? "#c084fc" : "white",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {nextStageLabel}
+                    </span>
+                  </div>
+                  <div>
+                    精力：
+                    <span style={{ color: "white", fontWeight: 700, fontFamily: "var(--font-mono)" }}>{nextEnergy}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -193,23 +250,40 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
                       {myProjects.map((res) => {
                         const myInvest = res.playerInvestments[me.id] || 0;
                         const gains = res.playerGains[me.id] || { total: 0, base: 0, rank: 0, era: 0 };
+                        const longState = me.longTerm[res.projectId]?.status;
                         let statusSuffix = "";
+                        let statusSuffixColor = "var(--color-text-muted)";
                         let rowColor = "var(--color-text-secondary)";
-                        if (res.isExploded) { statusSuffix = " 💥"; rowColor = "#f87171"; }
-                        else if (res.type === "long" && res.isCompleted) statusSuffix = " ✅";
-                        else if (res.type === "long" && gains.total > 0) statusSuffix = " 🚫退";
-                        else if (res.type === "long") statusSuffix = " ⏳";
+                        const longRowLabel = longSettlementStatusLabel(res);
+                        const shortRowLabel = shortExactSettlementStatusLabel(res);
+                        if (res.isExploded && res.type !== "long") {
+                          statusSuffix = " 💥投爆";
+                          statusSuffixColor = "#f87171";
+                          rowColor = "#f87171";
+                        } else if (res.type === "long" && longState === "abandoned") {
+                          statusSuffix = gains.total > 0 ? ` 🚫放弃（退款 ${gains.total}）` : " 🚫放弃";
+                          statusSuffixColor = "#9ca3af";
+                          rowColor = "#9ca3af";
+                        } else if (longRowLabel) {
+                          statusSuffix = ` ${longRowLabel.text}`;
+                          statusSuffixColor = longRowLabel.color;
+                          rowColor = longRowLabel.color;
+                        } else if (shortRowLabel) {
+                          statusSuffix = ` ${shortRowLabel.text}`;
+                          statusSuffixColor = shortRowLabel.color;
+                          rowColor = shortRowLabel.color;
+                        } else if (res.type === "long") statusSuffix = " ⏳";
                         return (
                           <tr key={res.projectId} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
                             <td style={{ padding: "0.875rem 1rem", color: "white", fontWeight: 600 }}>
                               {res.name}
-                              <span style={{ marginLeft: "0.375rem", fontSize: uiRem(0.7), color: "var(--color-text-muted)" }}>{statusSuffix}</span>
+                              <span style={{ marginLeft: "0.375rem", fontSize: uiRem(0.7), color: statusSuffixColor }}>{statusSuffix}</span>
                             </td>
                             <td style={{ padding: "0.875rem 1rem", textAlign: "center", fontFamily: "var(--font-mono)", color: "var(--color-text-secondary)" }}>
                               {myInvest}
                             </td>
                             <td style={{ padding: "0.875rem 1rem", textAlign: "center", fontFamily: "var(--font-mono)", fontSize: uiRem(0.8), color: rowColor }}>
-                              {gains.base}+{gains.rank}+{gains.era}
+                              {formatGainBreakdown(gains.base, gains.rank, gains.era)}
                             </td>
                             <td
                               style={{

@@ -1,5 +1,12 @@
 /** 与 server/data/game_data.ts 对齐；改 server 时需同步此处 */
 
+import {
+  effectiveRankRewards,
+  resolveRankPlayerCountFromGame,
+  resolveRankRewardTierCountFromGame,
+} from "./rankRewardSchedule";
+import type { GameState } from "../types";
+
 export type CatalogProjectType = "short" | "long" | "risk";
 
 export interface ProjectCatalogEntry {
@@ -14,13 +21,13 @@ export interface ProjectCatalogEntry {
   baseReturnHint: string;
 }
 
-function riskRate(name: string): number {
+export function getRiskRate(name: string): number {
   if (name.includes("成瘾") || name.includes("完美") || name.includes("幸福")) return 25;
   return 20;
 }
 
 function riskHint(name: string): string {
-  return `${riskRate(name)}/⚡/轮`;
+  return `${getRiskRate(name)}/⚡/轮`;
 }
 
 const short: ProjectCatalogEntry[] = [
@@ -37,13 +44,13 @@ const short: ProjectCatalogEntry[] = [
 ];
 
 const long: ProjectCatalogEntry[] = [
-  { id: 101, name: "植树造林", type: "long", era: "气候", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "完成后15/有效精力" },
-  { id: 102, name: "城市海绵体改造", type: "long", era: "气候", maxEnergy: 80, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "完成后15/有效精力" },
-  { id: 103, name: "数字图书馆", type: "long", era: "科技", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "完成后15/有效精力" },
-  { id: 104, name: "遗产保护基金", type: "long", era: "文化", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "完成后15/有效精力" },
-  { id: 105, name: "文化桥梁使者", type: "long", era: "文化", maxEnergy: 80, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "完成后15/有效精力" },
-  { id: 106, name: "建立体育俱乐部", type: "long", era: "健康", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "完成后15/有效精力" },
-  { id: 107, name: "心理学教育普及", type: "long", era: "心理", maxEnergy: 90, rankRewards: [75, 55, 45, 35, 25, 15], baseReturnHint: "完成后15/有效精力" },
+  { id: 101, name: "植树造林", type: "long", era: "气候", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
+  { id: 102, name: "城市海绵体改造", type: "long", era: "气候", maxEnergy: 80, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "15/⚡" },
+  { id: 103, name: "数字图书馆", type: "long", era: "科技", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
+  { id: 104, name: "遗产保护基金", type: "long", era: "文化", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
+  { id: 105, name: "文化桥梁使者", type: "long", era: "文化", maxEnergy: 80, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "15/⚡" },
+  { id: 106, name: "建立体育俱乐部", type: "long", era: "健康", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
+  { id: 107, name: "心理学教育普及", type: "long", era: "心理", maxEnergy: 90, rankRewards: [75, 55, 45, 35, 25, 15], baseReturnHint: "15/⚡" },
 ];
 
 const risk: ProjectCatalogEntry[] = [
@@ -63,21 +70,99 @@ export const PROJECT_CATALOG_BY_ID: Record<number, ProjectCatalogEntry> = Object
   PROJECT_CATALOG.map((p) => [p.id, p])
 );
 
+export function catalogEntryRankRewards(
+  entry: ProjectCatalogEntry,
+  playerCount?: number
+): number[] | undefined {
+  return effectiveRankRewards(entry.rankRewards, playerCount);
+}
+
+function findProjectSnapshot(game: GameState, projectId: number) {
+  return (
+    game.activeProjects.find((p) => p.id === projectId) ??
+    game.completedProjects?.find((p) => p.id === projectId) ??
+    game.uncompletedProjects?.find((p) => p.id === projectId)
+  );
+}
+
+/** 说明/速查：优先牌桌实例（发牌时已缩放），否则按本局人数从图鉴推算 */
+export function rankRewardsForGameProject(
+  game: GameState,
+  entry: ProjectCatalogEntry
+): number[] | undefined {
+  const tierCount = resolveRankRewardTierCountFromGame(game);
+  const snap = findProjectSnapshot(game, entry.id);
+  if (snap?.rankRewards?.length) {
+    if (tierCount === 4 || tierCount === 5) {
+      if (snap.rankRewards.length === tierCount) return snap.rankRewards;
+      const rescale = catalogEntryRankRewards(entry, resolveRankPlayerCountFromGame(game));
+      if (rescale?.length) return rescale;
+    }
+    return snap.rankRewards;
+  }
+  return catalogEntryRankRewards(entry, resolveRankPlayerCountFromGame(game));
+}
+
+/** 短期超上限投爆惩罚档：与牌面一致，展示本局人数对应的第 1–N 名档 */
+export function overInvestPenaltyForGameProject(
+  game: GameState,
+  entry: ProjectCatalogEntry
+): number[] | undefined {
+  if (entry.type !== "short") return undefined;
+  const snap = findProjectSnapshot(game, entry.id);
+  const base = snap?.overInvestPenalty ?? entry.overInvestPenalty;
+  if (!base?.length) return undefined;
+  const n = resolveRankRewardTierCountFromGame(game);
+  return base.slice(0, Math.min(n, base.length));
+}
+
+export {
+  effectiveRankRewards,
+  resolveRankPlayerCountFromGame,
+  resolveRankRewardTierCount,
+  resolveRankRewardTierCountFromGame,
+} from "./rankRewardSchedule";
+
 export function formatTop3(nums?: number[]): string {
   if (!nums?.length) return "—";
   return nums.slice(0, 3).join("/");
 }
 
-/** 短期超投爆雷时，按历史投入排名前三的惩罚（与 server overInvestPenalty 一致） */
-export function formatShortBurstPenaltyTop3(entry: ProjectCatalogEntry): string {
-  if (entry.type !== "short" || !entry.overInvestPenalty?.length) return "—";
-  return entry.overInvestPenalty.slice(0, 3).join("/");
+/** 第 1–6 名数值，弹窗等完整展示用 */
+export function formatRankList(nums?: number[]): string {
+  if (!nums?.length) return "—";
+  return nums.join("/");
+}
+
+export function rankRewardRows(nums?: number[]): { rank: number; value: number }[] {
+  if (!nums?.length) return [];
+  return nums.map((value, index) => ({ rank: index + 1, value }));
+}
+
+export function formatShortBurstPenaltyForGame(game: GameState, entry: ProjectCatalogEntry): string {
+  return formatRankList(overInvestPenaltyForGameProject(game, entry));
 }
 
 export const TYPE_LABEL: Record<CatalogProjectType, string> = {
   short: "短期",
   long: "长期",
   risk: "风险",
+};
+
+/** 项目卡 / 帮助速查用 */
+export const SETTLEMENT_TIMING_SHORT: Record<CatalogProjectType, string> = {
+  short: "当轮结算",
+  long: "完成后结算；终局未完成按梯度结算",
+  risk: "当轮结算",
+};
+
+/** 详情弹窗「结算时间」说明（与 server settleEndGame 梯度一致） */
+export const SETTLEMENT_TIMING_DETAIL: Record<CatalogProjectType, string> = {
+  short:
+    "每轮投资阶段结束后，按本轮投入结算收益（含排名奖/超上限罚，见下方规则）。完成时排名奖按开局人数（4/5/6）重分档，总池与六人版一致。",
+  long:
+    "达到或超过总上限时一次性发放完成回报与排名奖（恰好满额与超额完成均正常结算，无短期式投爆罚；排名奖按开局人数 4/5/6 重分档，总池与六人版一致）。未填满期间每轮仅更新进度、不发完成奖。游戏结束时若仍未完成，按该项目全场累计投入进度梯度结算你的累计投入：不足 1/3 上限为 1:1，达 1/3 为 1:5，达 2/3 为 1:10。",
+  risk: "每轮投资阶段结束后，按本轮投入结算回报（未超上限时）；超上限则当轮投爆，并追回历史风险收益。",
 };
 
 /** 与 ProjectCard 类型色一致，用于速查等纯文字标注 */

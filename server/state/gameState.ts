@@ -8,11 +8,8 @@ export type Phase =
   | "TUTORIAL"
   | "AUCTION"
   | "BUFF_USAGE"
-  | "PROJECT_SETUP"
-  | "DRAFTING"
   | "INVESTMENT"
   | "SETTLEMENT"
-  | "ERA_TRANSITION"
   | "COMMUNITY_NAMING"
   | "GAME_OVER";
 
@@ -26,6 +23,8 @@ export interface Transaction {
   note: string;
   status: "pending" | "accepted" | "rejected";
   timestamp: number;
+  /** 客户端乐观发送 id，用于一对一对账去重 */
+  clientTempId?: string;
 }
 
 export interface ActiveProject {
@@ -53,6 +52,32 @@ export interface ActiveProject {
   investorRecords: Record<string, number>;
   earningRecords: Record<string, number>;
   totalPayout: number;
+}
+
+export interface AuctionOffer {
+  offerId: string;
+  playerId: string;
+  cardId: string;
+  cost: number;
+}
+
+/** 本场拍卖已成交记录（用于主持撤销发放） */
+export interface AuctionCompletedDeal {
+  cardId: string;
+  playerId: string;
+  cost: number;
+}
+
+export interface LotteryOffer {
+  offerId: string;
+  playerId: string;
+  amount: number;
+}
+
+/** 已确认开奖记录（主持可撤回） */
+export interface LotteryCompletedDeal {
+  playerId: string;
+  amount: number;
 }
 
 export interface ActiveBuff {
@@ -84,6 +109,7 @@ export interface MbtiPersona {
 export interface PersonaAnalysis {
   scores: {
     longTermism: number;
+    shortTermism: number;
     riskTaking: number;
     ruleIntervention: number;
     socialConnection: number;
@@ -104,15 +130,18 @@ export interface Player {
   id: string;
   name: string;
   socketId?: string; 
+  /** 重连票据，仅下发给本人；为空表示主持已允许下一次同名加入重新认领 */
+  reconnectToken?: string;
 
   energy: number;
-  wealth: number; 
+  wealth: number;
+  /** 本轮起始精力是否已经发给这名玩家。离线错过发放时为 false，重连后据此补发，避免把被扣光的精力又加回来。 */
+  receivedRoundEnergy?: boolean; 
 
   connected: boolean;
   ready: boolean; 
 
   rank: number;
-  draftOrder?: number; 
 
   investment: Record<number, number>;
   /** 讨论/投资阶段本地预填，倒计时结束时服务端据此自动提交 */
@@ -133,17 +162,18 @@ export interface Player {
   // ✅ 新增：记录本轮被谁使用了摸鱼传染 (用于反弹琵琶回溯)
   slackedBy: string[];
 
+  /** 本轮（BUFF+投资窗口）已购买咖啡杯数，可退订 */
+  coffeePurchasesThisRound?: number;
+
   // === 数据埋点 ===
   totalEnergyConsumed: number;
   wealthHistory: number[];
   investedRiskEnergy: number;
   investedLongEnergy: number;
+  investedShortEnergy: number;
   socialRank: 'A' | 'B' | 'C' | 'D' | 'E' | null;
   
   analysisResult?: PersonaAnalysis;
-  personaVote?: "fate" | "gene" | "neither" | null;
-  longTermStatus?: Record<number, 'investing' | 'abandoned'>;
-
   // === AI 对弈相关 ===
   isAI?: boolean;
   aiPersona?: string; // e.g. "时荫植者", "瞬刻炼金士"
@@ -180,12 +210,6 @@ export interface GameState {
   buffPhaseEndsAt?: number;  
   tutorialStep?: number;    
 
-  draftingState: {
-    queue: string[]; 
-    currentIndex: number;
-    availableSlots: number[];
-  };
-
   transactions: Transaction[];
 
   currentEra: number;
@@ -220,9 +244,29 @@ export interface GameState {
   globalLeaderboard?: { name: string; score: number; roomId?: string; recordedAt?: number }[];
   /** 本轮拍卖已成功成交的道具卡 id */
   auctionDistributedCardIds?: string[];
+  /** 本场拍卖成交明细（主持可撤销） */
+  auctionCompletedDeals?: AuctionCompletedDeal[];
+  /** 主持已发出、等待玩家确认的拍卖报价（不广播） */
+  pendingAuctionOffers?: AuctionOffer[];
+  /** 主持已发出、等待玩家确认的彩票开奖（不广播给玩家） */
+  pendingLotteryOffers?: LotteryOffer[];
+  /** 已确认彩票开奖（上帝视图撤回用） */
+  lotteryCompletedDeals?: LotteryCompletedDeal[];
   /** 进入 TUTORIAL 前的阶段，用于教程结束后判断是否全量 reset */
   tutorialEntryPhase?: Phase;
 
+  /**
+   * 开局时锁定的人数，决定整局用四/五/六人精力表。
+   * 未设置时按当时人数现算（仅开局前）。
+   */
+  energyTableSize?: number;
+  /** 房间创建时间，用于空等候房 TTL */
+  roomCreatedAt?: number;
+  /** 建房来源 IP，仅用于并发配额，不广播 */
+  createdByIp?: string;
+
+  /** 本局唯一标识（首次正式开局时生成） */
+  sessionId?: string;
   /** 本局开始时间（首次正式开局） */
   sessionStartedAt?: number;
   /** 行为流水与结算历史（不广播给玩家客户端） */
@@ -236,15 +280,10 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
     roomId,
     players: [],
     phase: "ROOM_WAITING",
+    roomCreatedAt: Date.now(),
     
     phaseFinished: new Set(),
     readyPlayers: new Set(),
-    
-    draftingState: {
-      queue: [],
-      currentIndex: 0,
-      availableSlots: [1,2,3,4,5,6]
-    },
 
     transactions: [],
 
@@ -277,12 +316,13 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
 }
 
 function freshPlayerFromIdentity(
-  meta: Pick<Player, "id" | "name" | "socketId" | "connected" | "isAI" | "aiPersona">
+  meta: Pick<Player, "id" | "name" | "socketId" | "reconnectToken" | "connected" | "isAI" | "aiPersona">
 ): Player {
   return {
     id: meta.id,
     name: meta.name,
     socketId: meta.socketId,
+    reconnectToken: meta.reconnectToken,
     connected: meta.connected,
     isAI: meta.isAI,
     aiPersona: meta.aiPersona,
@@ -297,10 +337,12 @@ function freshPlayerFromIdentity(
     usedCards: [],
     activeBuffs: [],
     slackedBy: [],
+    coffeePurchasesThisRound: 0,
     totalEnergyConsumed: 15,
     wealthHistory: [0],
     investedRiskEnergy: 0,
     investedLongEnergy: 0,
+    investedShortEnergy: 0,
     socialRank: null,
   };
 }
@@ -311,6 +353,7 @@ export function resetGameSession(game: GameState): void {
     id: p.id,
     name: p.name,
     socketId: p.socketId,
+    reconnectToken: p.reconnectToken,
     connected: p.connected,
     isAI: p.isAI,
     aiPersona: p.aiPersona,
@@ -324,7 +367,6 @@ export function resetGameSession(game: GameState): void {
   game.phase = fresh.phase;
   game.phaseFinished = fresh.phaseFinished;
   game.readyPlayers = fresh.readyPlayers;
-  game.draftingState = fresh.draftingState;
   game.transactions = fresh.transactions;
   game.currentEra = fresh.currentEra;
   game.roundInEra = fresh.roundInEra;
@@ -351,6 +393,13 @@ export function resetGameSession(game: GameState): void {
   game.communityName = undefined;
   game.globalLeaderboard = undefined;
   game.auctionDistributedCardIds = undefined;
+  game.auctionCompletedDeals = undefined;
+  game.pendingAuctionOffers = undefined;
+  game.pendingLotteryOffers = undefined;
+  game.lotteryCompletedDeals = undefined;
+  game.energyTableSize = undefined;
+  game.roomCreatedAt = Date.now();
+  game.sessionId = undefined;
   game.sessionStartedAt = undefined;
   game.sessionTelemetry = emptySessionTelemetry();
 }
@@ -376,6 +425,13 @@ export function finishTutorialExit(game: GameState): void {
 export function getWealthiestPlayer(game: GameState): Player | undefined {
   if (game.players.length === 0) return undefined;
   return game.players.reduce((best, p) => (p.wealth > best.wealth ? p : best), game.players[0]);
+}
+
+/** 当前拥有社区命名权的玩家：在线真人中财富最高者；首富离线时顺延 */
+export function getCommunityNamer(game: GameState): Player | undefined {
+  const candidates = game.players.filter((p) => p.connected && !p.isAI);
+  if (candidates.length === 0) return undefined;
+  return candidates.reduce((best, p) => (p.wealth > best.wealth ? p : best), candidates[0]);
 }
 
 export function shouldResetAfterTutorial(game: GameState): boolean {

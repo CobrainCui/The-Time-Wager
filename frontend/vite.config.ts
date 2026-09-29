@@ -9,6 +9,14 @@ export default defineConfig({
         main: 'index.html',
         admin: 'admin.html',
       },
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/react-dom") || id.includes("node_modules/react/")) return "react-vendor";
+          if (id.includes("socket.io-client") || id.includes("engine.io-client")) return "socket-vendor";
+          if (id.includes("chart.js") || id.includes("react-chartjs-2")) return "chart-vendor";
+          if (id.includes("jspdf") || id.includes("html2canvas")) return "pdf-vendor";
+        },
+      },
     },
   },
   server: {

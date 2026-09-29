@@ -60,7 +60,6 @@ export const buffCards: BuffCard[] = [
   { id: 'buff_rebound', name: '反弹琵琶', type: 'special', description: '被干扰时获得 [Hidden] 精力', auctionRound: 2 },
   { id: 'buff_insurance', name: '保险', type: 'special', description: '项目爆掉且投入>=[Hidden]时获[Hidden]财富', auctionRound: 2 },
   { id: 'buff_spirit', name: '精神老伙', type: 'gain', description: '本轮增加 [Hidden] 精力', auctionRound: 3 },
-  { id: 'buff_swap', name: '偷天换日', type: 'interfere', description: '选座时与对手互换排名', auctionRound: 3 },
   { id: 'buff_lottery', name: '彩票', type: 'special', description: '投骰子获财富', auctionRound: 3 },
 ];
 

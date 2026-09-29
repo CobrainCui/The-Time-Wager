@@ -3,21 +3,24 @@ import { GameState, SettlementProjectResult } from "./gameState.js";
 
 export type SessionEventType =
   | "phase_changed"
-  | "draft_seat_chosen"
-  | "draft_order_swapped"
   | "investment_submitted"
   | "admin_investment_reverted"
   | "buff_used"
   | "coffee_purchased"
+  | "coffee_refunded"
   | "transaction_created"
   | "transaction_resolved"
   | "auction_offered"
   | "auction_resolved"
+  | "auction_revoked"
+  | "auction_offer_cancelled"
+  | "lottery_offered"
   | "lottery_settled"
+  | "lottery_offer_cancelled"
+  | "lottery_revoked"
   | "social_rated"
   | "settlement_round"
-  | "community_named"
-  | "persona_voted";
+  | "community_named";
 
 export interface SessionEvent {
   id: string;
@@ -53,6 +56,7 @@ function ensureTelemetry(game: GameState): SessionTelemetry {
 export function ensureSessionStarted(game: GameState): void {
   if (!game.sessionStartedAt) {
     game.sessionStartedAt = Date.now();
+    game.sessionId = crypto.randomUUID();
   }
 }
 

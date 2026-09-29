@@ -48,15 +48,6 @@ export function isEveryoneReadyToLeaveBuff(game: GameState): boolean {
 }
 
 /**
- * 检查选座是否完成
- */
-export function isDraftingComplete(game: GameState): boolean {
-  const players = playersRequiringAction(game);
-  if (players.length === 0) return false;
-  return players.every((p) => p.draftOrder !== undefined);
-}
-
-/**
  * 检查投资是否完成
  */
 export function isInvestmentComplete(game: GameState): boolean {
@@ -87,20 +78,30 @@ export function forceSubmitPendingInvestments(game: GameState) {
   }
 }
 
-/** 上帝解锁：投资阶段重新开放已提交方案；道具阶段仅取消「进入讨论」ready */
-export function adminUnlockPlayer(game: GameState, playerId: string): boolean {
-  const player = game.players.find((p) => p.id === playerId);
-  if (!player || !player.ready) return false;
+export type AdminUnlockResult =
+  | { ok: true }
+  | { ok: false; reason: "not_found" | "not_ready" | "wrong_phase" | "timer_closed" | "ai_player" };
 
-  if (game.phase === "INVESTMENT") {
-    reopenSubmittedInvestment(game, playerId);
-  } else if (game.phase === "BUFF_USAGE") {
-    game.logs.push(`🔓 上帝解锁 ${player.name}，可继续调整道具与预填`);
-  } else {
-    game.logs.push(`🔓 上帝解锁 ${player.name}，可重新操作`);
+/**
+ * 上帝解锁：仅投资阶段、倒计时未结束时，回退单个已锁定真人玩家到「未锁定」可再编辑状态。
+ * 结算页 / 倒计时结束后不可解锁。
+ */
+export function adminUnlockPlayer(game: GameState, playerId: string): AdminUnlockResult {
+  const player = game.players.find((p) => p.id === playerId);
+  if (!player) return { ok: false, reason: "not_found" };
+  if (isAiPlayer(player)) return { ok: false, reason: "ai_player" };
+  if (!player.ready) return { ok: false, reason: "not_ready" };
+
+  if (game.phase !== "INVESTMENT") return { ok: false, reason: "wrong_phase" };
+  if (
+    typeof game.investmentEndsAt !== "number" ||
+    Date.now() >= game.investmentEndsAt
+  ) {
+    return { ok: false, reason: "timer_closed" };
   }
 
+  reopenSubmittedInvestment(game, playerId);
   player.ready = false;
   game.readyPlayers.delete(playerId);
-  return true;
+  return { ok: true };
 }

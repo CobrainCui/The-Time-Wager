@@ -1,7 +1,7 @@
 import React from "react";
 import { DemoResources } from "./demos/DemoResources";
 import { DemoProjectTypes } from "./demos/DemoProjectTypes";
-import { DemoDrafting } from "./demos/DemoDrafting";
+import { DemoTiedRank } from "./demos/DemoTiedRank";
 import { DemoEraTheme } from "./demos/DemoEraTheme";
 import { DemoAuction } from "./demos/DemoAuction";
 import { DemoTransferAndMessage } from "./demos/DemoTransferAndMessage";
@@ -15,7 +15,7 @@ export type TutorialDemoComponent = React.FC<{ playerName?: string }>;
 export const TUTORIAL_DEMO_BY_KEY: Record<TutorialDemoKey, TutorialDemoComponent> = {
   resources: DemoResources,
   projectTypes: DemoProjectTypes,
-  drafting: DemoDrafting,
+  tiedRank: DemoTiedRank,
   eraTheme: DemoEraTheme,
   auction: DemoAuction,
   transferAndMessage: DemoTransferAndMessage,

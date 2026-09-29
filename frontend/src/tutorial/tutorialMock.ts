@@ -37,31 +37,31 @@ export function createTutorialPlayer(overrides: Partial<Player> = {}): Player {
 }
 
 export const TUTORIAL_SHORT_PROJECT: ActiveProject = {
-  id: 9001,
-  name: "营养代餐",
+  id: 1,
+  name: "新能源汽车",
   type: "short",
-  maxEnergy: 20,
+  maxEnergy: 23,
   accumulatedInvested: 8,
-  era: "健康",
+  era: "气候",
   ...emptyProjectFields,
 };
 
 export const TUTORIAL_LONG_PROJECT: ActiveProject = {
-  id: 9002,
+  id: 101,
   name: "植树造林",
   type: "long",
-  maxEnergy: 30,
+  maxEnergy: 70,
   accumulatedInvested: 12,
   era: "气候",
   ...emptyProjectFields,
 };
 
 export const TUTORIAL_RISK_PROJECT: ActiveProject = {
-  id: 9003,
+  id: 202,
   name: "成瘾算法",
   type: "risk",
-  maxEnergy: 15,
-  accumulatedInvested: 10,
+  maxEnergy: 8,
+  accumulatedInvested: 6,
   era: "科技",
   ...emptyProjectFields,
 };
@@ -98,10 +98,10 @@ export const TUTORIAL_ERA_OPTIONS: EraCard[] = [
 ];
 
 export const TUTORIAL_ERA_SAMPLE_PROJECT: ActiveProject = {
-  id: 9004,
+  id: 102,
   name: "城市海绵体改造",
-  type: "short",
-  maxEnergy: 18,
+  type: "long",
+  maxEnergy: 80,
   accumulatedInvested: 5,
   era: "气候",
   ...emptyProjectFields,
@@ -111,12 +111,11 @@ export interface TutorialNpc {
   id: string;
   name: string;
   wealth: number;
-  draftOrder?: number;
 }
 
 export const TUTORIAL_NPCS: TutorialNpc[] = [
-  { id: "npc-a", name: "小林", wealth: 60, draftOrder: 1 },
-  { id: "npc-b", name: "阿杰", wealth: 120, draftOrder: 2 },
+  { id: "npc-a", name: "小林", wealth: 60 },
+  { id: "npc-b", name: "阿杰", wealth: 120 },
   { id: "npc-c", name: "美玲", wealth: 200 },
 ];
 

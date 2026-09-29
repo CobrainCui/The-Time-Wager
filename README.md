@@ -65,6 +65,12 @@ npm run dev
 
 在 pm2 工作目录的 `server/.env` 中配置 `ADMIN_TOKEN` 后执行 `pm2 restart`。
 
+**仅支持单实例 Node**（`pm2 start` 一个进程）。不可使用 `pm2 start -i max` / cluster：局内状态在内存、归档文件非多进程安全。HTTP 与 Socket 限流也是进程内计数，扩容到多实例前必须迁到共享存储；Nginx 侧仍应配置连接限流。
+
+可用环境变量 `ALLOWED_ORIGINS`（逗号分隔）覆盖 CORS 白名单；生产默认仅允许玩家主域与管理子域。
+
+**数据备份**：以 `server/data/session_archive.json` 为唯一真相。社区财富榜在启动与归档时由档案派生，不再单独落盘。
+
 **管理后台「验证超时」**（WebSocket 已连上但 15 秒无响应）：说明 Node 未处理 `adminAuthenticate`，多为 **server 未部署最新 `dist`**。在服务器执行：
 
 ```bash
@@ -76,6 +82,12 @@ pm2 logs guangyin --lines 30   # 登录时应出现 [admin] authenticate request
 ```
 
 `.env` 格式：`ADMIN_TOKEN=密钥`（等号两侧勿加空格）。错误密钥应立刻提示「密钥无效」，不应等到超时。
+
+## 📚 相关文档
+
+- [产品演进方向.md](产品演进方向.md) — 未承诺的后续可能发展（系统 cue、时代主题等）
+- [决策基因系统设计文档.md](决策基因系统设计文档.md) — 人格测量与四维框架
+- [数据留存与导出说明.md](数据留存与导出说明.md) — 行为数据留存与导出原则
 
 ## ⚖️ License
 

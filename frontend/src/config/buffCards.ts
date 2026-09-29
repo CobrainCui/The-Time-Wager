@@ -25,7 +25,7 @@ export const BUFF_CARD_DEFS: Record<string, { name: string; desc: string; icon: 
   },
   buff_insurance: {
     name: "保险",
-    desc: "被动生效：当风险项目爆雷时，你获得 100 财富赔付。",
+    desc: "被动生效：当风险项目超上限投爆时，你获得 100 财富赔付。",
     icon: "🛡️",
     color: "#6366f1",
   },
@@ -34,12 +34,6 @@ export const BUFF_CARD_DEFS: Record<string, { name: string; desc: string; icon: 
     desc: "使用后立即获得 5 点精力，便于追加投资或应对消耗。",
     icon: "🔥",
     color: "#f97316",
-  },
-  buff_swap: {
-    name: "偷天换日",
-    desc: "在选座阶段指定一名对手，与其交换座位顺位。",
-    icon: "🔄",
-    color: "#a855f7",
   },
   buff_lottery: {
     name: "彩票",
@@ -61,7 +55,6 @@ export const AUCTION_CARDS_BY_ROUND: Record<number, { id: string; name: string }
   ],
   3: [
     { id: "buff_spirit", name: "精神老伙" },
-    { id: "buff_swap", name: "偷天换日" },
     { id: "buff_lottery", name: "彩票" },
   ],
 };

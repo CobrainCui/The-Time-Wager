@@ -18,19 +18,20 @@ jobs:
       with:
         node-version: '20'
 
-    - name: Build Frontend
+    - name: Lint and build frontend
       run: |
         cd frontend
-        npm install
+        npm ci
+        npm run lint
         npm run build
         cd dist
         zip -r ../../dist_upload.zip ./*
 
-    - name: Build Backend
+    - name: Test and build backend
       run: |
         cd server
-        npm install
-        npm run build
+        npm ci
+        npm test
         zip -r ../server_upload.zip dist/* package.json package-lock.json .env.example
 
     - name: Copy files via SCP
@@ -62,7 +63,7 @@ jobs:
           # 部署后端
           unzip -o /root/server_upload.zip -d /www/wwwroot/guangyinduidu.com/server/
           cd /www/wwwroot/guangyinduidu.com/server/
-          npm install --production
+          npm ci --omit=dev
           pm2 restart guangyin
           
           # 清理压缩包

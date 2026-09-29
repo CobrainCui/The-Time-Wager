@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "process:buffs": "node process_buffs.js"
+  },
   "dependencies": {
     "sharp": "^0.35.3",
     "string-similarity": "^4.0.4",

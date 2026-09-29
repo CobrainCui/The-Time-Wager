@@ -6,19 +6,26 @@ import {
   HELP_TABS,
   HelpTabId,
   HELP_RESOURCES,
-  HELP_PROJECT_RULES,
-  HELP_FLOW,
+  HELP_PROJECT_RULE_SECTIONS,
+  HELP_FLOW_OVERVIEW,
+  HELP_FLOW_SECTIONS,
   HELP_MISC,
   buildBuffHelpEntries,
 } from "../config/playerHelpReference";
 import {
-  PROJECT_CATALOG,
-  formatTop3,
-  formatShortBurstPenaltyTop3,
+  CatalogProjectType,
+  formatRankList,
+  formatShortBurstPenaltyForGame,
+  PROJECT_CATALOG_BY_ID,
+  ProjectCatalogEntry,
+  rankRewardsForGameProject,
+  resolveRankRewardTierCountFromGame,
+  SETTLEMENT_TIMING_SHORT,
 } from "../config/projectCatalog";
 import {
   buildProjectHelpRows,
-  settlementCaption,
+  buildAppearedCatalogEntries,
+  resolveProjectStatus,
   ProjectHelpRow,
 } from "../utils/projectHelpTable";
 import { HelpLine } from "./help/HelpLine";
@@ -38,7 +45,7 @@ const thStyle: React.CSSProperties = {
   fontWeight: 700,
   fontSize: uiRem(0.72),
   color: "var(--color-text-muted)",
-  textAlign: "left",
+  textAlign: "center",
   borderBottom: "1px solid var(--color-border)",
   whiteSpace: "nowrap",
 };
@@ -49,6 +56,59 @@ const tdStyle: React.CSSProperties = {
   borderBottom: "1px solid rgba(255,255,255,0.06)",
   verticalAlign: "middle",
 };
+
+const EMPTY_CELL_MARK = "—";
+
+const PLAYER_HELP_WIDTH_KEY = "player-help-sidebar-width";
+const PLAYER_HELP_MIN_WIDTH = 300;
+const PLAYER_HELP_MAX_WIDTH_DESKTOP = 900;
+
+function defaultOpenWidthPx(isDrawer: boolean): number {
+  const vw = window.innerWidth;
+  if (isDrawer) return Math.min(360, Math.round(vw * 0.92));
+  return Math.min(560, Math.round(vw * 0.58));
+}
+
+function maxOpenWidthPx(isDrawer: boolean): number {
+  const vw = window.innerWidth;
+  if (isDrawer) return Math.round(vw * 0.92);
+  return Math.min(PLAYER_HELP_MAX_WIDTH_DESKTOP, Math.round(vw * 0.85));
+}
+
+function clampOpenWidthPx(px: number, isDrawer: boolean): number {
+  return Math.round(Math.max(PLAYER_HELP_MIN_WIDTH, Math.min(maxOpenWidthPx(isDrawer), px)));
+}
+
+function readStoredOpenWidth(): number | null {
+  try {
+    const raw = localStorage.getItem(PLAYER_HELP_WIDTH_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function helpCellClass(value: string, extra?: string): string | undefined {
+  const classes = [extra, value === EMPTY_CELL_MARK ? "player-help-cell-empty" : undefined].filter(Boolean);
+  return classes.length > 0 ? classes.join(" ") : undefined;
+}
+
+const SETTLEMENT_LEGEND_TYPES: CatalogProjectType[] = ["short", "long", "risk"];
+
+function ProjectSettlementLegend() {
+  return (
+    <div className="player-help-settlement-legend" aria-label="三种项目结算方式">
+      {SETTLEMENT_LEGEND_TYPES.map((type) => (
+        <div key={type} className="player-help-settlement-legend-row">
+          <ProjectTypeLabel type={type} />
+          <span>{SETTLEMENT_TIMING_SHORT[type]}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function annotateDynamicRows(rows: ProjectHelpRow[]): { row: ProjectHelpRow; afterSeparator: boolean }[] {
   let afterSeparator = false;
@@ -63,6 +123,87 @@ function annotateDynamicRows(rows: ProjectHelpRow[]): { row: ProjectHelpRow; aft
   });
 }
 
+/** 与「不可再投项目」同一套列：名称 / 时代 / 类型 / 上限 / 回报 / 排名奖 / 投爆罚 / 状态 */
+function projectStatTableHeaders(rankTierCount: number): string[] {
+  return [
+    "名称",
+    "时代",
+    "类型",
+    "上限",
+    "回报",
+    `排名奖(1–${rankTierCount})`,
+    `投爆罚(1–${rankTierCount})`,
+    "状态",
+  ];
+}
+
+function ProjectStatTableCells({
+  name,
+  era,
+  projectType,
+  catalog,
+  statusChip,
+  statusTooltip,
+  statusChipColor,
+  game,
+}: {
+  name: string;
+  era: string;
+  projectType?: CatalogProjectType;
+  catalog?: ProjectCatalogEntry;
+  statusChip: string;
+  statusTooltip: string;
+  statusChipColor?: string;
+  game: GameState;
+}) {
+  const entry = catalog;
+  const maxEnergy = entry?.maxEnergy;
+  const returnHint = entry?.baseReturnHint ?? EMPTY_CELL_MARK;
+  const rankDisplay = entry ? formatRankList(rankRewardsForGameProject(game, entry)) : EMPTY_CELL_MARK;
+  const burstPenalty = entry ? formatShortBurstPenaltyForGame(game, entry) : EMPTY_CELL_MARK;
+
+  return (
+    <>
+      <td style={tdStyle}>{name}</td>
+      <td style={{ ...tdStyle, color: "var(--color-text-secondary)" }} className="player-help-cell-nowrap">
+        {era || EMPTY_CELL_MARK}
+      </td>
+      <td style={tdStyle}>
+        {projectType ? <ProjectTypeLabel type={projectType} /> : EMPTY_CELL_MARK}
+      </td>
+      <td style={{ ...tdStyle, fontFamily: "var(--font-mono)" }} className="player-help-cell-nowrap">
+        {maxEnergy ?? EMPTY_CELL_MARK}
+      </td>
+      <td style={tdStyle} className="player-help-cell-nowrap">
+        {returnHint}
+      </td>
+      <td style={{ ...tdStyle, fontFamily: "var(--font-mono)" }} className={helpCellClass(rankDisplay)}>
+        {rankDisplay}
+      </td>
+      <td
+        style={{
+          ...tdStyle,
+          fontFamily: "var(--font-mono)",
+          color: burstPenalty === EMPTY_CELL_MARK ? undefined : "#fca5a5",
+        }}
+        className={helpCellClass(burstPenalty)}
+      >
+        {burstPenalty}
+      </td>
+      <td style={tdStyle} className={helpCellClass(statusChip)}>
+        <span
+          className="player-help-status-chip"
+          style={statusChipColor ? { color: statusChipColor } : undefined}
+          title={statusTooltip}
+          aria-label={statusTooltip}
+        >
+          {statusChip}
+        </span>
+      </td>
+    </>
+  );
+}
+
 export const PlayerGameHelp: React.FC<Props> = ({
   open,
   onOpenChange,
@@ -71,13 +212,18 @@ export const PlayerGameHelp: React.FC<Props> = ({
   overlayWhenOpen = false,
 }) => {
   const [tab, setTab] = useState<HelpTabId>("projects_table");
+  const [openWidthPx, setOpenWidthPx] = useState<number | null>(() => readStoredOpenWidth());
+  const [isResizing, setIsResizing] = useState(false);
   const isDesktopLayout = useMediaQuery("(min-width: 768px)", true);
   const asideRef = useRef<HTMLElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const prevOpenRef = useRef(open);
+  const resizeDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const dynamicRows = useMemo(() => buildProjectHelpRows(game, me), [game, me]);
   const dynamicAnnotated = useMemo(() => annotateDynamicRows(dynamicRows), [dynamicRows]);
+  const appearedCatalog = useMemo(() => buildAppearedCatalogEntries(game, me), [game, me]);
+  const rankTierCount = resolveRankRewardTierCountFromGame(game);
   const buffEntries = useMemo(
     () =>
       buildBuffHelpEntries().sort(
@@ -145,24 +291,82 @@ export const PlayerGameHelp: React.FC<Props> = ({
     game.activeProjects.length === 0 &&
     (game.completedProjects?.length ?? 0) === 0 &&
     (game.uncompletedProjects?.length ?? 0) === 0
-      ? "本局尚未发牌，开战后这里会显示项目状态"
-      : "暂无项目记录";
+      ? "本局尚未发牌，开战后这里会显示你仍可投的项目"
+      : "当前没有仍可投的项目";
 
   const toggle = () => onOpenChange(!open);
   const useDrawerOverlay = open && !isDesktopLayout;
   const useDesktopOverlay = open && overlayWhenOpen && isDesktopLayout;
+  const isDrawerMode = useDrawerOverlay;
+
+  const openSidebarWidthPx = useMemo(() => {
+    if (!open) return null;
+    const base = openWidthPx ?? defaultOpenWidthPx(isDrawerMode);
+    return clampOpenWidthPx(base, isDrawerMode);
+  }, [open, openWidthPx, isDrawerMode]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onWindowResize = () => {
+      setOpenWidthPx((prev) => {
+        const base = prev ?? defaultOpenWidthPx(isDrawerMode);
+        return clampOpenWidthPx(base, isDrawerMode);
+      });
+    };
+    window.addEventListener("resize", onWindowResize);
+    return () => window.removeEventListener("resize", onWindowResize);
+  }, [open, isDrawerMode]);
+
+  const persistOpenWidth = (w: number) => {
+    const clamped = clampOpenWidthPx(w, isDrawerMode);
+    setOpenWidthPx(clamped);
+    try {
+      localStorage.setItem(PLAYER_HELP_WIDTH_KEY, String(clamped));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const onResizeHandlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const aside = asideRef.current;
+    if (!aside) return;
+    resizeDragRef.current = { startX: e.clientX, startWidth: aside.getBoundingClientRect().width };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setIsResizing(true);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  };
+
+  const onResizeHandlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeDragRef.current) return;
+    const delta = e.clientX - resizeDragRef.current.startX;
+    const next = clampOpenWidthPx(resizeDragRef.current.startWidth + delta, isDrawerMode);
+    setOpenWidthPx(next);
+  };
+
+  const endResizeHandle = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeDragRef.current) return;
+    resizeDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    setIsResizing(false);
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+    const w = asideRef.current?.getBoundingClientRect().width;
+    if (w) persistOpenWidth(w);
+  };
 
   const renderTabBody = (tabId: HelpTabId) => {
     if (tabId === "projects_table") {
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
           <section>
-            <h3 style={{ fontSize: uiRem(0.85), fontWeight: 800, color: "#60a5fa", marginBottom: "0.25rem" }}>
-              <span aria-hidden>🎯 </span>本局项目
+            <h3 style={{ fontSize: uiRem(1.1), fontWeight: 800, color: "#60a5fa", marginBottom: "0.65rem" }}>
+              <span aria-hidden style={{ fontSize: uiRem(1.2) }}>🎯 </span>可投项目
             </h3>
-            <p style={{ margin: "0 0 0.65rem", fontSize: uiRem(0.75), color: "var(--color-text-muted)" }}>
-              {settlementCaption(game)}
-            </p>
             {dynamicRows.length === 0 ? (
               <p style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}>{emptyDynamicHint}</p>
             ) : (
@@ -170,7 +374,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
                 <table className="player-help-table">
                   <thead>
                     <tr>
-                      {["名称", "类型", "进度", "状态"].map((h) => (
+                      {projectStatTableHeaders(rankTierCount).map((h) => (
                         <th key={h} scope="col" style={thStyle}>
                           {h}
                         </th>
@@ -182,29 +386,26 @@ export const PlayerGameHelp: React.FC<Props> = ({
                       if (row.kind === "separator") {
                         return (
                           <tr key={`sep-${idx}`} className="player-help-row-separator" aria-hidden>
-                            <td colSpan={4} />
+                            <td colSpan={8} />
                           </tr>
                         );
                       }
+                      const catalog = row.projectId != null ? PROJECT_CATALOG_BY_ID[row.projectId] : undefined;
                       return (
                         <tr
                           key={row.projectId}
                           className={afterSeparator ? "player-help-row-after-separator" : undefined}
                         >
-                          <td style={tdStyle}>{row.name}</td>
-                          <td style={tdStyle}>
-                            {row.projectType ? <ProjectTypeLabel type={row.projectType} /> : row.typeLabel}
-                          </td>
-                          <td style={{ ...tdStyle, fontFamily: "var(--font-mono)" }}>{row.progressHint}</td>
-                          <td style={tdStyle}>
-                            <span
-                              className="player-help-status-chip"
-                              title={row.status?.tooltip}
-                              aria-label={row.status?.tooltip}
-                            >
-                              {row.status?.chip}
-                            </span>
-                          </td>
+                          <ProjectStatTableCells
+                            name={row.name ?? `#${row.projectId}`}
+                            era={row.eraShort ?? catalog?.era ?? EMPTY_CELL_MARK}
+                            projectType={row.projectType ?? catalog?.type}
+                            catalog={catalog}
+                            statusChip={row.status?.chip ?? EMPTY_CELL_MARK}
+                            statusTooltip={row.status?.tooltip ?? ""}
+                            statusChipColor={row.status?.chipColor}
+                            game={game}
+                          />
                         </tr>
                       );
                     })}
@@ -215,43 +416,52 @@ export const PlayerGameHelp: React.FC<Props> = ({
           </section>
 
           <section>
-            <h3 style={{ fontSize: uiRem(0.85), fontWeight: 800, color: "#c084fc", marginBottom: "0.35rem" }}>
-              <span aria-hidden>📋 </span>全卡数值
+            <h3 style={{ fontSize: uiRem(1.1), fontWeight: 800, color: "#c084fc", marginBottom: "0.35rem" }}>
+              <span aria-hidden style={{ fontSize: uiRem(1.2) }}>📋 </span>不可再投项目
             </h3>
-            <p style={{ margin: "0 0 0.5rem", fontSize: uiRem(0.68), color: "var(--color-text-muted)" }}>
-              左右滑动查看
-            </p>
-            <div className="player-help-table-wrap">
-              <table className="player-help-table">
-                <thead>
-                  <tr>
-                    {["名称", "类型", "上限", "回报", "排名(前3)", "爆罚(前3)"].map((h) => (
-                      <th key={h} scope="col" style={thStyle}>
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {PROJECT_CATALOG.map((p) => (
-                    <tr key={p.id}>
-                      <td style={tdStyle}>{p.name}</td>
-                      <td style={tdStyle}>
-                        <ProjectTypeLabel type={p.type} />
-                      </td>
-                      <td style={{ ...tdStyle, fontFamily: "var(--font-mono)" }}>{p.maxEnergy}</td>
-                      <td style={tdStyle}>{p.baseReturnHint}</td>
-                      <td style={{ ...tdStyle, fontFamily: "var(--font-mono)" }}>
-                        {formatTop3(p.rankRewards)}
-                      </td>
-                      <td style={{ ...tdStyle, fontFamily: "var(--font-mono)", color: "#fca5a5" }}>
-                        {formatShortBurstPenaltyTop3(p)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {appearedCatalog.length === 0 ? (
+              <p style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}>
+                暂无不可再投的项目
+              </p>
+            ) : (
+              <>
+                <p style={{ margin: "0 0 0.5rem", fontSize: uiRem(0.68), color: "var(--color-text-muted)" }}>
+                  共 {appearedCatalog.length} 项 · 左右滑动查看
+                </p>
+                <div className="player-help-table-wrap">
+                  <table className="player-help-table">
+                    <thead>
+                      <tr>
+                        {projectStatTableHeaders(rankTierCount).map((h) => (
+                          <th key={h} scope="col" style={thStyle}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {appearedCatalog.map((p) => {
+                        const status = resolveProjectStatus(game, me, p.id);
+                        return (
+                          <tr key={p.id}>
+                            <ProjectStatTableCells
+                              name={p.name}
+                              era={p.era}
+                              projectType={p.type}
+                              catalog={p}
+                              statusChip={status.chip}
+                              statusTooltip={status.tooltip}
+                              statusChipColor={status.chipColor}
+                              game={game}
+                            />
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </section>
         </div>
       );
@@ -313,14 +523,55 @@ export const PlayerGameHelp: React.FC<Props> = ({
       );
     }
 
-    const lines =
-      tabId === "resources"
-        ? HELP_RESOURCES
-        : tabId === "projects_rules"
-          ? HELP_PROJECT_RULES
-          : tabId === "flow"
-            ? HELP_FLOW
-            : HELP_MISC;
+    if (tabId === "projects_rules" || tabId === "flow") {
+      const overview =
+        tabId === "projects_rules"
+          ? "项目的总收益 = 基础收益 + 排名奖惩 + 时代奖励"
+          : HELP_FLOW_OVERVIEW;
+      const sections = tabId === "projects_rules" ? HELP_PROJECT_RULE_SECTIONS : HELP_FLOW_SECTIONS;
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.1rem" }}>
+          <p
+            style={{
+              margin: 0,
+              padding: "0.55rem 0.75rem",
+              borderRadius: "0.65rem",
+              background: "rgba(96,165,250,0.08)",
+              border: "1px solid rgba(96,165,250,0.22)",
+              color: "#93c5fd",
+              fontSize: uiRem(0.9),
+              fontWeight: 700,
+              lineHeight: 1.45,
+            }}
+          >
+            {overview}
+          </p>
+          {sections.map((section) => (
+            <section key={section.title}>
+              <h3
+                style={{
+                  margin: "0 0 0.35rem",
+                  fontSize: uiRem(0.95),
+                  fontWeight: 800,
+                  color: "white",
+                }}
+              >
+                {section.title}
+              </h3>
+              <div>
+                {section.lines.map((line, i) => (
+                  <HelpLine key={i} icon={line.icon}>
+                    {line.text}
+                  </HelpLine>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      );
+    }
+
+    const lines = tabId === "resources" ? HELP_RESOURCES : HELP_MISC;
 
     return lines.map((line, i) => (
       <HelpLine key={i} icon={line.icon}>
@@ -335,7 +586,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
         <button
           type="button"
           className="player-help-backdrop"
-          aria-label="关闭说明速查"
+          aria-label="关闭说明书"
           onClick={() => onOpenChange(false)}
         />
       )}
@@ -344,8 +595,11 @@ export const PlayerGameHelp: React.FC<Props> = ({
         ref={asideRef}
         className={`player-help-sidebar${open ? " player-help-sidebar--open" : ""}${
           useDrawerOverlay ? " player-help-sidebar--drawer" : ""
-        }${useDesktopOverlay ? " player-help-sidebar--overlay" : ""}`}
-        aria-label="游戏说明速查"
+        }${useDesktopOverlay ? " player-help-sidebar--overlay" : ""}${
+          isResizing ? " player-help-sidebar--resizing" : ""
+        }`}
+        style={openSidebarWidthPx != null ? { width: openSidebarWidthPx } : undefined}
+        aria-label="游戏说明书"
       >
         <div className="player-help-sidebar-rail">
           <button
@@ -355,7 +609,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
             aria-label={open ? "收起说明" : "展开说明"}
             aria-expanded={open}
             aria-controls="player-help-sidebar-panel"
-            title="游戏说明速查"
+            title="游戏说明书"
             onClick={toggle}
           >
             ?
@@ -366,7 +620,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
           <div id="player-help-sidebar-panel" className="player-help-sidebar-panel">
             <div className="player-help-sidebar-header">
               <h2 id="player-help-title" style={{ margin: 0, fontWeight: 800, fontSize: uiRem(1.05), color: "white" }}>
-                说明速查
+                说明书
               </h2>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => onOpenChange(false)} aria-label="收起">
                 收起
@@ -393,12 +647,14 @@ export const PlayerGameHelp: React.FC<Props> = ({
                     className="player-help-tab"
                     onClick={() => setTab(t.id)}
                   >
-                    <span aria-hidden>{t.icon} </span>
-                    {t.title}
+                    <span className="player-help-tab-icon" aria-hidden>{t.icon}</span>
+                    <span>{t.title}</span>
                   </button>
                 );
               })}
             </div>
+
+            {tab === "projects_table" && <ProjectSettlementLegend />}
 
             <div className="player-help-sidebar-body">
               {HELP_TABS.map((t) => (
@@ -414,6 +670,20 @@ export const PlayerGameHelp: React.FC<Props> = ({
               ))}
             </div>
           </div>
+        )}
+
+        {open && (
+          <div
+            className="player-help-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖动调整说明栏宽度"
+            title="拖动调整宽度"
+            onPointerDown={onResizeHandlePointerDown}
+            onPointerMove={onResizeHandlePointerMove}
+            onPointerUp={endResizeHandle}
+            onPointerCancel={endResizeHandle}
+          />
         )}
       </aside>
     </>

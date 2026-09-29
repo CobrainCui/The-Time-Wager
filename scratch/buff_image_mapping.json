@@ -1,0 +1,75 @@
+{
+  "generatedAt": "2026-09-29T06:31:02.808Z",
+  "overrides": {
+    "6a3f9093562d5ee7862aa21a43604f1f.jpg": "buff_short",
+    "258a348c4c861b709fa56ae7d963e645.jpg": "buff_spirit",
+    "428de3951722ca19adc5c8fcf603d7a1.jpg": "buff_rebound",
+    "738bfe790096f7e6bdc605c9760a1a8e.jpg": "buff_insurance",
+    "d5f70bd24856b39920c60ef236b32917.jpg": "buff_slack",
+    "da7f7f6726ead1879612ffb2aec0982b.png": "buff_lottery",
+    "f35cdfddb14ef3ae3f3ed97258a6ef28.jpg": "buff_gold"
+  },
+  "notes": "在 overrides 中手工指定 源文件名→cardId 可跳过 OCR；改图后重新 npm run process:buffs",
+  "results": [
+    {
+      "file": "258a348c4c861b709fa56ae7d963e645.jpg",
+      "cardId": "buff_spirit",
+      "ocrText": "",
+      "confidence": null,
+      "method": "override"
+    },
+    {
+      "file": "428de3951722ca19adc5c8fcf603d7a1.jpg",
+      "cardId": "buff_rebound",
+      "ocrText": "",
+      "confidence": null,
+      "method": "override"
+    },
+    {
+      "file": "6a3f9093562d5ee7862aa21a43604f1f.jpg",
+      "cardId": "buff_short",
+      "ocrText": "",
+      "confidence": null,
+      "method": "override"
+    },
+    {
+      "file": "738bfe790096f7e6bdc605c9760a1a8e.jpg",
+      "cardId": "buff_insurance",
+      "ocrText": "",
+      "confidence": null,
+      "method": "override"
+    },
+    {
+      "file": "8ae8ab1ce513ec720ceff13b1ab47663.png",
+      "cardId": null,
+      "ocrText": "RN”从本一一一-=SEE一人人ES一一as一HA他一-有产>站一会-人人、一4国史5了ET一上|上本|-|中胃SA1SANSLC",
+      "confidence": null,
+      "method": "ocr"
+    },
+    {
+      "file": "d5f70bd24856b39920c60ef236b32917.jpg",
+      "cardId": "buff_slack",
+      "ocrText": "",
+      "confidence": null,
+      "method": "override"
+    },
+    {
+      "file": "da7f7f6726ead1879612ffb2aec0982b.png",
+      "cardId": "buff_lottery",
+      "ocrText": "",
+      "confidence": null,
+      "method": "override"
+    },
+    {
+      "file": "f35cdfddb14ef3ae3f3ed97258a6ef28.jpg",
+      "cardId": "buff_gold",
+      "ocrText": "",
+      "confidence": null,
+      "method": "override"
+    }
+  ],
+  "missingCardIds": [],
+  "unmappedFiles": [
+    "8ae8ab1ce513ec720ceff13b1ab47663.png"
+  ]
+}

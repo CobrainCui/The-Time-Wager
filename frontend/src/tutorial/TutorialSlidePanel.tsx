@@ -61,64 +61,119 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
   }, [step]);
 
   const DemoComponent = slide.demoKey ? TUTORIAL_DEMO_BY_KEY[slide.demoKey] : undefined;
+  const isIntro = Boolean(slide.intro);
   const isFinale = Boolean(slide.finale);
+  const isHero = isIntro || isFinale;
 
-  const iconSize = isFinale
+  const iconSize = isIntro
     ? fitViewport
-      ? "3.75rem"
+      ? "4.5rem"
       : compact
+        ? "4.25rem"
+        : "5.5rem"
+    : isFinale
+      ? fitViewport
         ? "3.75rem"
-        : "5rem"
-    : fitViewport
-      ? "2.5rem"
-      : compact
-        ? "3rem"
-        : "4rem";
-  const titleSize = isFinale
+        : compact
+          ? "3.75rem"
+          : "5rem"
+      : fitViewport
+        ? "2.5rem"
+        : compact
+          ? "3rem"
+          : "4rem";
+  const titleSize = isIntro
     ? fitViewport
-      ? "2.05rem"
+      ? "2.35rem"
       : compact
-        ? "2rem"
-        : "2.75rem"
-    : fitViewport
-      ? "1.5rem"
-      : compact
-        ? "1.75rem"
-        : "2.25rem";
-  const contentPadding = isFinale
+        ? "2.25rem"
+        : "3rem"
+    : isFinale
+      ? fitViewport
+        ? "2.05rem"
+        : compact
+          ? "2rem"
+          : "2.75rem"
+      : fitViewport
+        ? "1.5rem"
+        : compact
+          ? "1.75rem"
+          : "2.25rem";
+  const contentPadding = isIntro
     ? fitViewport
-      ? "1.75rem 1.5rem"
+      ? "2rem 1.75rem"
       : compact
+        ? "2rem 1.75rem"
+        : "3.25rem 2.75rem"
+    : isFinale
+      ? fitViewport
         ? "1.75rem 1.5rem"
-        : "3rem 2.5rem"
-    : fitViewport
-      ? "1.5rem 1.25rem"
-      : compact
+        : compact
+          ? "1.75rem 1.5rem"
+          : "3rem 2.5rem"
+      : fitViewport
         ? "1.5rem 1.25rem"
-        : "2.5rem 2rem";
-  const iconMb = isFinale ? (fitViewport ? "0.85rem" : "1.35rem") : fitViewport ? "0.5rem" : compact ? "1rem" : "1.25rem";
-  const titleMb = isFinale ? (fitViewport ? "1rem" : "1.5rem") : fitViewport ? "0.65rem" : compact ? "1rem" : "1.5rem";
-  const lineFont = isFinale ? uiRem(fitViewport ? 1.1 : 1.15) : fitViewport ? uiRem(0.9) : uiRem(1);
-  const linePad = isFinale ? "0.55rem 0" : fitViewport ? "0.35rem 0" : "0.5rem 0";
-  const copyPadding = isFinale
+        : compact
+          ? "1.5rem 1.25rem"
+          : "2.5rem 2rem";
+  const iconMb = isIntro
     ? fitViewport
-      ? "1.35rem 1.5rem"
-      : "1.5rem 1.75rem"
-    : fitViewport
-      ? "0.75rem"
-      : "1.25rem";
-  const dotsMt = isFinale ? (fitViewport ? "1rem" : "1.75rem") : fitViewport ? "0.65rem" : "1.5rem";
+      ? "1rem"
+      : "1.5rem"
+    : isFinale
+      ? fitViewport
+        ? "0.85rem"
+        : "1.35rem"
+      : fitViewport
+        ? "0.5rem"
+        : compact
+          ? "1rem"
+          : "1.25rem";
+  const titleMb = isIntro
+    ? fitViewport
+      ? "1.15rem"
+      : "1.65rem"
+    : isFinale
+      ? fitViewport
+        ? "1rem"
+        : "1.5rem"
+      : fitViewport
+        ? "0.65rem"
+        : compact
+          ? "1rem"
+          : "1.5rem";
+  const lineFont = isIntro
+    ? uiRem(fitViewport ? 1.18 : 1.22)
+    : isFinale
+      ? uiRem(fitViewport ? 1.1 : 1.15)
+      : fitViewport
+        ? uiRem(0.9)
+        : uiRem(1);
+  const linePad = isIntro ? "0.65rem 0" : isFinale ? "0.55rem 0" : fitViewport ? "0.35rem 0" : "0.5rem 0";
+  const copyPadding = isIntro
+    ? fitViewport
+      ? "1.5rem 1.75rem"
+      : "1.75rem 2rem"
+    : isFinale
+      ? fitViewport
+        ? "1.35rem 1.5rem"
+        : "1.5rem 1.75rem"
+      : fitViewport
+        ? "0.75rem"
+        : "1.25rem";
+  const dotsMt = isHero ? (fitViewport ? "1rem" : "1.75rem") : fitViewport ? "0.65rem" : "1.5rem";
   const footerMt = fitViewport ? "0.5rem" : "1rem";
-  const footerFont = isFinale ? uiRem(0.9) : uiRem(0.8);
-  const bulletFont = isFinale ? uiRem(1.05) : undefined;
+  const footerFont = isIntro ? uiRem(0.95) : isFinale ? uiRem(0.9) : uiRem(0.8);
+  const bulletFont = isIntro ? uiRem(1.12) : isFinale ? uiRem(1.05) : undefined;
+  const heroCopyClass = isHero ? " tutorial-slide-panel__copy--hero" : "";
 
   const copyBlock = (
     <div
       className={
         fitViewport
-          ? `tutorial-slide-panel__copy${isFinale ? " tutorial-slide-panel__copy--finale" : ""}`
-          : isFinale
-            ? "tutorial-slide-panel__copy--finale"
+          ? `tutorial-slide-panel__copy${heroCopyClass}`
+          : isHero
+            ? `tutorial-slide-panel__copy${heroCopyClass}`
             : undefined
       }
       style={{
@@ -252,8 +307,8 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
       <div
         className={
           fitViewport
-            ? `tutorial-slide-panel tutorial-slide-panel--fit${DemoComponent ? "" : " tutorial-slide-panel--no-demo"}${isFinale ? " tutorial-slide-panel--finale" : ""}`
-            : `tutorial-slide-panel${isFinale ? " tutorial-slide-panel--finale" : ""}`
+            ? `tutorial-slide-panel tutorial-slide-panel--fit${DemoComponent ? "" : " tutorial-slide-panel--no-demo"}${isIntro ? " tutorial-slide-panel--intro" : ""}${isFinale ? " tutorial-slide-panel--finale" : ""}`
+            : `tutorial-slide-panel${isIntro ? " tutorial-slide-panel--intro" : ""}${isFinale ? " tutorial-slide-panel--finale" : ""}`
         }
         data-demo-key={slide.demoKey ?? "none"}
         style={

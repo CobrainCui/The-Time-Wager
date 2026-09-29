@@ -1,7 +1,7 @@
 export type TutorialDemoKey =
   | "resources"
   | "projectTypes"
-  | "drafting"
+  | "tiedRank"
   | "eraTheme"
   | "auction"
   | "transferAndMessage"

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { BACKEND_URL } from "../socket";
 import { BUFF_CARD_DEFS } from "../config/buffCards";
 import { uiRem } from "../utils/typography";
+import { getBuffDefaultImageSrc, getBuffImageDisplay } from "../utils/gameImageDisplay";
 
 interface Props {
   cardId: string;
@@ -12,14 +12,23 @@ interface Props {
 
 export const BuffCardArt: React.FC<Props> = ({ cardId, buffImages = {}, compact, onImageBroken }) => {
   const def = BUFF_CARD_DEFS[cardId] || { name: cardId, desc: "", icon: "🃏", color: "#a855f7" };
-  const v = buffImages[cardId];
-  const hasImage = v != null && v > 0;
-  const [broken, setBroken] = useState(false);
-  const showImage = hasImage && !broken;
+  const resolved = getBuffImageDisplay(cardId, buffImages);
+  const [imgSrc, setImgSrc] = useState(resolved.src);
+  const [showPlaceholder, setShowPlaceholder] = useState(false);
 
   useEffect(() => {
-    setBroken(false);
-  }, [cardId, v]);
+    setImgSrc(resolved.src);
+    setShowPlaceholder(false);
+  }, [cardId, resolved.src]);
+
+  const handleError = () => {
+    if (resolved.source === "custom") {
+      setImgSrc(getBuffDefaultImageSrc(cardId));
+      return;
+    }
+    setShowPlaceholder(true);
+    onImageBroken?.();
+  };
 
   return (
     <div
@@ -35,15 +44,12 @@ export const BuffCardArt: React.FC<Props> = ({ cardId, buffImages = {}, compact,
         position: "relative",
       }}
     >
-      {showImage ? (
+      {!showPlaceholder ? (
         <img
-          src={`${BACKEND_URL}/uploads_buffs/${cardId}.jpg?v=${v}`}
+          src={imgSrc}
           alt={def.name}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          onError={() => {
-            setBroken(true);
-            onImageBroken?.();
-          }}
+          onError={handleError}
         />
       ) : (
         <div

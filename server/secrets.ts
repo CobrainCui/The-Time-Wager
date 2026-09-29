@@ -21,4 +21,24 @@ export const AnalysisWeights = {
     roi_threshold_long: 15,
     roi_threshold_short: 13,
     roi_multiplier_risk: 5,
+
+    w_short_ratio: 0.55,
+    /** 风险精力占比高于此且未用保险时，额外加风险分 */
+    naked_risk_energy_ratio_min: 0.12,
+    naked_risk_bonus: 8,
+};
+
+/** 命运素描分层判定阈值（与 AnalysisWeights 一同版本化） */
+export const FateSketchThresholds = {
+    bridgeSocialMin: 100,
+    gardenerLongTermMin: 62,
+    compassLongTermMax: 58,
+    compassRiskMax: 38,
+    compassRuleMax: 38,
+    compassRoiMin: 42,
+    triggerRiskMin: 48,
+    triggerSecondaryMin: 42,
+    alchemistShortTermMin: 48,
+    alchemistRuleMin: 38,
+    alchemistRiskMax: 52,
 };

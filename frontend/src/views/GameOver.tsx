@@ -3,118 +3,94 @@ import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { FATE_SKETCH_PERSONA_COLORS } from "../config/personaConfig";
 import {
-  Chart as ChartJS, RadialLinearScale, PointElement, LineElement,
+  Chart as ChartJS, RadialLinearScale, PointElement, LineElement, BarElement,
   Filler, Tooltip, Legend, CategoryScale, LinearScale, Title
 } from "chart.js";
-import { Radar, Line } from "react-chartjs-2";
-import { generateCollectionManual } from "../utils/pdfGenerator";
-import { buildPdfUnfinishedProjects, PDF_LINE_CHART_ID, PDF_RADAR_CHART_ID } from "../utils/gameOverPdf";
+import { Radar, Line, Bar } from "react-chartjs-2";
+import {
+  buildPdfProjectParticipationChart,
+  buildPdfUnfinishedProjects,
+  PDF_LINE_CHART_ID,
+  PDF_PROJECT_BAR_CHART_ID,
+  PDF_RADAR_CHART_ID,
+} from "../utils/gameOverPdf";
 import { CommunityLeaderboard } from "../components/CommunityLeaderboard";
-import { PDF_LINE_CAPTURE, PDF_RADAR_CAPTURE } from "../utils/pdfLayout";
+import {
+  PDF_LINE_CAPTURE,
+  PDF_PROJECT_BAR_CAPTURE,
+  PDF_RADAR_CAPTURE,
+} from "../utils/pdfLayout";
+import {
+  buildPdfChartOptions,
+  buildPdfLineChartData,
+  buildPdfLineChartOptions,
+  buildPdfProjectBarChartData,
+  buildPdfProjectBarChartOptions,
+  buildPdfRadarChartData,
+  resolveFateSketchAccent,
+} from "../utils/playerManualPdfCharts";
+import { normalizePersonaScores } from "../utils/personaReport";
+import {
+  buildGameOverRadarDataset,
+  PersonaBehaviorProfile,
+  PersonaPrimaryHero,
+  PersonaSecondaryHints,
+} from "../components/PersonaReportSections";
+import { PersonaTypeModal } from "../components/PersonaTypeModal";
 
-ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend, CategoryScale, LinearScale, Title);
+ChartJS.register(RadialLinearScale, PointElement, LineElement, BarElement, Filler, Tooltip, Legend, CategoryScale, LinearScale, Title);
 
-interface Props { game: GameState; me?: Player; }
+interface Props {
+  game: GameState;
+  me?: Player;
+  personaImages?: Record<string, number>;
+}
 
-const pdfChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: false as const,
-  plugins: { legend: { display: false } },
-  scales: {
-    r: {
-      min: 0,
-      max: 100,
-      ticks: { display: false },
-      pointLabels: { font: { size: 32 }, color: "black" },
-      grid: { color: "rgba(0,0,0,0.3)", lineWidth: 2 },
-      angleLines: { color: "rgba(0,0,0,0.25)" },
-    },
-  },
-};
-
-const pdfLineChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: false as const,
-  plugins: { legend: { display: false } },
-  scales: {
-    x: {
-      ticks: { color: "#374151", font: { size: 22 } },
-      grid: { display: false },
-    },
-    y: {
-      ticks: { color: "#374151", font: { size: 22 } },
-      grid: { color: "rgba(0,0,0,0.12)" },
-    },
-  },
-};
-
-export const GameOver: React.FC<Props> = ({ game, me }) => {
+export const GameOver: React.FC<Props> = ({ game, me, personaImages = {} }) => {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState<string | null>(null);
   const [pdfFeedback, setPdfFeedback] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [personaModalName, setPersonaModalName] = useState<string | null>(null);
 
   const sortedPlayers = [...game.players].sort((a, b) => b.wealth - a.wealth);
   const totalWealth = game.players.reduce((s, p) => s + p.wealth, 0);
   const myResult = me?.analysisResult;
-  const personaColor = myResult
-    ? (FATE_SKETCH_PERSONA_COLORS[myResult.primaryPersona] || "#60a5fa")
-    : "#60a5fa";
-
-  const radarData = {
-    labels: ["长期主义", "风险倾向", "规则干预", "社交连接", "资源转化"],
-    datasets: [{
-      label: "决策五维",
-      data: myResult
-        ? [myResult.scores.longTermism, myResult.scores.riskTaking, myResult.scores.ruleIntervention, myResult.scores.socialConnection, myResult.scores.resourceConversion]
-        : [0, 0, 0, 0, 0],
-      backgroundColor: `${personaColor}30`,
-      borderColor: personaColor,
-      borderWidth: 3,
-      pointBackgroundColor: personaColor,
-      pointRadius: 5,
-    }],
-  };
-
-  const pdfRadarData = {
-    ...radarData,
-    datasets: [{
-      ...radarData.datasets[0],
-      borderColor: "#111827",
-      backgroundColor: "rgba(17,24,39,0.08)",
-      pointBackgroundColor: "#111827",
-      borderWidth: 2,
-      pointRadius: 4,
-    }],
-  };
+  const personaColor = me ? resolveFateSketchAccent(me) : "#60a5fa";
+  const normalizedScores = myResult
+    ? normalizePersonaScores(myResult.scores)
+    : null;
 
   const wealthHistory = me?.wealthHistory?.length ? me.wealthHistory : [me?.wealth ?? 0];
 
+  const radarData =
+    me && normalizedScores
+      ? buildGameOverRadarDataset(normalizedScores, personaColor)
+      : null;
+
   const lineData = {
     labels: wealthHistory.map((_, i) => `R${i}`),
-    datasets: [{
-      label: "财富曲线",
-      data: wealthHistory,
-      borderColor: "#60a5fa",
-      backgroundColor: "rgba(96,165,250,0.1)",
-      borderWidth: 3,
-      pointRadius: 0,
-      tension: 0.4,
-      fill: true,
-    }],
+    datasets: [
+      {
+        label: "财富曲线",
+        data: wealthHistory,
+        borderColor: "#60a5fa",
+        backgroundColor: "rgba(96,165,250,0.1)",
+        borderWidth: 3,
+        pointRadius: 0,
+        tension: 0.4,
+        fill: true,
+      },
+    ],
   };
 
-  const pdfLineData = {
-    ...lineData,
-    datasets: [{
-      ...lineData.datasets[0],
-      borderColor: "#111827",
-      backgroundColor: "rgba(17,24,39,0.08)",
-      borderWidth: 2,
-      tension: 0.4,
-      fill: true,
-    }],
-  };
+  const pdfRadarData = me ? buildPdfRadarChartData(me) : null;
+  const pdfLineData = me ? buildPdfLineChartData(me) : null;
+  const pdfProjectParticipation = me
+    ? buildPdfProjectParticipationChart(game, me)
+    : null;
+  const pdfProjectBarData = pdfProjectParticipation
+    ? buildPdfProjectBarChartData(pdfProjectParticipation)
+    : null;
 
   const rankBadge = (i: number) => {
     if (i === 0) return { bg: "#f59e0b", color: "#000", text: "🥇" };
@@ -126,15 +102,20 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
   const handleExportPdf = async () => {
     if (!me || !myResult || isGeneratingPdf) return;
     setPdfFeedback(null);
+    setPdfProgress("正在准备 PDF…");
     setIsGeneratingPdf(true);
     try {
+      const { generateCollectionManual } = await import("../utils/pdfGenerator");
       const result = await generateCollectionManual({
         playerName: me.name,
         persona: myResult.primaryPersona,
         remainingEnergy: me.energy,
         unfinishedProjects: buildPdfUnfinishedProjects(game, me),
+        projectParticipationChart: buildPdfProjectParticipationChart(game, me),
         radarChartElementId: PDF_RADAR_CHART_ID,
         lineChartElementId: PDF_LINE_CHART_ID,
+        projectBarChartElementId: PDF_PROJECT_BAR_CHART_ID,
+        onProgress: setPdfProgress,
       });
       if (result.ok) {
         const warn =
@@ -147,6 +128,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
       setPdfFeedback({ type: "err", text: "生成 PDF 失败，请稍后重试" });
     } finally {
       setIsGeneratingPdf(false);
+      setPdfProgress(null);
     }
   };
 
@@ -256,11 +238,8 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
         {me && myResult && (
           <div style={{ marginBottom: "2rem" }}>
             <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
-              <h3 style={{ fontSize: uiRem(1.1), fontWeight: 800, color: "white", marginBottom: "0.35rem" }}>
-                你的命运素描
-              </h3>
               <p style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)", margin: 0 }}>
-                根据本局决策行为生成的专属人格类型
+                根据本局行为判断的风格类型
               </p>
             </div>
 
@@ -277,17 +256,26 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                 marginBottom: "1rem",
               }}
             >
-              <div style={{ fontSize: "clamp(1.5rem, 5vw, 1.75rem)", fontWeight: 900, color: personaColor, lineHeight: 1.2 }}>
-                {myResult.primaryPersona}
-              </div>
-              {myResult.primaryPersonaDesc && (
-                <div style={{ fontSize: uiRem(0.9), color: "var(--color-text-secondary)", lineHeight: 1.55 }}>
-                  {myResult.primaryPersonaDesc}
-                </div>
+              <PersonaPrimaryHero
+                personaName={myResult.primaryPersona}
+                serverDesc={myResult.primaryPersonaDesc}
+                personaImages={personaImages}
+              />
+              <PersonaSecondaryHints
+                result={myResult}
+                onOpenPersona={(name) => setPersonaModalName(name)}
+              />
+              {normalizedScores && me && (
+                <PersonaBehaviorProfile
+                  scores={normalizedScores}
+                  game={game}
+                  meId={me.id}
+                  accent={personaColor}
+                />
               )}
-              <div style={{ height: "220px" }} aria-label="决策五维雷达图">
+              <div style={{ height: "240px", marginTop: "0.75rem" }} aria-label="行为六维雷达图">
                 <Radar
-                  data={radarData}
+                  data={radarData!}
                   options={{
                     responsive: true,
                     maintainAspectRatio: false,
@@ -296,7 +284,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                       r: {
                         min: 0, max: 100,
                         ticks: { display: false },
-                        pointLabels: { font: { size: 11 }, color: "#94a3b8" },
+                        pointLabels: { font: { size: 10 }, color: "#94a3b8" },
                         grid: { color: "rgba(255,255,255,0.06)" },
                         angleLines: { color: "rgba(255,255,255,0.06)" },
                       },
@@ -350,7 +338,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
                   minWidth: "12rem",
                 }}
               >
-                {isGeneratingPdf ? "正在生成 PDF…" : "📄 导出《人生决策手册》"}
+                {isGeneratingPdf ? pdfProgress || "正在生成 PDF…" : "📄 导出《人生决策手册》"}
               </button>
             )}
           </div>
@@ -372,7 +360,7 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
         </div>
       </div>
 
-      {me && myResult && (
+      {me && myResult && pdfRadarData && pdfLineData && pdfProjectBarData && (
       <div
         id="pdf-charts-hidden-container"
         aria-hidden="true"
@@ -381,8 +369,8 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
           left: 0,
           top: 0,
           transform: "translateX(-120vw)",
-          width: `${PDF_RADAR_CAPTURE.width}px`,
-          height: `${PDF_RADAR_CAPTURE.height + PDF_LINE_CAPTURE.height}px`,
+          width: `${Math.max(PDF_RADAR_CAPTURE.width, PDF_LINE_CAPTURE.width, PDF_PROJECT_BAR_CAPTURE.width)}px`,
+          height: `${PDF_RADAR_CAPTURE.height + PDF_LINE_CAPTURE.height + PDF_PROJECT_BAR_CAPTURE.height}px`,
           opacity: 1,
           pointerEvents: "none",
           zIndex: -1,
@@ -397,7 +385,11 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
             background: "#ffffff",
           }}
         >
-          <Radar data={pdfRadarData} options={pdfChartOptions} />
+          <Radar
+            key={personaColor}
+            data={pdfRadarData}
+            options={buildPdfChartOptions(personaColor)}
+          />
         </div>
         <div
           id={PDF_LINE_CHART_ID}
@@ -407,9 +399,35 @@ export const GameOver: React.FC<Props> = ({ game, me }) => {
             background: "#ffffff",
           }}
         >
-          <Line data={pdfLineData} options={pdfLineChartOptions} />
+          <Line
+            key={personaColor}
+            data={pdfLineData}
+            options={buildPdfLineChartOptions(personaColor)}
+          />
+        </div>
+        <div
+          id={PDF_PROJECT_BAR_CHART_ID}
+          style={{
+            width: `${PDF_PROJECT_BAR_CAPTURE.width}px`,
+            height: `${PDF_PROJECT_BAR_CAPTURE.height}px`,
+            background: "#ffffff",
+          }}
+        >
+          <Bar
+            key={pdfProjectBarData.datasets[0].data.join("-")}
+            data={pdfProjectBarData}
+            options={buildPdfProjectBarChartOptions(pdfProjectParticipation!)}
+          />
         </div>
       </div>
+      )}
+
+      {personaModalName && (
+        <PersonaTypeModal
+          personaName={personaModalName}
+          personaImages={personaImages}
+          onClose={() => setPersonaModalName(null)}
+        />
       )}
     </div>
   );

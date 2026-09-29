@@ -3,14 +3,18 @@ import { socket } from "./socket";
 import { GameState } from "./types";
 import GameRoom from "./GameRoom";
 import { Lobby } from "./views/Lobby";
-import { clearGameSession, loadGameSession } from "./gameSession";
+import { clearGameSession, loadGameSession, saveReconnectToken } from "./gameSession";
 import { ConnectionGate } from "./components/ConnectionGate";
 import { useSocketConnection } from "./hooks/useSocketConnection";
 
 function tryRejoinFromSession() {
   const session = loadGameSession();
   if (session) {
-    socket.emit("joinGame", { roomId: session.roomId, name: session.playerName });
+    socket.emit("joinGame", {
+      roomId: session.roomId,
+      name: session.playerName,
+      reconnectToken: session.reconnectToken,
+    });
   }
 }
 
@@ -21,6 +25,7 @@ function App() {
   const [projectImages, setProjectImages] = useState<Record<number, number>>({});
   const [eraImages, setEraImages] = useState<Record<string, number>>({});
   const [buffImages, setBuffImages] = useState<Record<string, number>>({});
+  const [personaImages, setPersonaImages] = useState<Record<string, number>>({});
   const [playerNotify, setPlayerNotify] = useState<string | null>(null);
 
   useEffect(() => {
@@ -33,7 +38,16 @@ function App() {
     const onConnect = () => tryRejoinFromSession();
 
     const onGameUpdate = (newGame: GameState) => setGame(newGame);
-    const onPlayerJoined = ({ playerId }: { playerId: string }) => setMyPlayerId(playerId);
+    const onPlayerJoined = ({ playerId, reconnectToken }: { playerId: string; reconnectToken?: string }) => {
+      setMyPlayerId(playerId);
+      if (reconnectToken) saveReconnectToken(reconnectToken);
+    };
+    const onSessionReplaced = ({ message }: { message?: string }) => {
+      alert(message || "你的身份已在其他页面登录");
+      clearGameSession();
+      setGame(null);
+      setMyPlayerId("");
+    };
     const onRoomDissolved = () => {
       alert("⚠️ 房间已被管理员解散！");
       clearGameSession();
@@ -51,6 +65,7 @@ function App() {
     const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
     const onSyncEraImages = (images: Record<string, number>) => setEraImages(images);
     const onSyncBuffImages = (images: Record<string, number>) => setBuffImages(images);
+    const onSyncPersonaImages = (images: Record<string, number>) => setPersonaImages(images);
 
     socket.on("connect", onConnect);
     socket.on("gameUpdate", onGameUpdate);
@@ -58,10 +73,12 @@ function App() {
     socket.on("roomDissolved", onRoomDissolved);
     socket.on("error", onError);
     socket.on("playerKicked", onPlayerKicked);
+    socket.on("sessionReplaced", onSessionReplaced);
     socket.on("playerNotify", onPlayerNotify);
     socket.on("syncProjectImages", onSyncImages);
     socket.on("syncEraImages", onSyncEraImages);
     socket.on("syncBuffImages", onSyncBuffImages);
+    socket.on("syncPersonaImages", onSyncPersonaImages);
 
     if (socket.connected) tryRejoinFromSession();
 
@@ -72,10 +89,12 @@ function App() {
       socket.off("roomDissolved", onRoomDissolved);
       socket.off("error", onError);
       socket.off("playerKicked", onPlayerKicked);
+      socket.off("sessionReplaced", onSessionReplaced);
       socket.off("playerNotify", onPlayerNotify);
       socket.off("syncProjectImages", onSyncImages);
       socket.off("syncEraImages", onSyncEraImages);
       socket.off("syncBuffImages", onSyncBuffImages);
+      socket.off("syncPersonaImages", onSyncPersonaImages);
     };
   }, []);
 
@@ -115,6 +134,7 @@ function App() {
             projectImages={projectImages}
             eraImages={eraImages}
             buffImages={buffImages}
+            personaImages={personaImages}
             onExit={handleExitRoom}
           />
         </>

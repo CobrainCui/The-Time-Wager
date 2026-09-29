@@ -5,7 +5,7 @@ const ITEMS = [
   { id: "energy", label: "每轮精力会重置，鼓励花完" },
   { id: "long", label: "长期项目断供（<3）会放弃前期投入" },
   { id: "risk", label: "风险项目超上限会倒扣历史收益" },
-  { id: "seat", label: "财富少者优先选座，影响长期占位" },
+  { id: "tie", label: "投入相同则并列，共享奖励/惩罚/时代加成" },
   { id: "era", label: "时代加成：短期恰好满额/长期满或超，契合主题第 1 名；短期爆与风险无" },
   { id: "auction", label: "拍卖会用财富竞拍 Buff 卡" },
   { id: "transfer", label: "右侧一对一对话框可转账；不填金额并留言即私信" },

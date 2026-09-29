@@ -1,3 +1,5 @@
+import { FATE_SKETCH_IMAGE_SLUG } from "../config/personaConfig";
+import { publicAssetUrl } from "./publicAssetUrl";
 import { BACKEND_URL } from "../socket";
 
 export type ImageSource = "custom" | "default";
@@ -49,5 +51,54 @@ export function getBuffCustomImageSrc(cardId: string, buffImages: Record<string,
 
 export function hasBuffCustomImage(cardId: string, buffImages: Record<string, number>): boolean {
   const v = buffImages[cardId];
+  return v != null && v > 0;
+}
+
+const BUFF_DEFAULT_VERSION = "1";
+
+export function getBuffDefaultImageSrc(cardId: string): string {
+  return publicAssetUrl(`/images/buffs/${cardId}.jpg?v=${BUFF_DEFAULT_VERSION}`);
+}
+
+export function getBuffImageDisplay(
+  cardId: string,
+  buffImages: Record<string, number>,
+): ResolvedImage {
+  if (hasBuffCustomImage(cardId, buffImages)) {
+    return {
+      src: getBuffCustomImageSrc(cardId, buffImages)!,
+      source: "custom",
+    };
+  }
+  return {
+    src: getBuffDefaultImageSrc(cardId),
+    source: "default",
+  };
+}
+
+export function getPersonaImageSlug(personaName: string): string {
+  return FATE_SKETCH_IMAGE_SLUG[personaName] ?? "Poet";
+}
+
+export function getPersonaImageDisplay(
+  personaName: string,
+  personaImages: Record<string, number>,
+): ResolvedImage {
+  const slug = getPersonaImageSlug(personaName);
+  const version = personaImages[slug];
+  if (version != null && version > 0) {
+    return {
+      src: `${BACKEND_URL}/uploads_personas/${slug}.jpg?v=${version}`,
+      source: "custom",
+    };
+  }
+  return {
+    src: publicAssetUrl(`/assets/pdf_templates/${slug}/1.jpg`),
+    source: "default",
+  };
+}
+
+export function hasPersonaCustomImage(slug: string, personaImages: Record<string, number>): boolean {
+  const v = personaImages[slug];
   return v != null && v > 0;
 }

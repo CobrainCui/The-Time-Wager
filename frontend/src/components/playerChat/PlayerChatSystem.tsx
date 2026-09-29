@@ -7,25 +7,30 @@ import {
   badgeCount,
   formatBadge,
   formatBubbleText,
+  isOptimisticMatchForTx,
   mergeThreadMessages,
   messageStatusMeta,
   msgFromTx,
+  newClientTempId,
   sortMessages,
 } from "./chatMessageUtils";
 
 const NOTE_MAX = 500;
+/** 乐观气泡超时未对账则标为发送失败 */
+const OPTIMISTIC_TIMEOUT_MS = 8_000;
 
 function txInvolvesMe(tx: Transaction, myId: string): boolean {
   return tx.fromId === myId || tx.toId === myId;
 }
 
-function optimisticMessage(peerId: string, amount: number, note: string): ChatMessage {
+function optimisticMessage(peerId: string, amount: number, note: string, clientTempId: string): ChatMessage {
   return {
-    id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    id: clientTempId,
+    clientTempId,
     direction: "out",
     amount,
     note: note.trim(),
-    status: amount === 0 ? "accepted" : "pending",
+    status: "pending",
     timestamp: Date.now(),
     peerId,
   };
@@ -56,7 +61,7 @@ const QuickComposer: React.FC<{
       setAmount("");
       setNote("");
     }
-    window.setTimeout(() => setSending(false), 400);
+    window.setTimeout(() => setSending(false), 350);
   };
 
   return (
@@ -190,7 +195,12 @@ const ChatPanel: React.FC<{
         {displayMessages.map((m) => {
           const meta = messageStatusMeta(m);
           return (
-            <div key={m.id} className={`player-chat-bubble ${m.direction === "out" ? "out" : "in"}`}>
+            <div
+              key={m.clientTempId || m.txId || m.id}
+              className={`player-chat-bubble ${m.direction === "out" ? "out" : "in"}${
+                m.status === "failed" ? " failed" : ""
+              }`}
+            >
               <div>{formatBubbleText(m)}</div>
               {m.status === "pending" && m.direction === "in" && m.txId && m.amount > 0 && (
                 <IncomingRespondActions
@@ -199,7 +209,7 @@ const ChatPanel: React.FC<{
                   onRespond={onRespond}
                 />
               )}
-              {meta && m.amount > 0 && <div className="player-chat-bubble-meta">{meta}</div>}
+              {meta && <div className="player-chat-bubble-meta">{meta}</div>}
             </div>
           );
         })}
@@ -222,6 +232,8 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
   const respondingTxRef = useRef<Set<string>>(new Set());
 
   const knownTxIdsRef = useRef<Set<string>>(new Set());
+  /** 己方未对账的乐观 clientTempId → peerId */
+  const pendingOutRef = useRef<Map<string, { peerId: string; sentAt: number }>>(new Map());
   const dockRef = useRef<HTMLDivElement>(null);
 
   const peerPlayers = useMemo(() => game.players.filter((p) => p.id !== me.id), [game.players, me.id]);
@@ -308,7 +320,6 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
       return sorted;
     };
 
-    // threadOrder 最新在前；DOM 自底向上堆叠时，先打开的在上、后打开贴近右下角
     const expandedStack = [...sortByThreadOrder(expandedIds)].reverse();
     return [...expandedStack, ...sortByThreadOrder(collapsedIds)];
   }, [peerPlayers, threadOrder, threads]);
@@ -349,6 +360,14 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
     []
   );
 
+  const bumpThreadOrder = useCallback((peerId: string) => {
+    setThreadOrder((order) => {
+      const rest = order.filter((id) => id !== peerId);
+      return [peerId, ...rest];
+    });
+  }, []);
+
+  /** 用服务端交易就地升级乐观气泡；否则追加（收件方 / 无乐观态） */
   const ingestServerTx = useCallback(
     (tx: Transaction) => {
       if (!txInvolvesMe(tx, me.id)) return;
@@ -360,26 +379,34 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
       const isIncoming = tx.toId === me.id;
       const serverMsg = msgFromTx(tx, me.id);
 
+      if (tx.clientTempId) {
+        pendingOutRef.current.delete(tx.clientTempId);
+      }
+
       setThreads((prev) => {
         const existing = prev[peerId];
         let messages = existing?.messages ?? [];
 
-        if (tx.fromId === me.id) {
-          messages = messages.filter(
-            (m) =>
-              m.txId ||
-              !(
-                m.direction === "out" &&
-                m.status === "pending" &&
-                (m.peerId === undefined || m.peerId === peerId) &&
-                m.amount === tx.amount &&
-                m.note === (tx.note || "")
-              )
-          );
-        }
-
         if (messages.some((m) => m.txId === tx.id)) {
           return prev;
+        }
+
+        if (tx.fromId === me.id) {
+          const idx = messages.findIndex((m) => isOptimisticMatchForTx(m, tx, me.id, peerId));
+          if (idx >= 0) {
+            // 就地升级：保留稳定 React key（clientTempId / id）
+            const prevMsg = messages[idx];
+            const upgraded: ChatMessage = {
+              ...serverMsg,
+              id: prevMsg.clientTempId || prevMsg.id,
+              clientTempId: prevMsg.clientTempId || tx.clientTempId,
+            };
+            messages = messages.map((m, i) => (i === idx ? upgraded : m));
+          } else {
+            messages = [...messages, serverMsg];
+          }
+        } else {
+          messages = [...messages, serverMsg];
         }
 
         const wasExpanded = existing?.expanded ?? false;
@@ -395,41 +422,90 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
           [peerId]: {
             playerId: peerId,
             playerName: peerName,
-            messages: sortMessages([...messages, serverMsg]),
+            messages: sortMessages(messages),
             expanded,
             unread,
           },
         };
       });
 
-      setThreadOrder((order) => {
-        const rest = order.filter((id) => id !== peerId);
-        return [peerId, ...rest];
-      });
+      bumpThreadOrder(peerId);
     },
-    [me.id]
+    [me.id, bumpThreadOrder]
   );
 
-  const appendOptimisticOut = useCallback((peerId: string, peerName: string, amount: number, note: string) => {
-    const msg = optimisticMessage(peerId, amount, note);
+  const appendOptimisticOut = useCallback(
+    (peerId: string, peerName: string, amount: number, note: string, clientTempId: string) => {
+      const msg = optimisticMessage(peerId, amount, note, clientTempId);
+      pendingOutRef.current.set(clientTempId, { peerId, sentAt: Date.now() });
+      setThreads((prev) => {
+        const existing = prev[peerId];
+        return {
+          ...prev,
+          [peerId]: {
+            playerId: peerId,
+            playerName: peerName,
+            messages: sortMessages([...(existing?.messages ?? []), msg]),
+            expanded: true,
+            unread: 0,
+          },
+        };
+      });
+      bumpThreadOrder(peerId);
+    },
+    [bumpThreadOrder]
+  );
+
+  const markOptimisticFailed = useCallback((clientTempId: string) => {
+    const pending = pendingOutRef.current.get(clientTempId);
+    pendingOutRef.current.delete(clientTempId);
+    if (!pending) return;
+    const { peerId } = pending;
     setThreads((prev) => {
-      const existing = prev[peerId];
-      return {
-        ...prev,
-        [peerId]: {
-          playerId: peerId,
-          playerName: peerName,
-          messages: sortMessages([...(existing?.messages ?? []), msg]),
-          expanded: true,
-          unread: 0,
-        },
-      };
-    });
-    setThreadOrder((order) => {
-      const rest = order.filter((id) => id !== peerId);
-      return [peerId, ...rest];
+      const thread = prev[peerId];
+      if (!thread) return prev;
+      let changed = false;
+      const messages = thread.messages.map((m) => {
+        if (!m.txId && m.clientTempId === clientTempId && m.status === "pending") {
+          changed = true;
+          return { ...m, status: "failed" as const };
+        }
+        return m;
+      });
+      if (!changed) return prev;
+      return { ...prev, [peerId]: { ...thread, messages } };
     });
   }, []);
+
+  // 乐观发送超时 → 发送失败
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      for (const [tempId, meta] of [...pendingOutRef.current.entries()]) {
+        if (now - meta.sentAt >= OPTIMISTIC_TIMEOUT_MS) {
+          markOptimisticFailed(tempId);
+        }
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [markOptimisticFailed]);
+
+  // 服务端 error：将仍 pending 的乐观气泡标失败（最近一条）
+  useEffect(() => {
+    const onError = () => {
+      let latest: { tempId: string; sentAt: number } | null = null;
+      for (const [tempId, meta] of pendingOutRef.current.entries()) {
+        if (!latest || meta.sentAt > latest.sentAt) {
+          latest = { tempId, sentAt: meta.sentAt };
+        }
+      }
+      if (latest) markOptimisticFailed(latest.tempId);
+    };
+    socket.on("error", onError);
+    return () => {
+      socket.off("error", onError);
+    };
+  }, [markOptimisticFailed]);
 
   useEffect(() => {
     for (const tx of myTransactions) {
@@ -449,24 +525,27 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
         if (!thread) return prev;
 
         let changed = false;
-        const messages = thread.messages.map((m) => {
-          if (m.txId === tx.id && m.status !== tx.status) {
-            changed = true;
-            return { ...m, status: tx.status };
+        const hasServerCopy = thread.messages.some((m) => m.txId === tx.id);
+        const messages = thread.messages.flatMap((m) => {
+          if (m.txId === tx.id) {
+            if (m.status !== tx.status) {
+              changed = true;
+              return [{ ...m, status: tx.status, clientTempId: m.clientTempId || tx.clientTempId }];
+            }
+            return [m];
           }
-          if (
-            !m.txId &&
-            m.direction === "out" &&
-            tx.fromId === me.id &&
-            tx.toId === peerId &&
-            (m.peerId === undefined || m.peerId === peerId) &&
-            m.amount === tx.amount &&
-            m.note === (tx.note || "")
-          ) {
+          if (isOptimisticMatchForTx(m, tx, me.id, peerId)) {
             changed = true;
-            return { ...msgFromTx(tx, me.id), id: m.id };
+            if (hasServerCopy) return [];
+            return [
+              {
+                ...msgFromTx(tx, me.id),
+                id: m.clientTempId || m.id,
+                clientTempId: m.clientTempId || tx.clientTempId,
+              },
+            ];
           }
-          return m;
+          return [m];
         });
 
         if (!changed) return prev;
@@ -502,24 +581,25 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
           },
         };
       });
-      setThreadOrder((order) => [peerId, ...order.filter((id) => id !== peerId)]);
+      bumpThreadOrder(peerId);
       socket.emit("respondTransaction", { txId, accept });
     },
-    [me.id, myTransactions]
+    [me.id, myTransactions, bumpThreadOrder]
   );
 
   const sendToPeer = useCallback(
     (peerId: string, peerName: string, amount: number, note: string) => {
       const trimmed = note.trim().slice(0, NOTE_MAX);
+      const clientTempId = newClientTempId();
       if (amount === 0) {
         if (!trimmed) return false;
-        appendOptimisticOut(peerId, peerName, 0, trimmed);
-        socket.emit("createTransaction", { toId: peerId, amount: 0, note: trimmed });
+        appendOptimisticOut(peerId, peerName, 0, trimmed, clientTempId);
+        socket.emit("createTransaction", { toId: peerId, amount: 0, note: trimmed, clientTempId });
         return true;
       }
       if (amount <= 0 || amount > me.wealth) return false;
-      appendOptimisticOut(peerId, peerName, amount, trimmed);
-      socket.emit("createTransaction", { toId: peerId, amount, note: trimmed });
+      appendOptimisticOut(peerId, peerName, amount, trimmed, clientTempId);
+      socket.emit("createTransaction", { toId: peerId, amount, note: trimmed, clientTempId });
       return true;
     },
     [appendOptimisticOut, me.wealth]
@@ -528,9 +608,15 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
   const orphanTxsForPeer = useCallback(
     (playerId: string, thread: ChatThread) => {
       const inThread = new Set(thread.messages.filter((m) => m.txId).map((m) => m.txId!));
+      const temps = new Set(
+        thread.messages.filter((m) => m.clientTempId).map((m) => m.clientTempId!)
+      );
       return myTransactions.filter((t) => {
         const peer = t.fromId === me.id ? t.toId : t.fromId;
-        return peer === playerId && !inThread.has(t.id);
+        if (peer !== playerId || inThread.has(t.id)) return false;
+        // 己方发出且乐观气泡仍在：不当地 orphan 叠一份
+        if (t.fromId === me.id && t.clientTempId && temps.has(t.clientTempId)) return false;
+        return true;
       });
     },
     [me.id, myTransactions]
@@ -543,7 +629,11 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
         if (!thread) return null;
 
         if (thread.expanded) {
-          const displayMessages = mergeThreadMessages(thread.messages, orphanTxsForPeer(playerId, thread), me.id);
+          const displayMessages = mergeThreadMessages(
+            thread.messages,
+            orphanTxsForPeer(playerId, thread),
+            me.id
+          );
           return (
             <ChatPanel
               key={playerId}
