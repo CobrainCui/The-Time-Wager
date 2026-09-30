@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { uiRem } from "../../utils/typography";
+import { COFFEE_ENERGY_GAIN, COFFEE_WEALTH_COST } from "../../config/coffeeConfig";
 
 const INITIAL_ENERGY = 10;
 const INITIAL_WEALTH = 100;
@@ -11,6 +12,7 @@ export const DemoResources: React.FC<{ playerName?: string }> = () => {
   const [round, setRound] = useState(1);
 
   const remaining = energyTotal - spent;
+  const canBuyCoffee = wealth >= COFFEE_WEALTH_COST;
 
   return (
     <div className="tutorial-resources-demo">
@@ -57,6 +59,18 @@ export const DemoResources: React.FC<{ playerName?: string }> = () => {
           }}
         >
           模拟结算 (+{spent * 3} 💰)
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          disabled={!canBuyCoffee}
+          onClick={() => {
+            setWealth((w) => w - COFFEE_WEALTH_COST);
+            setEnergyTotal((e) => e + COFFEE_ENERGY_GAIN);
+          }}
+          title={`消耗${COFFEE_WEALTH_COST}财富换${COFFEE_ENERGY_GAIN}精力`}
+        >
+          ☕ 来杯咖啡（−{COFFEE_WEALTH_COST}💰+{COFFEE_ENERGY_GAIN}⚡）
         </button>
         <button
           type="button"

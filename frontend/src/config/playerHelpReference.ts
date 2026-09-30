@@ -1,4 +1,5 @@
 import { AUCTION_CARDS_BY_ROUND, BUFF_CARD_DEFS } from "./buffCards";
+import { COFFEE_ENERGY_GAIN, COFFEE_WEALTH_COST } from "./coffeeConfig";
 
 export type HelpTabId =
   | "projects_table"
@@ -32,6 +33,7 @@ export const HELP_TABS: HelpTabDef[] = [
 export const HELP_RESOURCES: HelpLineDef[] = [
   { icon: "⚡", text: "精力每轮重置，用于投资项目" },
   { icon: "💰", text: "财富决定排名，最高者可命名社区" },
+  { icon: "☕", text: `来杯咖啡：${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力（可退订）` },
   { icon: "🗓️", text: "共 4 时代，每时代 2 轮" },
   { icon: "🏆", text: "终局按财富决胜负" },
 ];
@@ -47,7 +49,7 @@ export const HELP_PROJECT_RULE_SECTIONS: HelpRuleSection[] = [
     title: "基础收益",
     lines: [
       { icon: "🟦", text: "短期：当轮投、当轮结，×10/⚡" },
-      { icon: "🟩", text: "长期：完成后结算，×15/⚡；终局未完成按梯度（1:1 / 1:5 / 1:10）；每轮至少投入 3⚡" },
+      { icon: "🟩", text: "长期：完成后个人累计 ×15/⚡（满额或超填均可）；终局未完成按全场进度梯度（不足 1/3→1:1，达 1/3→1:5，达 2/3→1:10）；参投后每轮至少 3⚡，否则 1:1 退回累计并退出完成排名" },
       { icon: "🟥", text: "风险：当轮结算；超上限投爆，追回历史收益" },
     ],
   },
@@ -91,7 +93,7 @@ export const HELP_FLOW_SECTIONS: HelpRuleSection[] = [
     title: "讨论与投资",
     lines: [
       { icon: "⏱", text: "全员进入后开始约 10 分钟倒计时，在时限内分配精力并提交" },
-      { icon: "☕", text: "可消耗财富换取额外精力（来杯咖啡）；已提交后若想再改，需联系主持人解锁" },
+      { icon: "☕", text: `来杯咖啡：${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力；已提交后若想再改，需联系主持人解锁` },
     ],
   },
   {
@@ -104,14 +106,15 @@ export const HELP_FLOW_SECTIONS: HelpRuleSection[] = [
   {
     title: "拍卖道具卡",
     lines: [
-      { icon: "🔨", text: "竞拍本场放出的道具卡，价高者得" },
+      { icon: "🔨", text: "主持人先选定正在拍的卡，大家公开加价，再确认成交" },
       { icon: "🃏", text: "拍得道具卡可在讨论与投资阶段前使用" },
+      { icon: "🤝", text: "拍卖期间仍可私信与转账；暂时领先的出价会占用可用财富" },
     ],
   },
 ];
 
 export const HELP_MISC: HelpLineDef[] = [
-  { icon: "💰", text: "转账：填金额发送，对方收/退" },
+  { icon: "💰", text: "转账：填金额发送，对方收/退；金额不得超过可用财富（总额减去领先出价占用与未完成转出）" },
   { icon: "💬", text: "私信：不填金额留言" },
 ];
 

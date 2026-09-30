@@ -10,9 +10,16 @@ export type LotterySettleRequest = {
 type Props = {
   pending?: LotterySettleRequest | null;
   wealth: number;
+  /** 本轮是否持有点石成金（正奖金确认时显示 ×1.5） */
+  hasGoldBuff?: boolean;
 };
 
-export const LotteryConfirmModal: React.FC<Props> = ({ pending, wealth }) => {
+function lotteryCreditedAmount(faceAmount: number, hasGoldBuff: boolean): number {
+  if (hasGoldBuff && faceAmount > 0) return Math.floor(faceAmount * 1.5);
+  return faceAmount;
+}
+
+export const LotteryConfirmModal: React.FC<Props> = ({ pending, wealth, hasGoldBuff = false }) => {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -38,10 +45,12 @@ export const LotteryConfirmModal: React.FC<Props> = ({ pending, wealth }) => {
   };
 
   if (!pending) return null;
-  const payout = pending.amount;
-  const isLoss = payout < 0;
-  const isZero = payout === 0;
-  const wealthAfter = wealth + payout;
+  const faceAmount = pending.amount;
+  const goldApplied = hasGoldBuff && faceAmount > 0;
+  const credited = lotteryCreditedAmount(faceAmount, hasGoldBuff);
+  const isLoss = credited < 0;
+  const isZero = credited === 0;
+  const wealthAfter = wealth + credited;
 
   return (
     <div className="modal-overlay" role="presentation">
@@ -66,7 +75,13 @@ export const LotteryConfirmModal: React.FC<Props> = ({ pending, wealth }) => {
           彩票开奖！
         </h3>
         <p style={{ color: "var(--color-text-secondary)", marginBottom: "0.75rem" }}>
-          {isZero ? "本局开奖金额为 0" : isLoss ? "本局开奖结果为扣减财富" : "你获得了彩票奖金"}
+          {isZero
+            ? "本局开奖金额为 0"
+            : isLoss
+              ? "本局开奖结果为扣减财富"
+              : goldApplied
+                ? "你获得了彩票奖金（点石成金生效）"
+                : "你获得了彩票奖金"}
         </p>
         <div
           style={{
@@ -88,17 +103,44 @@ export const LotteryConfirmModal: React.FC<Props> = ({ pending, wealth }) => {
           >
             {isLoss ? "扣除财富" : "获得财富"}
           </div>
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "3rem",
-              fontWeight: 900,
-              color: isLoss ? "#f87171" : "#fbbf24",
-              lineHeight: 1,
-            }}
-          >
-            {payout > 0 ? `+${payout}` : payout}
-          </div>
+          {goldApplied ? (
+            <>
+              <div
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "2.25rem",
+                  fontWeight: 900,
+                  color: "#fbbf24",
+                  lineHeight: 1.15,
+                }}
+              >
+                （{faceAmount}）×1.5
+              </div>
+              <div
+                style={{
+                  marginTop: "0.35rem",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: uiRem(1.1),
+                  fontWeight: 700,
+                  color: "#fcd34d",
+                }}
+              >
+                入账 +{credited}
+              </div>
+            </>
+          ) : (
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "3rem",
+                fontWeight: 900,
+                color: isLoss ? "#f87171" : "#fbbf24",
+                lineHeight: 1,
+              }}
+            >
+              {credited > 0 ? `+${credited}` : credited}
+            </div>
+          )}
         </div>
         <p
           style={{

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { uiRem } from "../utils/typography";
 import { adminApiUrl, adminAuthHeaders } from "./adminFetch";
 import { ALL_PROJECTS } from "../config/projects";
@@ -7,14 +7,18 @@ import { BuffCardArt } from "../components/BuffCardArt";
 import { ImageLightbox } from "../components/ImageLightbox";
 import {
   getEraImageDisplay,
+  getEraDefaultImageSrc,
   getProjectImageDisplay,
   getBuffImageDisplay,
+  getBuffDefaultImageSrc,
   hasBuffCustomImage,
   getPersonaImageDisplay,
+  getPersonaDefaultImageSrc,
   hasPersonaCustomImage,
   type ResolvedImage,
 } from "../utils/gameImageDisplay";
 import { FATE_SKETCH_CONFIG, FATE_SKETCH_IMAGE_SLUG } from "../config/personaConfig";
+import { useImageWithFallback } from "../hooks/useImageWithFallback";
 
 const ALL_AUCTION_BUFF_IDS = Array.from(
   new Set(Object.values(AUCTION_CARDS_BY_ROUND).flat().map((c) => c.id)),
@@ -58,22 +62,47 @@ const RasterPreview: React.FC<{
   onZoom: (src: string) => void;
   badgeLabel: string;
   badgeColor: string;
-}> = ({ display, alt, aspectRatio, onZoom, badgeLabel, badgeColor }) => {
-  const [broken, setBroken] = useState(false);
-  useEffect(() => {
-    setBroken(false);
-  }, [display.src]);
+  /** 自定义图加载失败时回退（通常为 /images/... 默认图） */
+  defaultFallbackSrc: string;
+}> = ({ display, alt, aspectRatio, onZoom, badgeLabel, badgeColor, defaultFallbackSrc }) => {
+  const fallback = display.source === "custom" ? defaultFallbackSrc : null;
+  const img = useImageWithFallback(display.src, fallback);
+  const showCustomFailed = img.usingFallback && display.source === "custom";
+  const label = img.showPlaceholder
+    ? "默认图缺失"
+    : showCustomFailed
+      ? "已回退默认"
+      : badgeLabel;
+  const badge = img.showPlaceholder || showCustomFailed ? "rgba(239,68,68,0.9)" : badgeColor;
 
-  const fallback = display.source === "custom" ? getEraImageDisplay(alt, {}).src : null;
-  const showCustomFailed = broken && display.source === "custom";
-  const src = showCustomFailed && fallback ? fallback : display.src;
-  const label = showCustomFailed ? "加载失败" : badgeLabel;
+  if (img.showPlaceholder) {
+    return (
+      <div
+        style={{
+          width: "100%",
+          aspectRatio,
+          borderRadius: "0.5rem",
+          border: "1px dashed rgba(239,68,68,0.45)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0.5rem",
+          color: "var(--color-text-muted)",
+          fontSize: uiRem(0.72),
+          textAlign: "center",
+          background: "rgba(0,0,0,0.35)",
+        }}
+      >
+        请确认管理子域已部署含 images/ 的 dist
+      </div>
+    );
+  }
 
   return (
     <button
       type="button"
       aria-label={`放大预览：${alt}`}
-      onClick={() => onZoom(src)}
+      onClick={() => onZoom(img.src)}
       style={{
         position: "relative",
         width: "100%",
@@ -87,12 +116,12 @@ const RasterPreview: React.FC<{
         display: "block",
       }}
     >
-      <span style={badgeStyle(showCustomFailed ? "rgba(239,68,68,0.9)" : badgeColor)}>{label}</span>
+      <span style={badgeStyle(badge)}>{label}</span>
       <img
-        src={src}
+        src={img.src}
         alt={alt}
         style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-        onError={() => setBroken(true)}
+        onError={img.onError}
       />
     </button>
   );
@@ -106,25 +135,49 @@ const ProjectRasterPreview: React.FC<{
   onZoom: (src: string) => void;
 }> = ({ projectId, projectName, projectImages, onZoom }) => {
   const display = getProjectImageDisplay(projectId, projectName, projectImages);
-  const [broken, setBroken] = useState(false);
-  useEffect(() => {
-    setBroken(false);
-  }, [display.src]);
   const fallbackSrc = getProjectImageDisplay(projectId, projectName, {}, 0).src;
-  const showCustomFailed = broken && display.source === "custom";
-  const src = showCustomFailed ? fallbackSrc : display.src;
-  const badgeLabel = showCustomFailed ? "加载失败" : display.source === "custom" ? "自定义" : "默认";
+  const fallback = display.source === "custom" ? fallbackSrc : null;
+  const img = useImageWithFallback(display.src, fallback);
+  const showCustomFailed = img.usingFallback && display.source === "custom";
+  const badgeLabel = showCustomFailed
+    ? "加载失败"
+    : display.source === "custom"
+      ? "自定义"
+      : "默认";
   const badgeColor = showCustomFailed
     ? "rgba(239,68,68,0.9)"
     : display.source === "custom"
       ? "rgba(251,191,36,0.9)"
       : "rgba(148,163,184,0.85)";
 
+  if (img.showPlaceholder) {
+    return (
+      <div
+        style={{
+          width: "100%",
+          aspectRatio: "16/9",
+          borderRadius: "0.5rem",
+          border: "1px dashed rgba(239,68,68,0.45)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0.5rem",
+          color: "var(--color-text-muted)",
+          fontSize: uiRem(0.72),
+          textAlign: "center",
+          background: "rgba(0,0,0,0.35)",
+        }}
+      >
+        请确认管理子域已部署含 images/ 的 dist
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
       aria-label={`放大预览：${projectName}`}
-      onClick={() => onZoom(src)}
+      onClick={() => onZoom(img.src)}
       style={{
         position: "relative",
         width: "100%",
@@ -140,10 +193,10 @@ const ProjectRasterPreview: React.FC<{
     >
       <span style={badgeStyle(badgeColor)}>{badgeLabel}</span>
       <img
-        src={src}
+        src={img.src}
         alt={projectName}
         style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-        onError={() => setBroken(true)}
+        onError={img.onError}
       />
     </button>
   );
@@ -165,7 +218,7 @@ export const AdminImageManager: React.FC<Props> = ({
   onPersonaImageVersion,
   onBack,
 }) => {
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string; fallbackSrc?: string } | null>(null);
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [buffLoadFailed, setBuffLoadFailed] = useState<Record<string, boolean>>({});
   const uploadInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -431,6 +484,7 @@ export const AdminImageManager: React.FC<Props> = ({
                     display={display}
                     alt={eraName}
                     aspectRatio="2/3"
+                    defaultFallbackSrc={getEraDefaultImageSrc(eraName)}
                     onZoom={(src) => setLightbox({ src, alt: eraName })}
                     badgeLabel={display.source === "custom" ? "自定义" : "默认"}
                     badgeColor={display.source === "custom" ? "rgba(251,191,36,0.9)" : "rgba(148,163,184,0.85)"}
@@ -526,7 +580,14 @@ export const AdminImageManager: React.FC<Props> = ({
                       <button
                         type="button"
                         aria-label={`放大预览：${def?.name || cardId}`}
-                        onClick={() => setLightbox({ src: display.src, alt: def?.name || cardId })}
+                        onClick={() =>
+                          setLightbox({
+                            src: display.src,
+                            alt: def?.name || cardId,
+                            fallbackSrc:
+                              display.source === "custom" ? getBuffDefaultImageSrc(cardId) : undefined,
+                          })
+                        }
                         style={{
                           display: "block",
                           width: "100%",
@@ -661,7 +722,7 @@ export const AdminImageManager: React.FC<Props> = ({
             人格立绘（竖版 2:3）
           </h2>
           <p style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)", marginBottom: "1rem" }}>
-            终局页主立绘与「色彩」弹窗使用；未上传时默认采用 PDF 模板封面图。
+            终局页主立绘与「色彩」弹窗使用；未上传时默认采用站点内 /images/personas 立绘。
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "1rem" }}>
             {PERSONA_ENTRIES.map(({ name, slug }) => {
@@ -686,6 +747,7 @@ export const AdminImageManager: React.FC<Props> = ({
                     display={display}
                     alt={name}
                     aspectRatio="2/3"
+                    defaultFallbackSrc={getPersonaDefaultImageSrc(slug)}
                     onZoom={(src) => setLightbox({ src, alt: name })}
                     badgeLabel={display.source === "custom" ? "自定义" : "默认"}
                     badgeColor={display.source === "custom" ? "rgba(251,191,36,0.9)" : "rgba(148,163,184,0.85)"}
@@ -726,7 +788,14 @@ export const AdminImageManager: React.FC<Props> = ({
         </section>
       </div>
 
-      {lightbox && <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />}
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          fallbackSrc={lightbox.fallbackSrc}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 };

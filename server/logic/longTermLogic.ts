@@ -30,6 +30,21 @@ export function sanitizeLongContribution(
   return amount;
 }
 
+/**
+ * 是否应对该长期项目展示「本轮须继续投入」警示 / 放弃风险。
+ * 兼容 longTerm 未同步但牌桌 investorRecords 已有记录的情况。
+ */
+export function needsLongContinueWarn(
+  project: ActiveProject,
+  player: Player
+): boolean {
+  if (project.type !== "long") return false;
+  const lt = player.longTerm[project.id];
+  if (lt?.status === "abandoned" || lt?.status === "completed") return false;
+  if (lt?.status === "active") return true;
+  return (project.investorRecords?.[player.id] ?? 0) > 0;
+}
+
 /** 用牌桌历史投入修复缺失的 longTerm（旧局/异常数据） */
 export function syncLongTermRecordsFromHistory(project: ActiveProject, players: Player[]) {
   if (project.type !== "long") return;
@@ -41,6 +56,18 @@ export function syncLongTermRecordsFromHistory(project: ActiveProject, players: 
       p.longTerm[project.id] = { totalInvested: prior, status: "active" };
     } else if (record.status === "active" && record.totalInvested < prior) {
       record.totalInvested = prior;
+    }
+  }
+}
+
+/** 进入道具/投资阶段前，用牌桌历史补齐各长期项目的 longTerm */
+export function syncActiveLongTermRecords(game: {
+  activeProjects: ActiveProject[];
+  players: Player[];
+}) {
+  for (const project of game.activeProjects) {
+    if (project.type === "long") {
+      syncLongTermRecordsFromHistory(project, game.players);
     }
   }
 }

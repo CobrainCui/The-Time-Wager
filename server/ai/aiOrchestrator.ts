@@ -49,27 +49,27 @@ async function processAITurn(game: GameState, ai: Player) {
         }))
     };
 
-    if (game.phase === "BUFF_USAGE") {
-        // Decide whether to use a buff
+    if (game.phase === "BUFF_USAGE" || game.phase === "INVESTMENT") {
+        // 投资阶段内可用道具；不想用则直接投
         const availableBuffs = ai.inventory;
-        if (availableBuffs.length === 0) {
+        if (game.phase === "BUFF_USAGE" || availableBuffs.length > 0) {
+          if (availableBuffs.length > 0) {
+            const prompt = `当前可在投资阶段使用道具卡。你手上的卡牌有: ${availableBuffs.join(", ")}。\n如果你想用卡，请输出 {"useCard": true, "cardId": "卡片ID", "targetProjectId": 目标项目ID(如果需要), "targetPlayerId": 目标玩家ID(如果需要)}。如果不想用，输出 {"useCard": false}。`;
+            const buffRes = await askLLM(baseSystemPrompt, JSON.stringify(stateSummary) + "\n\n" + prompt);
+            if (buffRes?.useCard && availableBuffs.includes(buffRes.cardId)) {
+              const used = useBuffCard(game, ai.id, buffRes.cardId, buffRes);
+              if (used.success) {
+                if (!ai.usedCards) ai.usedCards = [];
+                ai.usedCards.push(buffRes.cardId);
+              }
+            }
+          }
+          if (game.phase === "BUFF_USAGE") {
             togglePlayerReady(game, ai.id);
             return;
+          }
         }
 
-        const prompt = `当前是使用道具卡阶段。你手上的卡牌有: ${availableBuffs.join(", ")}。\n如果你想用卡，请输出 {"useCard": true, "cardId": "卡片ID", "targetProjectId": 目标项目ID(如果需要), "targetPlayerId": 目标玩家ID(如果需要)}。如果不想用，输出 {"useCard": false}。`;
-        
-        const res = await askLLM(baseSystemPrompt, JSON.stringify(stateSummary) + "\n\n" + prompt);
-        
-        if (res?.useCard && availableBuffs.includes(res.cardId)) {
-            useBuffCard(game, ai.id, res.cardId, res);
-            if (!ai.usedCards) ai.usedCards = [];
-            ai.usedCards.push(res.cardId);
-            ai.inventory = ai.inventory.filter(c => c !== res.cardId);
-        }
-        togglePlayerReady(game, ai.id);
-    }
-    else if (game.phase === "INVESTMENT") {
         const prompt = `当前是投资阶段。你有 ${ai.energy} 点精力。请将精力分配到项目上。你可以分配部分或全部精力。\n输出格式: {"investment": {"项目ID1": 投入精力数, "项目ID2": 投入精力数}}。注意：投入精力之和不能超过 ${ai.energy}，键必须是数字ID。`;
         
         const res = await askLLM(baseSystemPrompt, JSON.stringify(stateSummary) + "\n\n" + prompt);

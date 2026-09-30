@@ -55,7 +55,10 @@ export default function AdminApp() {
     setAuthPending(false);
     setAuthError(null);
     const roomId = spectatingRoomIdRef.current;
-    if (roomId) socket.emit("adminSpectate", { targetRoomId: roomId });
+    if (roomId) {
+      socket.emit("adminSpectate", { targetRoomId: roomId });
+      socket.emit("requestGameState");
+    }
   }, [clearAuthTimeout]);
 
   const finishAuthFailed = useCallback(
@@ -205,6 +208,8 @@ export default function AdminApp() {
   const handleSpectate = (roomId: string) => {
     spectatingRoomIdRef.current = roomId;
     socket.emit("adminSpectate", { targetRoomId: roomId });
+    // 确保拿到 god 视图完整字段（pendingAuctionOffers 等）
+    socket.emit("requestGameState");
   };
 
   const handleExitRoom = () => {

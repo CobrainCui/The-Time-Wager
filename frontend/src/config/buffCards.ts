@@ -1,43 +1,49 @@
 export const BUFF_CARD_DEFS: Record<string, { name: string; desc: string; icon: string; color: string }> = {
-  buff_gold: {
-    name: "点石成金",
-    desc: "在本轮结算时，你参与项目的收益按 1.5 倍计算。",
-    icon: "💰",
-    color: "#f59e0b",
-  },
-  buff_short: {
-    name: "项目做空",
-    desc: "指定一个项目并猜测其本轮结果；猜对可获得额外财富奖励。",
-    icon: "📉",
-    color: "#3b82f6",
-  },
   buff_slack: {
     name: "摸鱼传染",
-    desc: "指定一名对手，使其在本轮损失 5 点精力。",
+    desc: "指定一名在局玩家（含自己），使其精力 -8（不低于 0）。若对方发动【劳逸结合】，对方改为获得 8 精力。",
     icon: "😴",
     color: "#ef4444",
   },
-  buff_rebound: {
-    name: "反弹琵琶",
-    desc: "开启护盾后，可将针对你的负面效果反弹给攻击者。",
-    icon: "🎸",
-    color: "#10b981",
-  },
   buff_insurance: {
     name: "保险",
-    desc: "被动生效：当风险项目超上限投爆时，你获得 100 财富赔付。",
+    desc: "本轮你参与的风险项目投爆则赔付 100。点石成金可作用于保险赔付。",
     icon: "🛡️",
     color: "#6366f1",
   },
-  buff_spirit: {
-    name: "精神老伙",
-    desc: "使用后立即获得 5 点精力，便于追加投资或应对消耗。",
+  buff_gold: {
+    name: "点石成金",
+    desc: "本轮你的项目基础回报、正的排名与时代加成，以及保险赔付与彩票入账，按 1.5 倍（向下取整）。惩罚不放大。",
+    icon: "💰",
+    color: "#f59e0b",
+  },
+  buff_force_buy: {
+    name: "强买强卖",
+    desc: "仅能在拍卖阶段使用一次，免费将当前正在拍卖的道具卡入手。",
+    icon: "🤝",
+    color: "#a855f7",
+  },
+  buff_short: {
+    name: "项目做空",
+    desc: "指定一个本轮可投入的项目。结算时该项目所有人已积累的精力清零（含长期累计）。已经入账的财富不追回，本轮不再发放回报。",
+    icon: "📉",
+    color: "#3b82f6",
+  },
+  buff_work_rest: {
+    name: "劳逸结合",
+    desc: "被使用【摸鱼传染】后获得 8 精力。单独使用无效。",
+    icon: "⚖️",
+    color: "#10b981",
+  },
+  buff_lighter: {
+    name: "打火机",
+    desc: "烧毁任意一张被玩家持有且尚未结算的道具卡（含自己）。被烧的卡不再生效。",
     icon: "🔥",
     color: "#f97316",
   },
   buff_lottery: {
     name: "彩票",
-    desc: "支付成本后由主持人掷骰开奖，结果可大幅增减你的财富。",
+    desc: "玩家通过实体骰子决定奖金。由主持人输入金额。若你本轮打出了点石成金，入账按 1.5 倍（向下取整）。",
     icon: "🎲",
     color: "#ec4899",
   },
@@ -45,16 +51,17 @@ export const BUFF_CARD_DEFS: Record<string, { name: string; desc: string; icon: 
 
 export const AUCTION_CARDS_BY_ROUND: Record<number, { id: string; name: string }[]> = {
   1: [
+    { id: "buff_insurance", name: "保险" },
     { id: "buff_gold", name: "点石成金" },
-    { id: "buff_short", name: "项目做空" },
+    { id: "buff_slack", name: "摸鱼传染" },
   ],
   2: [
-    { id: "buff_slack", name: "摸鱼传染" },
-    { id: "buff_rebound", name: "反弹琵琶" },
-    { id: "buff_insurance", name: "保险" },
+    { id: "buff_force_buy", name: "强买强卖" },
+    { id: "buff_work_rest", name: "劳逸结合" },
+    { id: "buff_short", name: "项目做空" },
   ],
   3: [
-    { id: "buff_spirit", name: "精神老伙" },
+    { id: "buff_lighter", name: "打火机" },
     { id: "buff_lottery", name: "彩票" },
   ],
 };

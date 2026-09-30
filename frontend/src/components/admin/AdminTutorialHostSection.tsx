@@ -3,6 +3,7 @@ import { uiRem } from "../../utils/typography";
 import { GameState } from "../../types";
 import { TUTORIAL_SLIDES } from "../../tutorialData";
 import { TutorialSlidePanel } from "../../tutorial/TutorialSlidePanel";
+import { preloadTutorialProjectCovers } from "../../tutorial/preloadTutorialImages";
 import { isAiPlayer } from "../../utils/isAiPlayer";
 
 interface Props {
@@ -33,6 +34,10 @@ export const AdminTutorialHostSection: React.FC<Props> = ({
   const slide = TUTORIAL_SLIDES[step];
   const demoPlayerName =
     game.players.find((p) => !isAiPlayer(p))?.name ?? "示例玩家";
+
+  useEffect(() => {
+    preloadTutorialProjectCovers();
+  }, []);
 
   useEffect(() => {
     rootRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });

@@ -69,6 +69,10 @@ export const AdminSessionHistory: React.FC<Props> = ({ onBack }) => {
   const [sort, setSort] = useState<"completedAt" | "communityWealth">("completedAt");
   const [detail, setDetail] = useState<SessionListItem | null>(null);
   const [voidingId, setVoidingId] = useState<string | null>(null);
+  /** 列表「导出」两步：先 JSON，再点一次下 Excel */
+  const [listExportAwaitingXlsxId, setListExportAwaitingXlsxId] = useState<string | null>(null);
+  const [listExportBusyId, setListExportBusyId] = useState<string | null>(null);
+  const [listExportHint, setListExportHint] = useState<string | null>(null);
 
   const pageSize = 20;
 
@@ -139,6 +143,27 @@ export const AdminSessionHistory: React.FC<Props> = ({ onBack }) => {
       await load();
     } finally {
       setVoidingId(null);
+    }
+  };
+
+  const handleListDualExport = async (sessionId: string) => {
+    if (listExportBusyId) return;
+    setListExportBusyId(sessionId);
+    try {
+      const awaitingThis = listExportAwaitingXlsxId === sessionId;
+      if (!awaitingThis) {
+        await downloadExport(sessionId, "json");
+        setListExportAwaitingXlsxId(sessionId);
+        setListExportHint("已下载 JSON。请再点同一行的「继续 Excel」，完成第二份文件。");
+        return;
+      }
+      await downloadExport(sessionId, "xlsx");
+      setListExportAwaitingXlsxId(null);
+      setListExportHint("已下载 JSON 与 Excel 两份复盘文件。");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "导出失败");
+    } finally {
+      setListExportBusyId(null);
     }
   };
 
@@ -269,6 +294,19 @@ export const AdminSessionHistory: React.FC<Props> = ({ onBack }) => {
         <p style={{ color: "#f87171", marginBottom: "1rem" }}>{error}</p>
       )}
 
+      {listExportHint && (
+        <p
+          role="status"
+          style={{
+            color: listExportAwaitingXlsxId ? "#93c5fd" : "#86efac",
+            marginBottom: "1rem",
+            fontSize: uiRem(0.85),
+          }}
+        >
+          {listExportHint}
+        </p>
+      )}
+
       <div
         style={{
           background: "var(--color-bg-card)",
@@ -383,13 +421,19 @@ export const AdminSessionHistory: React.FC<Props> = ({ onBack }) => {
                         <button
                           type="button"
                           className="btn btn-ghost btn-sm"
-                          onClick={() =>
-                            downloadExport(item.sessionId, "xlsx").catch((e) =>
-                              alert(e instanceof Error ? e.message : "导出失败"),
-                            )
+                          disabled={listExportBusyId === item.sessionId}
+                          title={
+                            listExportAwaitingXlsxId === item.sessionId
+                              ? "继续下载 Excel"
+                              : "先 JSON 再 Excel，避免浏览器拦截双文件"
                           }
+                          onClick={() => handleListDualExport(item.sessionId)}
                         >
-                          导出
+                          {listExportBusyId === item.sessionId
+                            ? "导出中…"
+                            : listExportAwaitingXlsxId === item.sessionId
+                              ? "继续 Excel"
+                              : "导出"}
                         </button>
                       )}
                     </td>
@@ -498,29 +542,40 @@ export const AdminSessionHistory: React.FC<Props> = ({ onBack }) => {
               </tbody>
             </table>
             {detail.hasSnapshot && (
-              <div style={{ marginTop: "1.25rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={() =>
-                    downloadExport(detail.sessionId, "json").catch((e) =>
-                      alert(e instanceof Error ? e.message : "导出失败"),
-                    )
-                  }
+              <div style={{ marginTop: "1.25rem" }}>
+                <p
+                  style={{
+                    margin: "0 0 0.75rem",
+                    fontSize: uiRem(0.8),
+                    color: "var(--color-text-muted)",
+                  }}
                 >
-                  下载 JSON 复盘
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={() =>
-                    downloadExport(detail.sessionId, "xlsx").catch((e) =>
-                      alert(e instanceof Error ? e.message : "导出失败"),
-                    )
-                  }
-                >
-                  下载 Excel 复盘
-                </button>
+                  复盘含 JSON 与 Excel 两份文件。请分别点击下载（浏览器可能拦截同一次点击的第二个文件）。
+                </p>
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() =>
+                      downloadExport(detail.sessionId, "json").catch((e) =>
+                        alert(e instanceof Error ? e.message : "导出失败"),
+                      )
+                    }
+                  >
+                    下载 JSON 复盘
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() =>
+                      downloadExport(detail.sessionId, "xlsx").catch((e) =>
+                        alert(e instanceof Error ? e.message : "导出失败"),
+                      )
+                    }
+                  >
+                    下载 Excel 复盘
+                  </button>
+                </div>
               </div>
             )}
             {detail.status === "active" && (

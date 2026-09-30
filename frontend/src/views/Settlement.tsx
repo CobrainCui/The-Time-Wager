@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { uiRem } from "../utils/typography";
-import { GameState, Player, SettlementProjectResult } from "../types";
+import { GameState, Player, SettlementProjectResult, GainBreakdown } from "../types";
 import { socket } from "../socket";
 import {
   longSettlementStatusLabel,
@@ -8,6 +8,8 @@ import {
   settlementHidesInvestedRatio,
   LONG_COMPLETE_CHIP_COLOR,
 } from "../utils/projectHelpTable";
+import { BuffRoundChips } from "../components/BuffRoundChips";
+import { useFixedDockClearance } from "../hooks/useFixedDockClearance";
 
 interface Props {
   game: GameState;
@@ -25,8 +27,29 @@ function formatGainPart(n: number): string {
   return n < 0 ? `(${n})` : String(n);
 }
 
-function formatGainBreakdown(base: number, rank: number, era: number): string {
-  return `${formatGainPart(base)}+${formatGainPart(rank)}+${formatGainPart(era)}`;
+/** 点石成金：仅当乘前原值与入账完全对应时显示（原值）×1.5（保险后再扣回时退回数字） */
+function formatGoldAwarePart(paid: number, beforeGold?: number): string {
+  if (
+    typeof beforeGold === "number" &&
+    beforeGold > 0 &&
+    Math.floor(beforeGold * 1.5) === paid
+  ) {
+    return `（${beforeGold}）×1.5`;
+  }
+  return formatGainPart(paid);
+}
+
+function formatGainBreakdown(
+  base: number,
+  rank: number,
+  era: number,
+  gains?: Pick<GainBreakdown, "baseBeforeGold" | "rankBeforeGold" | "eraBeforeGold">
+): string {
+  return [
+    formatGoldAwarePart(base, gains?.baseBeforeGold),
+    formatGoldAwarePart(rank, gains?.rankBeforeGold),
+    formatGoldAwarePart(era, gains?.eraBeforeGold),
+  ].join("+");
 }
 
 const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) => {
@@ -37,7 +60,10 @@ const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) =
   const burstExploded = result.isExploded && result.type !== "long";
   let statusText = "进行中";
   let statusColor = color;
-  if (longLabel) {
+  if (result.shortSold) {
+    statusText = "项目做空";
+    statusColor = "#60a5fa";
+  } else if (longLabel) {
     statusText = longLabel.text;
     statusColor = longLabel.color;
   } else if (burstExploded) {
@@ -57,7 +83,7 @@ const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) =
     <div
       style={{
         background: "rgba(255,255,255,0.02)",
-        border: `1px solid ${color}25`,
+        border: `1px solid ${result.shortSold ? "#60a5fa55" : `${color}25`}`,
         borderRadius: "0.875rem",
         padding: "1rem",
         display: "flex",
@@ -73,7 +99,7 @@ const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) =
         <div
           style={{
             height: "100%",
-            width: `${pct}%`,
+            width: `${result.shortSold ? 0 : pct}%`,
             background: burstExploded ? "#ef4444" : `linear-gradient(90deg, ${color}, ${color}bb)`,
             borderRadius: "9999px",
             transition: "width 1s ease",
@@ -82,7 +108,9 @@ const GlobalCard: React.FC<{ result: SettlementProjectResult }> = ({ result }) =
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: uiRem(0.75), color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
         <span>
-          {settlementHidesInvestedRatio(result)
+          {result.shortSold
+            ? "清零"
+            : settlementHidesInvestedRatio(result)
             ? "—"
             : `${result.totalInvested} / ${result.maxEnergy}`}
         </span>
@@ -119,6 +147,10 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
   const nextEra = isNextNewEra ? game.currentEra + 1 : game.currentEra;
   const nextRoundInEra = isNextNewEra ? 1 : game.roundInEra + 1;
   const nextStageLabel = `${ERA_NAMES[nextEra] ?? `第${nextEra}时代`} 第${nextRoundInEra}轮`;
+  const { contentRef: settlementMainRef, dockRef: confirmDockRef } = useFixedDockClearance(
+    true,
+    `${me.ready}-${!!snapshot}`
+  );
 
   if (!snapshot) {
     return (
@@ -136,7 +168,15 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#070b14", padding: "1.5rem 1rem 8rem" }}>
+    <div
+      ref={settlementMainRef}
+      style={{
+        minHeight: "100vh",
+        background: "#070b14",
+        padding: "1.5rem 1rem",
+        paddingBottom: "var(--dock-clearance, 8rem)",
+      }}
+    >
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
 
         {/* 标题 */}
@@ -145,10 +185,13 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
             Round {snapshot.round} · 结算报告
           </div>
           <h1 style={{ fontSize: "2.25rem", fontWeight: 900, color: "white" }}>本轮战报</h1>
+          <div style={{ marginTop: "0.75rem" }}>
+            <BuffRoundChips me={me} actionsDisabled />
+          </div>
         </div>
 
         {/* 三格指标 */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1rem", marginBottom: "2rem" }}>
+        <div className="player-responsive-stats" style={{ marginBottom: "2rem" }}>
           <div
             style={{
               background: myRoundIncome >= 0 ? "rgba(16,185,129,0.08)" : "rgba(239,68,68,0.08)",
@@ -226,7 +269,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1.5rem" }}>
+        <div className="player-responsive-split">
           {/* 左侧 */}
           <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
             {/* 个人投资结算单 */}
@@ -256,12 +299,16 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
                         let rowColor = "var(--color-text-secondary)";
                         const longRowLabel = longSettlementStatusLabel(res);
                         const shortRowLabel = shortExactSettlementStatusLabel(res);
-                        if (res.isExploded && res.type !== "long") {
+                        if (res.shortSold) {
+                          statusSuffix = " 📉做空·清零";
+                          statusSuffixColor = "#60a5fa";
+                          rowColor = "#60a5fa";
+                        } else if (res.isExploded && res.type !== "long") {
                           statusSuffix = " 💥投爆";
                           statusSuffixColor = "#f87171";
                           rowColor = "#f87171";
                         } else if (res.type === "long" && longState === "abandoned") {
-                          statusSuffix = gains.total > 0 ? ` 🚫放弃（退款 ${gains.total}）` : " 🚫放弃";
+                          statusSuffix = " 🚫放弃·退回";
                           statusSuffixColor = "#9ca3af";
                           rowColor = "#9ca3af";
                         } else if (longRowLabel) {
@@ -273,6 +320,7 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
                           statusSuffixColor = shortRowLabel.color;
                           rowColor = shortRowLabel.color;
                         } else if (res.type === "long") statusSuffix = " ⏳";
+                        const isLongAbandon = !res.shortSold && res.type === "long" && longState === "abandoned";
                         return (
                           <tr key={res.projectId} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
                             <td style={{ padding: "0.875rem 1rem", color: "white", fontWeight: 600 }}>
@@ -283,7 +331,13 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
                               {myInvest}
                             </td>
                             <td style={{ padding: "0.875rem 1rem", textAlign: "center", fontFamily: "var(--font-mono)", fontSize: uiRem(0.8), color: rowColor }}>
-                              {formatGainBreakdown(gains.base, gains.rank, gains.era)}
+                              {res.shortSold
+                                ? gains.total !== 0
+                                  ? formatGainBreakdown(gains.base, gains.rank, gains.era, gains)
+                                  : "清零"
+                                : isLongAbandon
+                                ? `退回 ${gains.total}`
+                                : formatGainBreakdown(gains.base, gains.rank, gains.era, gains)}
                             </td>
                             <td
                               style={{
@@ -386,6 +440,8 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
 
       {/* 确认按钮 */}
       <div
+        ref={confirmDockRef}
+        className="investment-submit-dock"
         style={{
           position: "fixed",
           bottom: 0,
@@ -394,7 +450,6 @@ export const Settlement: React.FC<Props> = ({ game, me }) => {
           background: "rgba(7,11,20,0.95)",
           borderTop: "1px solid var(--color-border)",
           backdropFilter: "blur(20px)",
-          padding: "1rem",
           display: "flex",
           justifyContent: "center",
           zIndex: 50,

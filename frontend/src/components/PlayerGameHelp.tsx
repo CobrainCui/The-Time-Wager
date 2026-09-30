@@ -214,7 +214,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
   const [tab, setTab] = useState<HelpTabId>("projects_table");
   const [openWidthPx, setOpenWidthPx] = useState<number | null>(() => readStoredOpenWidth());
   const [isResizing, setIsResizing] = useState(false);
-  const isDesktopLayout = useMediaQuery("(min-width: 768px)", true);
+  const isDesktopLayout = useMediaQuery("(min-width: 1024px)", true);
   const asideRef = useRef<HTMLElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const prevOpenRef = useRef(open);

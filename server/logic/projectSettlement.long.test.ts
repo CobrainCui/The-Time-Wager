@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   LONG_CONTINUE_MIN_ENERGY,
+  needsLongContinueWarn,
   refundOnAbandon,
   sanitizeLongContribution,
   shouldTreatAsAbandon,
+  syncActiveLongTermRecords,
   syncLongTermRecordsFromHistory,
 } from "./longTermLogic.js";
 import { sanitizeInvestments } from "./investmentLogic.js";
@@ -43,7 +45,7 @@ function makeLongProject(id: number): ActiveProject {
     name: "测试长期",
     type: "long",
     era: "气候",
-    maxEnergy: 70,
+    maxEnergy: 90,
     accumulatedInvested: 0,
     currentInvested: 0,
     roundsNoInvestment: 0,
@@ -78,6 +80,39 @@ describe("longTermLogic", () => {
     assert.equal(sanitizeLongContribution("active", 2), 0);
     assert.equal(sanitizeLongContribution("active", 3), 3);
     assert.equal(sanitizeLongContribution(undefined, 2), 2);
+  });
+
+  it("needsLongContinueWarn uses investorRecords when longTerm missing", () => {
+    const project = makeLongProject(101);
+    project.investorRecords = { p1: 5 };
+    const p = makePlayer("p1", { longTerm: {} });
+    assert.equal(needsLongContinueWarn(project, p), true);
+
+    const stranger = makePlayer("p2");
+    assert.equal(needsLongContinueWarn(project, stranger), false);
+
+    const abandoned = makePlayer("p1", {
+      longTerm: { 101: { totalInvested: 5, status: "abandoned" } },
+    });
+    assert.equal(needsLongContinueWarn(project, abandoned), false);
+
+    const active = makePlayer("p1", {
+      longTerm: { 101: { totalInvested: 5, status: "active" } },
+    });
+    assert.equal(needsLongContinueWarn(project, active), true);
+  });
+
+  it("syncActiveLongTermRecords heals missing longTerm before investment", () => {
+    const p = makePlayer("p1", { longTerm: {} });
+    const project = makeLongProject(101);
+    project.investorRecords = { p1: 8 };
+    const short = makeLongProject(102);
+    short.type = "short";
+    short.investorRecords = { p1: 3 };
+    syncActiveLongTermRecords({ activeProjects: [project, short], players: [p] });
+    assert.equal(p.longTerm[101]?.status, "active");
+    assert.equal(p.longTerm[101]?.totalInvested, 8);
+    assert.equal(p.longTerm[102], undefined);
   });
 });
 

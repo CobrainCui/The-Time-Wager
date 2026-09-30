@@ -136,6 +136,7 @@ const existingEraFiles = fs.readdirSync(uploadErasDir);
 for (const file of existingEraFiles) {
   if (file.endsWith(".jpg")) {
     const eraName = file.replace(".jpg", "");
+    if (!isAllowedEraImageId(eraName)) continue;
     customEraImagesVersions[eraName] = Date.now();
   }
 }
@@ -146,7 +147,9 @@ if (!fs.existsSync(uploadBuffsDir)) {
 }
 for (const file of fs.readdirSync(uploadBuffsDir)) {
   if (file.endsWith(".jpg")) {
-    customBuffImagesVersions[file.replace(".jpg", "")] = Date.now();
+    const buffId = file.replace(".jpg", "");
+    if (!isAllowedBuffImageId(buffId)) continue;
+    customBuffImagesVersions[buffId] = Date.now();
   }
 }
 
@@ -156,7 +159,9 @@ if (!fs.existsSync(uploadPersonasDir)) {
 }
 for (const file of fs.readdirSync(uploadPersonasDir)) {
   if (file.endsWith(".jpg")) {
-    customPersonaImagesVersions[file.replace(".jpg", "")] = Date.now();
+    const slug = file.replace(".jpg", "");
+    if (!isAllowedPersonaImageId(slug)) continue;
+    customPersonaImagesVersions[slug] = Date.now();
   }
 }
 
@@ -443,13 +448,26 @@ io.on("connection", (socket) => {
  * 全局 Tick
  */
 const EMPTY_ROOM_TTL_MS = 2 * 60 * 60 * 1000;
+const INVESTMENT_CLOCK_SYNC_MS = 15_000;
 let lastRoomSweepAt = 0;
+const investmentClockSyncAt = new Map<string, number>();
 
 setInterval(() => {
   const now = Date.now();
   Object.values(rooms).forEach((game) => {
     if (handleActionTimeExpired(game)) {
+      investmentClockSyncAt.delete(game.roomId);
       broadcastUpdate(io, game);
+      return;
+    }
+    if (game.phase === "INVESTMENT" && game.investmentEndsAt != null) {
+      const last = investmentClockSyncAt.get(game.roomId) ?? 0;
+      if (now - last >= INVESTMENT_CLOCK_SYNC_MS) {
+        investmentClockSyncAt.set(game.roomId, now);
+        broadcastUpdate(io, game);
+      }
+    } else {
+      investmentClockSyncAt.delete(game.roomId);
     }
   });
   if (now - lastRoomSweepAt < 60_000) return;

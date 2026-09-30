@@ -5,6 +5,9 @@ export type SessionEventType =
   | "phase_changed"
   | "investment_submitted"
   | "admin_investment_reverted"
+  | "investment_timer"
+  | "player_ready"
+  | "presence"
   | "buff_used"
   | "coffee_purchased"
   | "coffee_refunded"
@@ -14,6 +17,10 @@ export type SessionEventType =
   | "auction_resolved"
   | "auction_revoked"
   | "auction_offer_cancelled"
+  | "auction_bid_placed"
+  | "auction_lot_sold"
+  | "auction_lot_passed"
+  | "auction_lot_changed"
   | "lottery_offered"
   | "lottery_settled"
   | "lottery_offer_cancelled"
@@ -21,6 +28,9 @@ export type SessionEventType =
   | "social_rated"
   | "settlement_round"
   | "community_named";
+
+/** 投资提交来源：点击提交 / 倒计时到点 / 主持强制结算 */
+export type InvestmentSubmitSource = "player" | "deadline" | "admin_force";
 
 export interface SessionEvent {
   id: string;

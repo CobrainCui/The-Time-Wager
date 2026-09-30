@@ -1,9 +1,16 @@
-import React, { useEffect, useState } from "react";
+import React, { useRef } from "react";
 import { uiRem } from "../utils/typography";
-import { LONG_CONTINUE_MIN_ENERGY } from "../config/longTermRules";
+import {
+  LONG_CONTINUE_MIN_ENERGY,
+  needsLongContinueWarn,
+  snapLongContinueInput,
+} from "../config/longTermRules";
 import { CatalogProjectType, SETTLEMENT_TIMING_SHORT } from "../config/projectCatalog";
 import { ActiveProject, Player } from "../types";
 import { getProjectImageDisplay } from "../utils/gameImageDisplay";
+import { useImageWithFallback } from "../hooks/useImageWithFallback";
+
+const DETAIL_CLICK_MOVE_PX = 8;
 
 export const TYPE_COLORS: Record<string, { border: string; text: string; bg: string; label: string }> = {
   short: { border: "#3b82f6", text: "#93c5fd", bg: "rgba(59,130,246,0.08)", label: "短期" },
@@ -40,7 +47,6 @@ export const ProjectCard: React.FC<{
   const myLongStatus = me.longTerm[project.id];
   const isAbandoned = myLongStatus?.status === "abandoned";
   const isLongCompleted = myLongStatus?.status === "completed";
-  const isLongActive = myLongStatus?.status === "active";
   const isDisabled = disabled || isAbandoned || isLongCompleted;
   const progress = Math.min((project.accumulatedInvested / project.maxEnergy) * 100, 100);
   const myContrib = (myInvest / project.maxEnergy) * 100;
@@ -48,34 +54,47 @@ export const ProjectCard: React.FC<{
   const settlementHint =
     SETTLEMENT_TIMING_SHORT[project.type as CatalogProjectType] ?? SETTLEMENT_TIMING_SHORT.short;
 
-  const [coverBroken, setCoverBroken] = useState(false);
-  useEffect(() => {
-    setCoverBroken(false);
-  }, [project.id, uploadedVersion]);
+  const detailPointerRef = useRef<{ x: number; y: number } | null>(null);
 
   const display = getProjectImageDisplay(project.id, project.name, {}, uploadedVersion);
-  const imageUrl =
-    coverBroken && display.source === "custom"
-      ? getProjectImageDisplay(project.id, project.name, {}, 0).src
-      : display.src;
+  const defaultSrc = getProjectImageDisplay(project.id, project.name, {}, 0).src;
+  const cover = useImageWithFallback(
+    display.src,
+    display.source === "custom" ? defaultSrc : null,
+  );
+  const imageUrl = cover.src;
 
   const showRedLongHint =
-    project.type === "long" && isLongActive && myInvest < LONG_CONTINUE_MIN_ENERGY && !isDisabled;
+    needsLongContinueWarn(project, me) && myInvest < LONG_CONTINUE_MIN_ENERGY && !isDisabled;
   const showYellowLongHint =
-    project.type === "long" && !isLongActive && !isAbandoned && !isLongCompleted;
+    project.type === "long" && !needsLongContinueWarn(project, me) && !isAbandoned && !isLongCompleted;
   const showLongHint = showRedLongHint || showYellowLongHint;
   const longHintUrgent = showRedLongHint;
   const reserveLongHint = balanceHeights || project.type === "long";
 
   const myCumulativeOnProject =
-    project.type === "long" && isLongActive && myLongStatus
-      ? myLongStatus.totalInvested
+    project.type === "long" && needsLongContinueWarn(project, me)
+      ? myLongStatus?.totalInvested ?? project.investorRecords?.[me.id] ?? 0
       : project.type !== "long"
         ? project.investorRecords?.[me.id] ?? 0
         : 0;
   const showMyCumulative = myCumulativeOnProject > 0;
 
-  const openDetailFrom = (trigger: HTMLElement) => onOpenDetail?.(project.id, trigger);
+  const markDetailPointer = (e: React.PointerEvent) => {
+    detailPointerRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const openDetailFrom = (trigger: HTMLElement, e?: React.MouseEvent | React.PointerEvent) => {
+    if (!onOpenDetail) return;
+    const start = detailPointerRef.current;
+    detailPointerRef.current = null;
+    if (start && e) {
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (dx * dx + dy * dy > DETAIL_CLICK_MOVE_PX * DETAIL_CLICK_MOVE_PX) return;
+    }
+    onOpenDetail(project.id, trigger);
+  };
 
   return (
     <div
@@ -105,14 +124,26 @@ export const ProjectCard: React.FC<{
           type="button"
           className="project-card-detail-hit project-card-cover"
           aria-label={`查看${project.name}详情`}
-          onClick={(e) => openDetailFrom(e.currentTarget)}
+          onPointerDown={markDetailPointer}
+          onClick={(e) => openDetailFrom(e.currentTarget, e)}
         >
-          <img
-            src={imageUrl}
-            alt=""
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-            onError={() => setCoverBroken(true)}
-          />
+          {cover.showPlaceholder ? (
+            <div
+              aria-hidden
+              style={{
+                width: "100%",
+                height: "100%",
+                background: "rgba(0,0,0,0.35)",
+              }}
+            />
+          ) : (
+            <img
+              src={imageUrl}
+              alt=""
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+              onError={cover.onError}
+            />
+          )}
         {isEraMatch && (
           <div
             style={{
@@ -153,12 +184,23 @@ export const ProjectCard: React.FC<{
         </button>
       ) : (
         <div className="project-card-cover" style={{ width: "100%", height: "160px", position: "relative", overflow: "hidden" }}>
-          <img
-            src={imageUrl}
-            alt={project.name}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            onError={() => setCoverBroken(true)}
-          />
+          {cover.showPlaceholder ? (
+            <div
+              aria-hidden
+              style={{
+                width: "100%",
+                height: "100%",
+                background: "rgba(0,0,0,0.35)",
+              }}
+            />
+          ) : (
+            <img
+              src={imageUrl}
+              alt={project.name}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              onError={cover.onError}
+            />
+          )}
           {isEraMatch && (
             <div
               style={{
@@ -210,11 +252,12 @@ export const ProjectCard: React.FC<{
       >
         <h3
           className={onOpenDetail ? "project-card-title-detail" : undefined}
+          onPointerDown={onOpenDetail ? markDetailPointer : undefined}
           onClick={
             onOpenDetail
               ? (e) => {
                   e.stopPropagation();
-                  openDetailFrom(e.currentTarget);
+                  openDetailFrom(e.currentTarget, e);
                 }
               : undefined
           }
@@ -274,8 +317,8 @@ export const ProjectCard: React.FC<{
             aria-hidden={!showLongHint}
           >
             {longHintUrgent
-              ? `已参投，本轮需投入>=${LONG_CONTINUE_MIN_ENERGY}精力，否则将1：1结算该项目且不能再参投和分红`
-              : `⚠️ 提示：长期项目参投后，必须每轮至少投入 ${LONG_CONTINUE_MIN_ENERGY} 精力，否则视为放弃`}
+              ? `已参投：本轮须 ≥${LONG_CONTINUE_MIN_ENERGY} 精力，否则 1:1 退回累计投入并退出完成排名`
+              : `⚠️ 参投后每轮须 ≥${LONG_CONTINUE_MIN_ENERGY} 精力；不足则放弃并 1:1 退回累计投入`}
           </div>
         )}
 
@@ -405,9 +448,7 @@ export const ProjectCard: React.FC<{
               onChange={(e) => {
                 let val = parseInt(e.target.value) || 0;
                 if (project.type === "long" && myLongStatus?.status === "active") {
-                  if (val === 1 || val === 2) {
-                    val = val > myInvest ? 3 : 0;
-                  }
+                  val = snapLongContinueInput(val, myInvest);
                 }
                 onChange(project.id, val);
               }}
@@ -428,7 +469,10 @@ export const ProjectCard: React.FC<{
               onChange={(e) => {
                 const raw = parseInt(e.target.value, 10);
                 const max = myInvest + remainingEnergy;
-                const val = Math.min(Math.max(0, Number.isFinite(raw) ? raw : 0), max);
+                let val = Math.min(Math.max(0, Number.isFinite(raw) ? raw : 0), max);
+                if (project.type === "long" && myLongStatus?.status === "active") {
+                  val = snapLongContinueInput(val, myInvest);
+                }
                 onChange(project.id, val);
               }}
               style={{

@@ -57,13 +57,13 @@ export const PDF_PAGE5_UNFINISHED_TABLE = {
   progressX: 160,
   lineHeight: 10,
   nameColumnWidthMm: 88,
-  /** 标题 baseline 上方留白 */
-  maxY: PDF_PAGE5_BAR_TITLE.y - 8,
+  /** 标题 baseline 上方留白（避免与表格底边/边框重叠） */
+  maxY: PDF_PAGE5_BAR_TITLE.y - 14,
 } as const;
 
 export const PDF_PAGE5_PROJECT_NAMES = {
-  /** 柱图底边 (y+h) 下方留白后起排 */
-  topY: PDF_PAGE5_PROJECT_BAR.y + PDF_PAGE5_PROJECT_BAR.h + 4,
+  /** 柱图底边 (y+h) 下方留白后起排（与 Chart 内 X 轴标签错开） */
+  topY: PDF_PAGE5_PROJECT_BAR.y + PDF_PAGE5_PROJECT_BAR.h + 8,
   fontSize: 18,
   lineHeight: 6.4,
   /** 状态标签与项目名之间的空行数 */

@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { GameState, Player } from "../types";
 import { TutorialSlidePanel } from "../tutorial/TutorialSlidePanel";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { preloadTutorialProjectCovers } from "../tutorial/preloadTutorialImages";
 
 interface Props {
   game: GameState;
@@ -10,7 +11,11 @@ interface Props {
 
 export const TutorialView: React.FC<Props> = ({ game, me }) => {
   const step = game.tutorialStep ?? 0;
-  const fitViewport = useMediaQuery("(min-width: 1024px)", true);
+  const fitViewport = useMediaQuery("(min-width: 1024px)", false);
+
+  useEffect(() => {
+    preloadTutorialProjectCovers();
+  }, []);
 
   return (
     <div

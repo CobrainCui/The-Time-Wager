@@ -57,15 +57,15 @@ describe("tied rank helpers", () => {
 
 describe("settleOneProject tied sharing", () => {
   it("long completion: two tied for first share rankRewards and era +50", () => {
-    const p1 = makePlayer("p1", { investment: { 101: 35 } });
-    const p2 = makePlayer("p2", { investment: { 101: 35 } });
+    const p1 = makePlayer("p1", { investment: { 101: 40 } });
+    const p2 = makePlayer("p2", { investment: { 101: 40 } });
     const p3 = makePlayer("p3", { investment: { 101: 10 } });
     const project: ActiveProject = {
       id: 101,
       name: "测试长期",
       type: "long",
       era: "气候",
-      maxEnergy: 70,
+      maxEnergy: 90,
       accumulatedInvested: 0,
       currentInvested: 0,
       roundsNoInvestment: 0,
@@ -83,10 +83,10 @@ describe("settleOneProject tied sharing", () => {
     const result = settleOneProject(game, project, []);
 
     assert.equal(result.isCompleted, true);
-    // base: 35*15=525 each for p1/p2; 10*15=150 for p3
+    // base: 40*15=600 each for p1/p2; 10*15=150 for p3
     // rank: floor((65+45)/2)=55 each for p1/p2; 35 for p3
     // era: floor(50/2)=25 each for p1/p2
-    assert.equal(result.playerGains.p1?.base, 525);
+    assert.equal(result.playerGains.p1?.base, 600);
     assert.equal(result.playerGains.p1?.rank, 55);
     assert.equal(result.playerGains.p1?.era, 25);
     assert.equal(result.playerGains.p2?.rank, 55);
@@ -94,12 +94,12 @@ describe("settleOneProject tied sharing", () => {
     assert.equal(result.playerGains.p3?.base, 150);
     assert.equal(result.playerGains.p3?.rank, 35);
     assert.equal(result.playerGains.p3?.era, 0);
-    assert.equal(p1.wealth, 525 + 55 + 25);
-    assert.equal(p2.wealth, 525 + 55 + 25);
+    assert.equal(p1.wealth, 600 + 55 + 25);
+    assert.equal(p2.wealth, 600 + 55 + 25);
     assert.equal(p3.wealth, 150 + 35);
   });
 
-  it("short explode: tied first share penalty; insurance each if held", () => {
+  it("short explode: tied first share penalty; insurance no longer pays on short", () => {
     const p1 = makePlayer("p1", {
       investment: { 1: 5 },
       activeBuffs: [{ cardId: "buff_insurance" }],
@@ -132,14 +132,47 @@ describe("settleOneProject tied sharing", () => {
     assert.equal(result.isExploded, true);
     // base this round: 5*10=50, 5*10=50, 3*10=30
     // penalty tied first: trunc((-35+-20)/2)=-27 each; p3: -15
-    // insurance +100 each for p1/p2
+    // 保险只保风险投爆，短期不再赔
     assert.equal(result.playerGains.p1?.base, 50);
     assert.equal(result.playerGains.p1?.rank, -27);
     assert.equal(result.playerGains.p2?.rank, -27);
     assert.equal(result.playerGains.p3?.rank, -15);
-    assert.equal(p1.wealth, 50 - 27 + 100);
-    assert.equal(p2.wealth, 50 - 27 + 100);
+    assert.equal(p1.wealth, 50 - 27);
+    assert.equal(p2.wealth, 50 - 27);
     assert.equal(p3.wealth, 30 - 15);
+  });
+
+  it("risk explode: insurance pays if invested this round even under 5", () => {
+    const insured = makePlayer("insured", {
+      investment: { 201: 3 },
+      activeBuffs: [{ cardId: "buff_insurance" }],
+    });
+    const spectator = makePlayer("spectator", {
+      investment: {},
+      activeBuffs: [{ cardId: "buff_insurance" }],
+    });
+    const project: ActiveProject = {
+      id: 201,
+      name: "测试风险",
+      type: "risk",
+      era: "气候",
+      maxEnergy: 10,
+      accumulatedInvested: 8,
+      currentInvested: 0,
+      roundsNoInvestment: 0,
+      investedThisRound: false,
+      investorRecords: { insured: 8 },
+      earningRecords: {},
+      totalPayout: 0,
+    };
+    const game = { players: [insured, spectator] } as GameState;
+    const result = settleOneProject(game, project, []);
+
+    assert.equal(result.isExploded, true);
+    // 本轮投入 3>0 → 赔 100；旁观者本轮 0 → 不赔
+    assert.equal(insured.wealth, 100);
+    assert.equal(spectator.wealth, 0);
+    assert.equal(result.playerGains.insured?.total, 100);
   });
 
   it("short exact complete: tied first share rank and era +30", () => {

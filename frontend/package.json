@@ -9,7 +9,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node ../scripts/verify-bundled-images.mjs && tsc -b && vite build",
+    "verify-images": "node ../scripts/verify-bundled-images.mjs",
     "lint": "eslint . --max-warnings 27",
     "preview": "vite preview"
   },

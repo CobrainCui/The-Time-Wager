@@ -10,13 +10,20 @@ export const FATE_SKETCH_IMAGE_SLUG: Record<string, string> = {
 
 export const PERSONA_IMAGE_SLUGS = Object.values(FATE_SKETCH_IMAGE_SLUG);
 
+/** 命运素描主题色：取自各人格立绘（pdf_templates/{slug}），与 FATE_SKETCH_IMAGE_SLUG 对应 */
 export const FATE_SKETCH_PERSONA_COLORS: Record<string, string> = {
-  "罗盘精算师": "#3b82f6",
+  /** Navigator · 星图/桌面浅钢青 */
+  "罗盘精算师": "#6ba3d6",
+  /** Planter · 林木苍绿（保持原 UI 绿） */
   "时荫植者": "#10b981",
-  "涌机触发者": "#f97316",
-  "瞬刻炼金士": "#a855f7",
-  "桥梁架构师": "#ec4899",
-  "随机诗人": "#6b7280",
+  /** Wave · 暗夜海浪深蓝 */
+  "涌机触发者": "#1e3d6b",
+  /** Moment · 沙漏与画框古金 */
+  "瞬刻炼金士": "#c9a227",
+  /** Bridge · 金桥、花叶暖黄 */
+  "桥梁架构师": "#d4a017",
+  /** Poet · 撕纸褐底、封面橙红 */
+  "随机诗人": "#c25a3a",
 };
 
 /** 玩家可见命运素描简介；须与 server/logic/personaConfig.ts 中 FATE_SKETCH_CONFIG 保持一致 */

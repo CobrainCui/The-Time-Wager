@@ -104,6 +104,8 @@ async function addChartFromDom(
     preserveAspectRatio?: boolean;
     /** 优先用 Chart.js canvas 导出，避免 html2canvas 把柱色/渐变渲黑 */
     preferChartCanvas?: boolean;
+    /** html2canvas 回退时的背景；null 为透明（柱形图叠大理石底） */
+    html2canvasBackground?: string | null;
   }
 ): Promise<boolean> {
   const chartDom = document.getElementById(elementId);
@@ -124,7 +126,10 @@ async function addChartFromDom(
     }
     if (!output) {
       output = await html2canvas(chartDom, {
-        backgroundColor: "#ffffff",
+        backgroundColor:
+          options?.html2canvasBackground === undefined
+            ? "#ffffff"
+            : options.html2canvasBackground,
         scale: 2,
         logging: false,
         useCORS: true,
@@ -195,6 +200,8 @@ function drawProjectParticipationNames(
 }
 
 const ASSET_LOAD_TIMEOUT_MS = 15_000;
+/** 楷书 + Noto SC 合计约 18MB，弱网下 15s 易超时 */
+const FONT_LOAD_TIMEOUT_MS = 60_000;
 
 function withRetryQuery(url: string): string {
   return url.includes("?") ? `${url}&retry=1` : `${url}?retry=1`;
@@ -202,7 +209,9 @@ function withRetryQuery(url: string): string {
 
 async function loadFontAsBase64(url: string): Promise<string> {
   const tryOnce = async (href: string) => {
-    const response = await fetch(publicAssetUrl(href), { signal: AbortSignal.timeout(ASSET_LOAD_TIMEOUT_MS) });
+    const response = await fetch(publicAssetUrl(href), {
+      signal: AbortSignal.timeout(FONT_LOAD_TIMEOUT_MS),
+    });
     if (!response.ok) {
       throw new Error(`字体加载失败 (${response.status})`);
     }
@@ -211,6 +220,10 @@ async function loadFontAsBase64(url: string): Promise<string> {
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64 = (reader.result as string).split(",")[1];
+        if (!base64) {
+          reject(new Error("字体 Base64 为空"));
+          return;
+        }
         resolve(base64);
       };
       reader.onerror = reject;
@@ -290,16 +303,37 @@ export async function generateCollectionManual({
 
   const doc = new jsPDF('p', 'mm', 'a4');
 
+  /** 封面昵称：Noto Sans SC（OFL）；正文仍用轩东楷书 */
+  const NOTO_COVER_URL = "/fonts/NotoSansSC-Regular.ttf";
+  const NOTO_COVER_FAMILY = "NotoSansSC";
+  let bodyFontFamily = "helvetica";
+  let coverFontLoaded = false;
+
+  onProgress?.("正在加载字体…");
+  // 并行拉取，避免 7MB+10MB 串行放大弱网超时
+  const bodyFontTask = loadFontAsBase64("/fonts/XuandongKaishu.ttf");
+  const coverFontTask = loadFontAsBase64(NOTO_COVER_URL);
+
   try {
-    onProgress?.("正在加载字体…");
-    const fontBase64 = await loadFontAsBase64('/fonts/XuandongKaishu.ttf');
+    const fontBase64 = await bodyFontTask;
     doc.addFileToVFS("XuanDong.ttf", fontBase64);
     doc.addFont("XuanDong.ttf", "XuanDong", "normal");
-    doc.setFont("XuanDong");
+    bodyFontFamily = "XuanDong";
   } catch (e) {
     console.error("字体加载失败，中文可能无法正常显示", e);
-    doc.setFont("helvetica");
   }
+
+  try {
+    onProgress?.("正在加载封面字体…");
+    const notoBase64 = await coverFontTask;
+    doc.addFileToVFS("NotoSansSC-Regular.ttf", notoBase64);
+    doc.addFont("NotoSansSC-Regular.ttf", NOTO_COVER_FAMILY, "normal");
+    coverFontLoaded = true;
+  } catch (e) {
+    console.warn("封面昵称字体（Noto Sans SC）加载失败，回退正文楷体", e);
+  }
+
+  doc.setFont(bodyFontFamily, "normal");
 
   const pathKey = FATE_SKETCH_IMAGE_SLUG[persona] || "Poet";
   const basePath = publicAssetUrl(`/assets/pdf_templates/${pathKey}`);
@@ -315,8 +349,13 @@ export async function generateCollectionManual({
 
     const img1 = await loadCoverImage();
     doc.addImage(img1, 'JPEG', 0, 0, PDF_WIDTH, PDF_HEIGHT);
+    doc.setFont(
+      coverFontLoaded ? NOTO_COVER_FAMILY : bodyFontFamily,
+      "normal"
+    );
     doc.setFontSize(PDF_COVER_PLAYER_NAME.fontSize);
     doc.text(safeName, PDF_COVER_PLAYER_NAME.x, PDF_COVER_PLAYER_NAME.y);
+    doc.setFont(bodyFontFamily, "normal");
 
     doc.addPage();
     const img2 = await loadImage(`${basePath}/2.jpg`);
@@ -392,7 +431,8 @@ export async function generateCollectionManual({
       doc,
       projectBarChartElementId,
       PDF_PAGE5_PROJECT_BAR,
-      "项目柱形图"
+      "项目柱形图",
+      { html2canvasBackground: null }
     );
     if (!barOk) {
       warnings.push("项目柱形图未能嵌入");

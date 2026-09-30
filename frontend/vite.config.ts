@@ -37,6 +37,9 @@ export default defineConfig({
       '/uploads_buffs': {
         target: 'http://localhost:3001',
       },
+      '/uploads_personas': {
+        target: 'http://localhost:3001',
+      },
     },
   },
 })

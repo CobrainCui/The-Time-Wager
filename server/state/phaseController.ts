@@ -6,49 +6,44 @@ import {
   resetAllReady 
 } from "./gameActions.js";
 import { settlePhase } from "../logic/projectSettlement.js";
-import { drawProjectsForEra, updateEraCard } from "../state/gameEra.js";
+import { ensureProjectsDrawnForEra, stripExpiredRiskProjects, updateEraCard } from "../state/gameEra.js";
 import { AI_BOT_ENABLED } from "../config/features.js";
 import { beginAuctionSession } from "../logic/auctionCards.js";
 import { ensureSessionStarted, recordPhaseChange } from "./sessionTelemetry.js";
 import { clearActionDeadline, startInvestmentDeadline } from "./actionDeadline.js";
 import { applyRoundEnergy } from "../logic/energySchedule.js";
+import { syncActiveLongTermRecords } from "../logic/longTermLogic.js";
 
 export function tryAdvancePhase(game: GameState) {
   const initialPhase = game.phase;
   if (game.phase === "ROOM_WAITING") return;
   
-  // 1. ERA_INTRO -> ...
+  // 1. ERA_INTRO -> INVESTMENT（含道具操作；不再经「进入讨论」闸门）
   if (game.phase === "ERA_INTRO") {
     if (isEveryoneReady(game)) {
-      // === Era 1 逻辑 (无 Buff 阶段) ===
-      if (game.currentEra === 1) {
-          if (game.roundInEra === 1) {
-            drawProjectsForEra(game);
-          }
-          
-          game.phase = "INVESTMENT";
-          startInvestmentDeadline(game);
-          game.logs.push("⏱️ 10 分钟倒计时开始（投资阶段）");
-      }
-      // === Era 2+ 逻辑 (有 Buff 阶段) ===
-      else {
-          if (game.roundInEra === 1) {
-            drawProjectsForEra(game);
-          }
-          clearActionDeadline(game);
-          game.phase = "BUFF_USAGE";
-      }
-      
+      ensureProjectsDrawnForEra(game);
+
+      syncActiveLongTermRecords(game);
+      game.phase = "INVESTMENT";
+      startInvestmentDeadline(game);
+      game.logs.push(
+        game.currentEra === 1
+          ? "⏱️ 10 分钟倒计时开始（投资阶段）"
+          : "⏱️ 10 分钟倒计时开始（投资与道具）"
+      );
+
       resetAllReady(game);
     }
   }
 
-  // 2. BUFF_USAGE -> INVESTMENT（全员真实玩家「进入讨论和投资」后开表）
+  // 2. 遗留 BUFF_USAGE（旧局/主持跳转）：全员 ready 后并入投资开表
   else if (game.phase === "BUFF_USAGE") {
       if (isEveryoneReadyToLeaveBuff(game)) {
+          ensureProjectsDrawnForEra(game);
+          syncActiveLongTermRecords(game);
           game.phase = "INVESTMENT";
           startInvestmentDeadline(game);
-          game.logs.push("⏱️ 10 分钟倒计时开始（投资阶段）");
+          game.logs.push("⏱️ 10 分钟倒计时开始（投资与道具）");
           resetAllReady(game);
       }
   }
@@ -106,8 +101,14 @@ export function tryAdvancePhase(game: GameState) {
 
 function advanceRound(game: GameState) {
   clearActionDeadline(game);
-  // 清理临时 Buff
-  game.players.forEach(p => p.activeBuffs = []);
+  // 清理临时 Buff 与本轮道具短记录
+  game.players.forEach((p) => {
+    p.activeBuffs = [];
+    p.buffRoundNotes = [];
+    p.slackedBy = [];
+    p.slackEnergyLost = [];
+    p.pendingSlackHits = [];
+  });
 
   game.globalRound += 1;
   game.roundInEra += 1;
@@ -127,8 +128,9 @@ function advanceRound(game: GameState) {
       return;
     }
 
-    // 更新时代卡
+    // 更新时代卡；换代即清旧风险，避免拍卖/时代介绍仍显示上代风险
     updateEraCard(game);
+    stripExpiredRiskProjects(game);
     
     // 换代前插入拍卖阶段
     game.phase = "AUCTION";

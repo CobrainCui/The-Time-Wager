@@ -101,6 +101,8 @@ describe("investment visibility", () => {
     assert.deepEqual(godThem?.investment, { 1: 3 });
     assert.equal(Array.isArray((god as { pendingLotteryOffers?: unknown }).pendingLotteryOffers), true);
     assert.equal(Array.isArray((god as { lotteryCompletedDeals?: unknown }).lotteryCompletedDeals), true);
+    assert.equal(Array.isArray((god as { pendingAuctionOffers?: unknown }).pendingAuctionOffers), true);
+    assert.equal(Array.isArray((god as { auctionCompletedDeals?: unknown }).auctionCompletedDeals), true);
   });
 });
 

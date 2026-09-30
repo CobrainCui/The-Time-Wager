@@ -64,11 +64,21 @@ jobs:
           unzip -o /root/server_upload.zip -d /www/wwwroot/guangyinduidu.com/server/
           cd /www/wwwroot/guangyinduidu.com/server/
           npm ci --omit=dev
+          # 确认 pm2 跑的是编译产物（勿指向源码 server/index.js）
+          pm2 describe guangyin | grep -E "script path|exec cwd" || true
           pm2 restart guangyin
 
           # 咖啡功能：防止前端已部署、后端 dist 过旧
           grep -q coffeePurchasesThisRound /www/wwwroot/guangyinduidu.com/server/dist/network/broadcast.js
           grep -q performCoffee /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
+
+          # 投资倒计时控场：前后端需同版本
+          grep -q investmentTimerPausedAt /www/wwwroot/guangyinduidu.com/server/dist/network/broadcast.js
+          grep -q adminInvestmentTimer /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
+          grep -q adminInvestmentTimer /www/wwwroot/admin.guangyinduidu.com/assets/admin-*.js
+          # 管理子域入口必须指向最新 admin.html（含新 hash 资源）
+          test -f /www/wwwroot/admin.guangyinduidu.com/index.html
+          grep -q 'admin-' /www/wwwroot/admin.guangyinduidu.com/index.html
           
           # 清理压缩包
           rm -f /root/dist_upload.zip

@@ -2,7 +2,8 @@ import React from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
-import { getEraImageDisplay } from "../utils/gameImageDisplay";
+import { getEraDefaultImageSrc, getEraImageDisplay } from "../utils/gameImageDisplay";
+import { useImageWithFallback } from "../hooks/useImageWithFallback";
 
 interface Props {
   game: GameState;
@@ -31,7 +32,10 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {} }) => {
   const eraGradient = card ? (ERA_GRADIENTS[card.themeColor] || ERA_GRADIENTS.blue) : ERA_GRADIENTS.blue;
   const eraNum = game.currentEra;
   const readyCount = game.readyPlayers?.length ?? 0;
-  const eraImgSrc = card ? getEraImageDisplay(card.era, eraImages).src : "";
+  const eraResolved = card ? getEraImageDisplay(card.era, eraImages) : null;
+  const eraFallback =
+    eraResolved?.source === "custom" && card ? getEraDefaultImageSrc(card.era) : null;
+  const eraImg = useImageWithFallback(eraResolved?.src ?? "", eraFallback);
 
   return (
     <div
@@ -94,7 +98,33 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {} }) => {
                   border: `2px solid ${eraColor}66`,
                 }}
               >
-                <img src={eraImgSrc} alt={card.era} />
+                {eraImg.showPlaceholder ? (
+                  <div
+                    className="era-intro-card-fallback"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "0.5rem",
+                      background: `linear-gradient(160deg, ${eraColor}33, rgba(0,0,0,0.5))`,
+                      color: "var(--color-text-muted)",
+                      padding: "1rem",
+                    }}
+                  >
+                    <span style={{ fontSize: uiRem(1.25), fontWeight: 800, color: eraColor }}>{card.era}</span>
+                    <span style={{ fontSize: uiRem(0.75) }}>时代卡面暂不可用</span>
+                  </div>
+                ) : (
+                  <img
+                    src={eraImg.src}
+                    alt={card.era}
+                    style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+                    onError={eraImg.onError}
+                  />
+                )}
               </div>
             </div>
             <p

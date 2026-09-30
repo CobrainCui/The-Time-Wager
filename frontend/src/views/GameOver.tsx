@@ -73,8 +73,8 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {} }) => {
       {
         label: "财富曲线",
         data: wealthHistory,
-        borderColor: "#60a5fa",
-        backgroundColor: "rgba(96,165,250,0.1)",
+        borderColor: personaColor,
+        backgroundColor: `${personaColor}1a`,
         borderWidth: 3,
         pointRadius: 0,
         tension: 0.4,
@@ -368,7 +368,7 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {} }) => {
           position: "fixed",
           left: 0,
           top: 0,
-          transform: "translateX(-120vw)",
+          transform: "translateX(calc(-100% - 100vw))",
           width: `${Math.max(PDF_RADAR_CAPTURE.width, PDF_LINE_CAPTURE.width, PDF_PROJECT_BAR_CAPTURE.width)}px`,
           height: `${PDF_RADAR_CAPTURE.height + PDF_LINE_CAPTURE.height + PDF_PROJECT_BAR_CAPTURE.height}px`,
           opacity: 1,
@@ -410,7 +410,7 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {} }) => {
           style={{
             width: `${PDF_PROJECT_BAR_CAPTURE.width}px`,
             height: `${PDF_PROJECT_BAR_CAPTURE.height}px`,
-            background: "#ffffff",
+            background: "transparent",
           }}
         >
           <Bar

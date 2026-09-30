@@ -66,8 +66,8 @@ describe("coffee purchase and refund", () => {
 
     const result = refundCoffee(game, player, 1);
     assert.equal(result.ok, true);
-    assert.equal(player.wealth, 100);
-    assert.equal(player.energy, 15);
+    assert.equal(player.wealth, 85 + COFFEE_WEALTH_COST);
+    assert.equal(player.energy, 16 - COFFEE_ENERGY_GAIN);
     assert.equal(player.coffeePurchasesThisRound, 0);
   });
 });

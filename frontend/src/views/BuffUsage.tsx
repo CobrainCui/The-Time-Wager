@@ -1,74 +1,159 @@
-import React, { useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
 
 import { BUFF_DEFS } from "../data/buffDefs";
 import { BuffCardArt } from "../components/BuffCardArt";
-import { isAiPlayer } from "../utils/isAiPlayer";
-
-function playersNeedingBuffGate(game: GameState): Player[] {
-  return game.players.filter((p) => p.connected && !isAiPlayer(p));
-}
+import { BuffRoundChips } from "../components/BuffRoundChips";
 
 interface Props {
   game: GameState;
   me: Player;
   buffImages?: Record<string, number>;
-  onOpenInvestmentPrefill?: () => void;
-  /** 进入讨论队列前同步预填并 ready */
-  onEnterDiscussion?: () => void;
+  /** 分屏嵌入时收紧标题区 */
+  hideDock?: boolean;
+  /** 已锁定投资时只读展示手牌 */
+  readOnly?: boolean;
+}
+
+function canUseBuffs(game: GameState, me: Player, readOnly: boolean): boolean {
+  if (readOnly || me.ready) return false;
+  return game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE";
 }
 
 export const BuffUsage: React.FC<Props> = ({
   game,
   me,
   buffImages = {},
-  onOpenInvestmentPrefill,
-  onEnterDiscussion,
+  hideDock = false,
+  readOnly = false,
 }) => {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [targetPlayer, setTargetPlayer] = useState("");
   const [targetProject, setTargetProject] = useState<number | undefined>(undefined);
-  const [extraData, setExtraData] = useState("");
+  const [burnCardId, setBurnCardId] = useState("");
+  const [burnFromInventory, setBurnFromInventory] = useState(true);
+
+  const actionsEnabled = canUseBuffs(game, me, readOnly);
+  const actionsLocked = !actionsEnabled;
 
   useEffect(() => {
-    if (me.ready) setSelectedCard(null);
-  }, [me.ready]);
+    if (actionsLocked) setSelectedCard(null);
+  }, [actionsLocked]);
+
+  useEffect(() => {
+    if (selectedCard === "buff_lighter" && targetPlayer === me.id) {
+      setTargetPlayer("");
+      setBurnCardId("");
+    }
+  }, [selectedCard, targetPlayer, me.id]);
+
+  const burnTarget = useMemo(
+    () => game.players.find((p) => p.id === targetPlayer),
+    [game.players, targetPlayer]
+  );
+  const burnOptions = useMemo(() => {
+    type BurnOpt = {
+      id: string;
+      label: string;
+      fromInventory: boolean;
+      ownerId: string;
+    };
+    const owners =
+      burnTarget && burnTarget.id !== me.id
+        ? [burnTarget]
+        : game.players.filter((p) => p.id !== me.id);
+    const opts: BurnOpt[] = [];
+    for (const owner of owners) {
+      const showOwner = !(burnTarget && burnTarget.id !== me.id);
+      for (const id of owner.inventory || []) {
+        opts.push({
+          id,
+          ownerId: owner.id,
+          fromInventory: true,
+          label: showOwner
+            ? `${owner.name} · 手牌·${BUFF_DEFS[id]?.name || id}`
+            : `手牌·${BUFF_DEFS[id]?.name || id}`,
+        });
+      }
+      for (const b of owner.activeBuffs || []) {
+        opts.push({
+          id: b.cardId,
+          ownerId: owner.id,
+          fromInventory: false,
+          label: showOwner
+            ? `${owner.name} · 已发动·${BUFF_DEFS[b.cardId]?.name || b.cardId}`
+            : `已发动·${BUFF_DEFS[b.cardId]?.name || b.cardId}`,
+        });
+      }
+    }
+    return opts;
+  }, [burnTarget, game.players, me.id]);
 
   const handleUse = () => {
-    if (me.ready) return;
+    if (actionsLocked) return;
     if (!selectedCard) return;
-    if (selectedCard === "buff_slack" && !targetPlayer) { alert("请选择目标玩家"); return; }
-    if (selectedCard === "buff_short") {
-      if (!targetProject) { alert("请选择目标项目"); return; }
-      if (!extraData) { alert("请选择猜测结果"); return; }
+    if (selectedCard === "buff_force_buy") {
+      alert("强买强卖请在拍卖阶段对主持标出的当前卡使用");
+      return;
     }
-    socket.emit("useBuffCard", { cardId: selectedCard, targetPlayerId: targetPlayer, targetProjectId: targetProject, extraData });
-    setSelectedCard(null); setTargetPlayer(""); setTargetProject(undefined); setExtraData("");
+    if ((selectedCard === "buff_slack" || selectedCard === "buff_lighter") && !targetPlayer) {
+      alert("请选择目标玩家");
+      return;
+    }
+    if (selectedCard === "buff_lighter" && targetPlayer === me.id) {
+      alert("打火机不能烧毁自己的卡");
+      return;
+    }
+    if (selectedCard === "buff_short" && !targetProject) {
+      alert("请选择目标项目");
+      return;
+    }
+    if (selectedCard === "buff_lighter" && !burnCardId) {
+      alert("请选择目标卡牌");
+      return;
+    }
+    socket.emit("useBuffCard", {
+      cardId: selectedCard,
+      targetPlayerId: targetPlayer || undefined,
+      targetProjectId: targetProject,
+      burnCardId: burnCardId || undefined,
+      burnFromInventory,
+    });
+    setSelectedCard(null);
+    setTargetPlayer("");
+    setTargetProject(undefined);
+    setBurnCardId("");
+    setBurnFromInventory(true);
   };
-
-  const gateTotal = playersNeedingBuffGate(game).length;
-  const gateReady = (game.readyPlayers ?? []).filter((id) =>
-    playersNeedingBuffGate(game).some((p) => p.id === id)
-  ).length;
 
   const selectedDef = selectedCard ? BUFF_DEFS[selectedCard] : null;
 
   return (
     <div
+      className="buff-usage-page"
       style={{
-        minHeight: "100vh",
+        minHeight: hideDock ? "100%" : "100vh",
         background: `radial-gradient(ellipse at 50% 0%, rgba(168,85,247,0.12) 0%, transparent 55%), #070b14`,
-        padding: "1.5rem 1rem",
+        paddingTop: "1.5rem",
+        paddingLeft: "1rem",
+        paddingRight: "1rem",
+        paddingBottom: "1.5rem",
       }}
     >
-      <div style={{ maxWidth: "1000px", margin: "0 auto", opacity: me.ready ? 0.5 : 1, pointerEvents: me.ready ? "none" : "auto" }}>
-        {/* 头部 */}
-        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
+      <div
+        style={{
+          maxWidth: "1000px",
+          margin: "0 auto",
+          opacity: actionsLocked && !readOnly ? 0.55 : 1,
+          pointerEvents: actionsLocked ? "none" : "auto",
+        }}
+      >
+        <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
           <h1
             style={{
-              fontSize: "2.25rem",
+              fontSize: hideDock ? "1.5rem" : "2.25rem",
               fontWeight: 900,
               background: "linear-gradient(135deg, #a855f7, #ec4899)",
               WebkitBackgroundClip: "text",
@@ -77,20 +162,25 @@ export const BuffUsage: React.FC<Props> = ({
               marginBottom: "0.375rem",
             }}
           >
-            🔮 道具与策略
+            🔮 道具
           </h1>
-          <p style={{ color: "var(--color-text-secondary)", fontSize: uiRem(0.9) }}>
-            合理使用手牌改变战局，或保留至下一轮
-          </p>
-          {!me.ready && (
-            <p style={{ marginTop: "0.5rem", color: "var(--color-text-muted)", fontSize: uiRem(0.8) }}>
-              道具阶段不限时；全员点击「进入讨论和投资」后开始 10 分钟倒计时
+          {!hideDock && (
+            <p style={{ color: "var(--color-text-secondary)", fontSize: uiRem(0.9) }}>
+              投资阶段内可使用手牌；锁定投资后不可再发动
             </p>
+          )}
+          {!hideDock && (
+            <div style={{ marginTop: "0.75rem" }}>
+              <BuffRoundChips
+                me={me}
+                actionsDisabled={actionsLocked}
+                canAct={actionsEnabled}
+              />
+            </div>
           )}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1.5rem", alignItems: "start" }}>
-          {/* 左：手牌 */}
+        <div className="player-responsive-split">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
               <h3 style={{ fontWeight: 700, fontSize: uiRem(1), color: "white" }}>📦 我的手牌</h3>
@@ -130,35 +220,29 @@ export const BuffUsage: React.FC<Props> = ({
                 {me.inventory.map((cardId, idx) => {
                   const def = BUFF_DEFS[cardId] || { name: cardId, desc: "", icon: "❓", color: "#6b7280" };
                   const isSelected = selectedCard === cardId;
-                  const isUsed = me.usedCards?.includes(cardId);
                   return (
                     <button
                       key={idx}
-                      onClick={() => !isUsed && setSelectedCard(isSelected ? null : cardId)}
-                      disabled={!!isUsed}
+                      onClick={() => !actionsLocked && setSelectedCard(isSelected ? null : cardId)}
+                      disabled={actionsLocked}
                       style={{
-                        border: `2px solid ${isSelected ? def.color : isUsed ? "rgba(255,255,255,0.04)" : "var(--color-border)"}`,
+                        border: `2px solid ${isSelected ? def.color : "var(--color-border)"}`,
                         borderRadius: "1rem",
-                        background: isSelected
-                          ? `${def.color}18`
-                          : isUsed
-                          ? "rgba(255,255,255,0.02)"
-                          : "var(--color-bg-card)",
+                        background: isSelected ? `${def.color}18` : "var(--color-bg-card)",
                         padding: "0.65rem",
-                        cursor: isUsed ? "not-allowed" : "pointer",
+                        cursor: actionsLocked ? "not-allowed" : "pointer",
                         display: "flex",
                         flexDirection: "column",
                         gap: "0.5rem",
                         transition: "all 0.2s ease",
                         transform: isSelected ? "scale(1.04)" : undefined,
                         boxShadow: isSelected ? `0 0 20px ${def.color}40` : undefined,
-                        opacity: isUsed ? 0.4 : 1,
                         textAlign: "left",
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <span style={{ fontSize: uiRem(0.65), color: "var(--color-text-muted)" }}>
-                          {isUsed ? "已用" : isSelected ? "已选" : ""}
+                          {isSelected ? "已选" : ""}
                         </span>
                         {isSelected && <span style={{ color: def.color, fontSize: uiRem(1) }}>✓</span>}
                       </div>
@@ -188,7 +272,7 @@ export const BuffUsage: React.FC<Props> = ({
             )}
           </div>
 
-          {/* 右：操作面板 */}
+          {!readOnly && (
           <div>
             <div
               style={{
@@ -197,7 +281,7 @@ export const BuffUsage: React.FC<Props> = ({
                 borderRadius: "1rem",
                 padding: "1.25rem",
                 position: "sticky",
-                top: "1rem",
+                top: "calc(var(--buff-invest-tab-h, 0px) + 1rem)",
                 transition: "border-color 0.25s ease",
                 boxShadow: selectedDef ? `0 0 20px ${selectedDef.color}18` : undefined,
               }}
@@ -217,12 +301,11 @@ export const BuffUsage: React.FC<Props> = ({
                     fontSize: uiRem(0.875),
                   }}
                 >
-                  👈 点击左侧卡牌激活
+                  👈 点击左侧卡牌发动
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                  {/* 目标玩家 */}
-                  {selectedCard === "buff_slack" && (
+                  {(selectedCard === "buff_slack" || selectedCard === "buff_lighter") && (
                     <div>
                       <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
                         目标玩家
@@ -230,46 +313,84 @@ export const BuffUsage: React.FC<Props> = ({
                       <select
                         className="input"
                         value={targetPlayer}
-                        onChange={(e) => setTargetPlayer(e.target.value)}
+                        onChange={(e) => {
+                          setTargetPlayer(e.target.value);
+                          setBurnCardId("");
+                        }}
                         style={{ fontSize: uiRem(0.9) }}
                       >
                         <option value="">-- 选择目标 --</option>
-                        {game.players.filter((p) => p.id !== me.id).map((p) => (
-                          <option key={p.id} value={p.id}>{p.name} (⚡{p.energy})</option>
+                        {(selectedCard === "buff_lighter"
+                          ? game.players.filter((p) => p.id !== me.id)
+                          : game.players
+                        ).map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}{p.id === me.id ? "（自己）" : ""} (⚡{p.energy})
+                          </option>
                         ))}
                       </select>
                     </div>
                   )}
 
-                  {/* 项目做空 */}
                   {selectedCard === "buff_short" && (
-                    <>
-                      <div>
-                        <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>目标项目</label>
-                        <select className="input" value={targetProject} onChange={(e) => setTargetProject(Number(e.target.value))}>
-                          <option value="">-- 选择项目 --</option>
-                          {game.activeProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>预测结果</label>
-                        <select className="input" value={extraData} onChange={(e) => setExtraData(e.target.value)}>
-                          <option value="">-- 选择预测 --</option>
-                          <option value="empty">无人投资 (赢+200)</option>
-                          <option value="full">恰好完成 (赢+150)</option>
-                        </select>
-                      </div>
-                    </>
-                  )}
-
-                  {/* 反弹琵琶说明 */}
-                  {selectedCard === "buff_rebound" && (
-                    <div style={{ fontSize: uiRem(0.825), color: "var(--color-text-secondary)", lineHeight: 1.6, background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "0.625rem", padding: "0.75rem" }}>
-                      开启后，本轮受到【摸鱼传染】时自动反弹，精力+10而非-5。
+                    <div>
+                      <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>目标项目</label>
+                      <select
+                        className="input"
+                        value={targetProject ?? ""}
+                        onChange={(e) => setTargetProject(e.target.value ? Number(e.target.value) : undefined)}
+                      >
+                        <option value="">-- 选择项目 --</option>
+                        {game.activeProjects.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
                     </div>
                   )}
 
-                  {/* 发动 */}
+                  {selectedCard === "buff_lighter" && (
+                    <div>
+                      <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+                        目标卡牌
+                      </label>
+                      <select
+                        className="input"
+                        value={
+                          burnCardId
+                            ? `${burnFromInventory ? "inv" : "act"}:${targetPlayer}:${burnCardId}`
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (!v) {
+                            setBurnCardId("");
+                            return;
+                          }
+                          const [src, ownerId, id] = v.split(":");
+                          setBurnFromInventory(src === "inv");
+                          setBurnCardId(id);
+                          setTargetPlayer(ownerId);
+                        }}
+                      >
+                        <option value="">-- 选择卡牌 --</option>
+                        {burnOptions.map((o, i) => (
+                          <option
+                            key={`${o.ownerId}-${o.fromInventory ? "inv" : "act"}-${o.id}-${i}`}
+                            value={`${o.fromInventory ? "inv" : "act"}:${o.ownerId}:${o.id}`}
+                          >
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {selectedCard === "buff_work_rest" && (
+                    <div style={{ fontSize: uiRem(0.825), color: "var(--color-text-secondary)", lineHeight: 1.6, background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "0.625rem", padding: "0.75rem" }}>
+                      被使用【摸鱼传染】后获得 8 精力。单独使用无效。
+                    </div>
+                  )}
+
                   <button onClick={handleUse} className="btn btn-purple btn-full" style={{ background: selectedDef ? `linear-gradient(135deg, ${selectedDef.color}, ${selectedDef.color}bb)` : undefined }}>
                     ✨ 立即发动
                   </button>
@@ -280,110 +401,8 @@ export const BuffUsage: React.FC<Props> = ({
               )}
             </div>
           </div>
+          )}
         </div>
-
-        {/* 底部 */}
-        {me.ready ? (
-          <div
-            style={{
-              position: "fixed",
-              bottom: "2rem",
-              left: 0,
-              right: 0,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "0.75rem",
-              zIndex: 40,
-              pointerEvents: "none",
-            }}
-          >
-            <div className="buff-phase-waiting" style={{ pointerEvents: "auto" }}>
-              等待其他玩家进入讨论和投资
-              {gateTotal > 0 && (
-                <span style={{ marginLeft: "0.5rem", opacity: 0.85, fontWeight: 600 }}>
-                  ({gateReady}/{gateTotal})
-                </span>
-              )}
-            </div>
-            {onOpenInvestmentPrefill && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                style={{
-                  pointerEvents: "auto",
-                  border: "1px solid rgba(59,130,246,0.45)",
-                  color: "#93c5fd",
-                  background: "rgba(59,130,246,0.12)",
-                  padding: "0.5rem 1.25rem",
-                  fontWeight: 600,
-                }}
-                onClick={onOpenInvestmentPrefill}
-              >
-                预览投资
-              </button>
-            )}
-          </div>
-        ) : (
-          <div
-            style={{
-              position: "fixed",
-              bottom: "2.5rem",
-              left: 0,
-              right: 0,
-              padding: "1.5rem",
-              display: "flex",
-              justifyContent: "center",
-              gap: "0.75rem",
-              flexWrap: "wrap",
-              background: "linear-gradient(to top, rgba(10,11,16,0.98) 60%, transparent)",
-            }}
-          >
-            {onOpenInvestmentPrefill && (
-              <button
-                type="button"
-                onClick={onOpenInvestmentPrefill}
-                className="btn btn-sm"
-                style={{
-                  border: "1px solid rgba(59,130,246,0.45)",
-                  color: "#93c5fd",
-                  background: "rgba(59,130,246,0.12)",
-                  padding: "0.75rem 1.5rem",
-                  fontWeight: 600,
-                }}
-              >
-                预览投资
-              </button>
-            )}
-            <button
-              onClick={() => (onEnterDiscussion ? onEnterDiscussion() : socket.emit("playerReady"))}
-              style={{
-                background: "rgba(212,175,55,0.07)",
-                border: "1px solid rgba(212,175,55,0.35)",
-                borderRadius: "9999px",
-                color: "var(--color-text-secondary)",
-                cursor: "pointer",
-                fontSize: uiRem(1.05),
-                fontWeight: 600,
-                padding: "0.75rem 2rem",
-                letterSpacing: "0.03em",
-                transition: "all 0.2s ease",
-              }}
-              onMouseEnter={e => {
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(212,175,55,0.7)";
-                (e.currentTarget as HTMLButtonElement).style.color = "#d4af37";
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(212,175,55,0.14)";
-              }}
-              onMouseLeave={e => {
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(212,175,55,0.35)";
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-secondary)";
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(212,175,55,0.07)";
-              }}
-            >
-              进入讨论和投资 →
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

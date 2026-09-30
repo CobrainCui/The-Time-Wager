@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { GameState, LotteryOffer, Player } from "../state/gameState.js";
+import { applyGoldMultiplier } from "./buffLogic.js";
 
 export const LOTTERY_CARD_ID = "buff_lottery";
 
@@ -83,16 +84,34 @@ export function claimLotteryResponse(
   return { ok: true, amount: offer.amount };
 }
 
-export function recordLotteryCompletedDeal(game: GameState, playerId: string, amount: number): void {
+export function recordLotteryCompletedDeal(
+  game: GameState,
+  playerId: string,
+  amount: number,
+  enteredAmount?: number,
+  goldApplied?: boolean
+): void {
   if (!game.lotteryCompletedDeals) game.lotteryCompletedDeals = [];
   game.lotteryCompletedDeals = game.lotteryCompletedDeals.filter((d) => d.playerId !== playerId);
-  game.lotteryCompletedDeals.push({ playerId, amount });
+  game.lotteryCompletedDeals.push({
+    playerId,
+    amount,
+    ...(enteredAmount != null ? { enteredAmount } : {}),
+    ...(goldApplied != null ? { goldApplied } : {}),
+  });
 }
 
-export function applyLotteryAccept(game: GameState, player: Player, amount: number): void {
-  player.wealth += amount;
+export function applyLotteryAccept(
+  game: GameState,
+  player: Player,
+  amount: number
+): { enteredAmount: number; creditedAmount: number; goldApplied: boolean } {
+  const goldApplied = Boolean(player.activeBuffs?.some((b) => b.cardId === "buff_gold"));
+  const credited = applyGoldMultiplier(player, amount);
+  player.wealth += credited;
   removeLotteryBuff(player);
-  recordLotteryCompletedDeal(game, player.id, amount);
+  recordLotteryCompletedDeal(game, player.id, credited, amount, goldApplied);
+  return { enteredAmount: amount, creditedAmount: credited, goldApplied };
 }
 
 export type RevokeLotteryResult =

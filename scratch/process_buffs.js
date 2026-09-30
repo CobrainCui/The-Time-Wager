@@ -17,10 +17,11 @@ const BUFF_CARDS = [
   { id: "buff_gold", name: "点石成金", aliases: ["点石", "成金"] },
   { id: "buff_short", name: "项目做空", aliases: ["做空", "PROJECT"] },
   { id: "buff_slack", name: "摸鱼传染", aliases: ["摸鱼"] },
-  { id: "buff_rebound", name: "反弹琵琶", aliases: ["反弹", "琵琶"] },
   { id: "buff_insurance", name: "保险", aliases: ["INSURANCE"] },
-  { id: "buff_spirit", name: "精神老伙", aliases: ["精神", "老伙"] },
   { id: "buff_lottery", name: "彩票", aliases: ["LOTTERY"] },
+  { id: "buff_force_buy", name: "强买强卖", aliases: ["强买", "强卖"] },
+  { id: "buff_work_rest", name: "劳逸结合", aliases: ["劳逸"] },
+  { id: "buff_lighter", name: "打火机", aliases: ["打火"] },
 ];
 
 const NAMES = BUFF_CARDS.map((c) => c.name);
@@ -45,10 +46,11 @@ const ENGLISH_HINTS = [
   { id: "buff_gold", patterns: ["TURNSTONE", "INTOGOLD", "点石成金"] },
   { id: "buff_short", patterns: ["PROJECTSHORT", "SHORTSELLING", "项目做空", "做空"] },
   { id: "buff_slack", patterns: ["SLACKINGISCONTAGIOUS", "SLACKING", "摸鱼传染", "摸鱼"] },
-  { id: "buff_rebound", patterns: ["REBOUNDPIPA", "反弹琵琶", "反弹"] },
   { id: "buff_insurance", patterns: ["INSURANCE", "保险"] },
-  { id: "buff_spirit", patterns: ["ENERGETICELDER", "精神老伙", "精神"] },
   { id: "buff_lottery", patterns: ["LOTTERY", "彩票"] },
+  { id: "buff_force_buy", patterns: ["FORCEEDTRADING", "FORCEDTRADING", "强买强卖", "强买"] },
+  { id: "buff_work_rest", patterns: ["HARMONIOUSBALANCE", "劳逸结合", "劳逸"] },
+  { id: "buff_lighter", patterns: ["LIGHTER", "打火机"] },
 ];
 
 function matchCardId(cleanText) {

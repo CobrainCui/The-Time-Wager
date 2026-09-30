@@ -1,14 +1,23 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { uiRem } from "../utils/typography";
 
 interface Props {
   src: string;
   alt: string;
+  /** 主图加载失败时回退（如自定义上传 404 → 默认卡面） */
+  fallbackSrc?: string;
   onClose: () => void;
 }
 
-export const ImageLightbox: React.FC<Props> = ({ src, alt, onClose }) => {
+export const ImageLightbox: React.FC<Props> = ({ src, alt, fallbackSrc, onClose }) => {
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const [imgSrc, setImgSrc] = useState(src);
+  const triedFallback = useRef(false);
+
+  useEffect(() => {
+    setImgSrc(src);
+    triedFallback.current = false;
+  }, [src]);
 
   useEffect(() => {
     const prevOverflow = document.body.style.overflow;
@@ -54,9 +63,15 @@ export const ImageLightbox: React.FC<Props> = ({ src, alt, onClose }) => {
         关闭 ✕
       </button>
       <img
-        src={src}
+        src={imgSrc}
         alt={alt}
         onClick={(e) => e.stopPropagation()}
+        onError={() => {
+          if (!triedFallback.current && fallbackSrc && fallbackSrc !== imgSrc) {
+            triedFallback.current = true;
+            setImgSrc(fallbackSrc);
+          }
+        }}
         style={{
           maxWidth: "min(90vw, 1200px)",
           maxHeight: "90vh",

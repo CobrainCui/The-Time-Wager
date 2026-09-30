@@ -15,11 +15,12 @@ export function handleActionTimeExpired(game: GameState): boolean {
   }
 
   if (game.phase !== "INVESTMENT") return false;
+  if (typeof game.investmentTimerPausedAt === "number") return false;
   if (!game.investmentEndsAt || Date.now() < game.investmentEndsAt) return false;
 
   clearActionDeadline(game);
   console.log(`⏰ Room ${game.roomId}: investment deadline reached — auto-submitting drafts.`);
-  forceSubmitPendingInvestments(game);
+  forceSubmitPendingInvestments(game, "deadline");
   tryAdvancePhase(game);
   return true;
 }

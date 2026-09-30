@@ -2,6 +2,7 @@ import { GameState, Player } from "./gameState.js";
 import { AI_BOT_ENABLED } from "../config/features.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 import { applyInvestments, reopenSubmittedInvestment, sanitizeInvestments } from "../logic/investmentLogic.js";
+import { getInvestmentRemainingMs } from "./actionDeadline.js";
 
 export function playersRequiringAction(game: GameState): Player[] {
   return game.players.filter(
@@ -40,7 +41,7 @@ export function isEveryoneReady(game: GameState): boolean {
   return players.every((p) => p.ready);
 }
 
-/** 道具阶段：与玩家端 BuffUsage 一致，仅统计已连接的真实玩家是否均已「进入讨论和投资」 */
+/** 遗留：旧「进入讨论」闸门；正常流程已不再进入 BUFF_USAGE */
 export function isEveryoneReadyToLeaveBuff(game: GameState): boolean {
   const gate = game.players.filter((p) => p.connected && !isAiPlayer(p));
   if (gate.length === 0) return false;
@@ -59,17 +60,20 @@ export function isInvestmentComplete(game: GameState): boolean {
 /**
  * 倒计时结束或管理员强制结算：为尚未提交的玩家应用预填（或空方案）并标记 ready
  */
-export function forceSubmitPendingInvestments(game: GameState) {
+export function forceSubmitPendingInvestments(
+  game: GameState,
+  source: "deadline" | "admin_force" = "deadline"
+) {
   if (game.phase !== "INVESTMENT") return;
 
   for (const player of playersRequiringAction(game)) {
     if (player.ready) continue;
     const raw = player.investmentDraft ?? {};
     let investments = sanitizeInvestments(game, player, raw);
-    let applied = applyInvestments(game, player.id, investments);
+    let applied = applyInvestments(game, player.id, investments, source);
     if (!applied) {
       investments = {};
-      applied = applyInvestments(game, player.id, investments);
+      applied = applyInvestments(game, player.id, investments, source);
     }
     if (!applied) {
       game.logs.push(`⚠️ ${player.name} 自动提交投资失败，按未投资推进`);
@@ -93,10 +97,7 @@ export function adminUnlockPlayer(game: GameState, playerId: string): AdminUnloc
   if (!player.ready) return { ok: false, reason: "not_ready" };
 
   if (game.phase !== "INVESTMENT") return { ok: false, reason: "wrong_phase" };
-  if (
-    typeof game.investmentEndsAt !== "number" ||
-    Date.now() >= game.investmentEndsAt
-  ) {
+  if (getInvestmentRemainingMs(game) <= 0) {
     return { ok: false, reason: "timer_closed" };
   }
 

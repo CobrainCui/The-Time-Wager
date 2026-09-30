@@ -5,7 +5,7 @@ import {
   FATE_SKETCH_PERSONA_COLORS,
   getFateSketchPlayerDesc,
 } from "../config/personaConfig";
-import { getPersonaImageDisplay } from "../utils/gameImageDisplay";
+import { getPersonaDefaultImageSrc, getPersonaImageDisplay, getPersonaImageSlug } from "../utils/gameImageDisplay";
 import { ImageLightbox } from "./ImageLightbox";
 import { PersonaPortraitImage } from "./PersonaPortraitImage";
 
@@ -20,6 +20,7 @@ export const PersonaTypeModal: React.FC<Props> = ({ personaName, personaImages, 
   const config = FATE_SKETCH_CONFIG[personaName];
   const color = FATE_SKETCH_PERSONA_COLORS[personaName] || "#60a5fa";
   const display = getPersonaImageDisplay(personaName, personaImages);
+  const personaFallbackSrc = getPersonaDefaultImageSrc(getPersonaImageSlug(personaName));
 
   useEffect(() => {
     const prevOverflow = document.body.style.overflow;
@@ -82,6 +83,7 @@ export const PersonaTypeModal: React.FC<Props> = ({ personaName, personaImages, 
           <PersonaPortraitImage
             src={display.src}
             alt={personaName}
+            fallbackSrc={display.source === "custom" ? personaFallbackSrc : undefined}
             borderColor={`${color}33`}
           />
         </button>
@@ -96,7 +98,12 @@ export const PersonaTypeModal: React.FC<Props> = ({ personaName, personaImages, 
         </p>
       </div>
       {lightboxSrc && (
-        <ImageLightbox src={lightboxSrc} alt={personaName} onClose={() => setLightboxSrc(null)} />
+        <ImageLightbox
+          src={lightboxSrc}
+          alt={personaName}
+          fallbackSrc={display.source === "custom" ? personaFallbackSrc : undefined}
+          onClose={() => setLightboxSrc(null)}
+        />
       )}
     </div>
   );

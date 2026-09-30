@@ -1,13 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { computeClockSkewMs } from "../utils/actionCountdown";
 
-/** 随 gameUpdate 中的 serverNow 重新校准，供 interval 内读取最新 skew */
+/** 仅在 gameUpdate 带来新 serverNow 时校准 skew；避免倒计时 setState 重渲染把 skew 刷成常数导致 UI 卡住 */
 export function useServerClockSkewRef(serverNow?: number) {
   const skewRef = useRef(0);
-  useEffect(() => {
-    if (serverNow != null) {
-      skewRef.current = computeClockSkewMs(serverNow);
-    }
-  }, [serverNow]);
+  const lastServerNowRef = useRef<number | undefined>(undefined);
+
+  if (serverNow != null && serverNow !== lastServerNowRef.current) {
+    lastServerNowRef.current = serverNow;
+    skewRef.current = computeClockSkewMs(serverNow);
+  }
+
   return skewRef;
 }

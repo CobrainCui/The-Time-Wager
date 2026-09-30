@@ -6,6 +6,56 @@ export const ACTION_DEADLINE_MS = 10 * 60 * 1000;
 export function clearActionDeadline(game: GameState): void {
   game.investmentEndsAt = undefined;
   game.buffPhaseEndsAt = undefined;
+  game.investmentTimerPausedAt = undefined;
+}
+
+/** 投资倒计时剩余毫秒（暂停时冻结为 endsAt - pausedAt） */
+export function getInvestmentRemainingMs(game: GameState, now = Date.now()): number {
+  if (typeof game.investmentEndsAt !== "number") return 0;
+  const pausedAt = game.investmentTimerPausedAt;
+  if (typeof pausedAt === "number") {
+    return Math.max(0, game.investmentEndsAt - pausedAt);
+  }
+  return Math.max(0, game.investmentEndsAt - now);
+}
+
+export type InvestmentTimerControlResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
+/** 暂停投资倒计时（保留 endsAt，写 pausedAt） */
+export function pauseInvestmentDeadline(game: GameState): InvestmentTimerControlResult {
+  if (game.phase !== "INVESTMENT") {
+    return { ok: false, message: "仅投资阶段可暂停倒计时" };
+  }
+  if (typeof game.investmentEndsAt !== "number") {
+    return { ok: false, message: "当前没有进行中的倒计时" };
+  }
+  if (typeof game.investmentTimerPausedAt === "number") {
+    return { ok: false, message: "倒计时已暂停" };
+  }
+  if (getInvestmentRemainingMs(game) <= 0) {
+    return { ok: false, message: "倒计时已结束" };
+  }
+  game.investmentTimerPausedAt = Date.now();
+  return { ok: true };
+}
+
+/** 继续投资倒计时：endsAt = now + 冻结剩余 */
+export function resumeInvestmentDeadline(game: GameState): InvestmentTimerControlResult {
+  if (game.phase !== "INVESTMENT") {
+    return { ok: false, message: "仅投资阶段可继续倒计时" };
+  }
+  if (typeof game.investmentEndsAt !== "number") {
+    return { ok: false, message: "当前没有进行中的倒计时" };
+  }
+  if (typeof game.investmentTimerPausedAt !== "number") {
+    return { ok: false, message: "倒计时未暂停" };
+  }
+  const remaining = getInvestmentRemainingMs(game);
+  game.investmentEndsAt = Date.now() + remaining;
+  game.investmentTimerPausedAt = undefined;
+  return { ok: true };
 }
 
 /** 仅在 INVESTMENT 阶段开表（全员离开道具阶段后） */

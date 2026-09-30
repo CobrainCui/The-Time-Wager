@@ -60,11 +60,31 @@ describe("lottery settle propose/confirm/revoke", () => {
     const claimed = claimLotteryResponse(game, "p1", offer.offerId, true);
     assert.equal(claimed.ok, true);
     if (!claimed.ok) throw new Error("expected claim");
-    applyLotteryAccept(game, p, claimed.amount);
+    const settled = applyLotteryAccept(game, p, claimed.amount);
+    assert.equal(settled.enteredAmount, 40);
+    assert.equal(settled.creditedAmount, 40);
+    assert.equal(settled.goldApplied, false);
     assert.equal(p.wealth, 140);
     assert.equal(playerHasLotteryBuff(p), false);
     assert.equal(game.lotteryCompletedDeals?.[0]?.amount, 40);
+    assert.equal(game.lotteryCompletedDeals?.[0]?.enteredAmount, 40);
     assert.equal(game.pendingLotteryOffers?.length, 0);
+  });
+
+  it("applies gold multiplier to credited amount when buff_gold is active", () => {
+    const game = createInitialGame("room", []);
+    const p = player("p1", {
+      activeBuffs: [{ cardId: "buff_lottery" }, { cardId: "buff_gold" }],
+    });
+    game.players = [p];
+    const settled = applyLotteryAccept(game, p, 100);
+    assert.equal(settled.enteredAmount, 100);
+    assert.equal(settled.creditedAmount, 150);
+    assert.equal(settled.goldApplied, true);
+    assert.equal(p.wealth, 250);
+    assert.equal(game.lotteryCompletedDeals?.[0]?.amount, 150);
+    assert.equal(game.lotteryCompletedDeals?.[0]?.enteredAmount, 100);
+    assert.equal(game.lotteryCompletedDeals?.[0]?.goldApplied, true);
   });
 
   it("leaves wealth unchanged on decline", () => {

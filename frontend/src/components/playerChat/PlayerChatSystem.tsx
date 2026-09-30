@@ -4,6 +4,10 @@ import { GameState, Player, Transaction } from "../../types";
 import { socket } from "../../socket";
 import type { ChatMessage, ChatThread } from "./types";
 import {
+  normalizeDigitsNonNegativeInt,
+  parseNormalizedNonNegativeInt,
+} from "../../utils/nonNegativeIntInput";
+import {
   badgeCount,
   formatBadge,
   formatBubbleText,
@@ -14,6 +18,7 @@ import {
   newClientTempId,
   sortMessages,
 } from "./chatMessageUtils";
+import { playerAvailableWealth } from "../../utils/availableWealth";
 
 const NOTE_MAX = 500;
 /** 乐观气泡超时未对账则标为发送失败 */
@@ -75,21 +80,21 @@ const QuickComposer: React.FC<{
     >
       <div style={{ display: "flex", gap: "0.35rem" }}>
         <input
-          type="number"
-          min={0}
-          max={maxWealth}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete="off"
           className="input"
           placeholder="金额"
-          value={amount}
+          value={amount === "" ? "" : String(amount)}
           onChange={(e) => {
-            const raw = e.target.value;
-            if (raw === "") {
+            const normalized = normalizeDigitsNonNegativeInt(e.target.value);
+            if (normalized === "") {
               setAmount("");
               return;
             }
-            const n = Math.floor(Number(raw));
-            if (!Number.isFinite(n)) return;
-            setAmount(Math.min(Math.max(0, n), maxWealth));
+            const n = parseNormalizedNonNegativeInt(normalized, 0);
+            setAmount(Math.min(n, maxWealth));
           }}
           style={{ width: "4.5rem", fontFamily: "var(--font-mono)", fontSize: uiRem(0.8), padding: "0.35rem" }}
         />
@@ -591,18 +596,19 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
     (peerId: string, peerName: string, amount: number, note: string) => {
       const trimmed = note.trim().slice(0, NOTE_MAX);
       const clientTempId = newClientTempId();
+      const available = playerAvailableWealth(game, me);
       if (amount === 0) {
         if (!trimmed) return false;
         appendOptimisticOut(peerId, peerName, 0, trimmed, clientTempId);
         socket.emit("createTransaction", { toId: peerId, amount: 0, note: trimmed, clientTempId });
         return true;
       }
-      if (amount <= 0 || amount > me.wealth) return false;
+      if (amount <= 0 || amount > available) return false;
       appendOptimisticOut(peerId, peerName, amount, trimmed, clientTempId);
       socket.emit("createTransaction", { toId: peerId, amount, note: trimmed, clientTempId });
       return true;
     },
-    [appendOptimisticOut, me.wealth]
+    [appendOptimisticOut, game, me]
   );
 
   const orphanTxsForPeer = useCallback(
@@ -641,7 +647,7 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
               thread={thread}
               displayMessages={displayMessages}
               respondingTxIds={respondingTxIds}
-              maxWealth={me.wealth}
+              maxWealth={playerAvailableWealth(game, me)}
               onCollapse={() => activateThread(playerId, thread.playerName, { expanded: false })}
               onRespond={handleRespond}
               onSend={sendToPeer}

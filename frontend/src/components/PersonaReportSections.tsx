@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { uiRem } from "../utils/typography";
 import { PersonaAnalysis } from "../types";
 import {
@@ -9,7 +9,7 @@ import {
   sessionDimensionPercentiles,
 } from "../utils/personaReport";
 import { Player } from "../types";
-import { getPersonaImageDisplay } from "../utils/gameImageDisplay";
+import { getPersonaDefaultImageSrc, getPersonaImageDisplay, getPersonaImageSlug } from "../utils/gameImageDisplay";
 import { FATE_SKETCH_PERSONA_COLORS, getFateSketchPlayerDesc } from "../config/personaConfig";
 import { PersonaPortraitImage } from "./PersonaPortraitImage";
 
@@ -93,7 +93,19 @@ export const PersonaPrimaryHero: React.FC<{
 }> = ({ personaName, serverDesc, personaImages }) => {
   const color = FATE_SKETCH_PERSONA_COLORS[personaName] || "#60a5fa";
   const display = getPersonaImageDisplay(personaName, personaImages);
+  const personaFallbackSrc = getPersonaDefaultImageSrc(getPersonaImageSlug(personaName));
   const desc = getFateSketchPlayerDesc(personaName, serverDesc);
+
+  // 挂载时再预热一次（含自定义）；命名阶段已在 GameRoom 预热过默认图
+  useEffect(() => {
+    const primary = new Image();
+    primary.src = display.src;
+    if (display.source === "custom") {
+      const fallback = new Image();
+      fallback.src = personaFallbackSrc;
+    }
+  }, [display.src, display.source, personaFallbackSrc]);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       <div
@@ -110,6 +122,7 @@ export const PersonaPrimaryHero: React.FC<{
         <PersonaPortraitImage
           src={display.src}
           alt={personaName}
+          fallbackSrc={display.source === "custom" ? personaFallbackSrc : undefined}
           borderColor={`${color}44`}
         />
       </div>

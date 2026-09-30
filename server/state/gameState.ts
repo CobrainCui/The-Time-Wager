@@ -66,6 +66,33 @@ export interface AuctionCompletedDeal {
   cardId: string;
   playerId: string;
   cost: number;
+  /** 主持确认成交或强买强卖；旧档可能缺省 */
+  source?: "hammer" | "force_buy";
+}
+
+/** 公开加价记录状态 */
+export type AuctionBidStatus =
+  | "leading"
+  | "outbid"
+  | "won"
+  | "void_passed"
+  | "void_force_buy"
+  | "void_lot_changed";
+
+/** 整场拍卖每次出价（含分析字段；广播时对玩家脱敏） */
+export interface AuctionBidRecord {
+  bidId: string;
+  auctionRound: number;
+  cardId: string;
+  playerId: string;
+  playerName: string;
+  amount: number;
+  wealthAtBid: number;
+  availableWealthAtBid: number;
+  /** 出价 / 当时可用；可用为 0 时为 null */
+  bidToAvailableRatio: number | null;
+  timestamp: number;
+  status: AuctionBidStatus;
 }
 
 export interface LotteryOffer {
@@ -77,7 +104,18 @@ export interface LotteryOffer {
 /** 已确认开奖记录（主持可撤回） */
 export interface LotteryCompletedDeal {
   playerId: string;
+  /** 实际入账财富（可能已点石成金） */
   amount: number;
+  /** 主持填入的原额；旧档可能缺省 */
+  enteredAmount?: number;
+  /** 入账时是否套用了点石成金 */
+  goldApplied?: boolean;
+}
+
+export interface BuffRoundNote {
+  cardId: string;
+  role: "used" | "hit";
+  text: string;
 }
 
 export interface ActiveBuff {
@@ -126,6 +164,14 @@ export interface PersonaAnalysis {
   mbtiPersona: MbtiPersona; // 决策基因
 }
 
+export interface SlackHitNotice {
+  id: string;
+  fromName: string;
+  /** 精力变化：负数为扣减，劳逸结合生效为 +8 */
+  energyDelta: number;
+  energyAfter: number;
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -158,9 +204,15 @@ export interface Player {
   inventory: string[];
   usedCards: string[]; 
   activeBuffs: ActiveBuff[];
+  /** 本轮使用 / 受到的道具短说明（仅本人广播） */
+  buffRoundNotes?: BuffRoundNote[];
   
-  // ✅ 新增：记录本轮被谁使用了摸鱼传染 (用于反弹琵琶回溯)
+  // 本轮被谁使用了摸鱼传染（供劳逸结合事后改判）
   slackedBy: string[];
+  /** 与 slackedBy 对齐：每次摸鱼实际扣掉的精力（触及 0 时可能小于 8） */
+  slackEnergyLost?: number[];
+  /** 被摸鱼后待本人确认的弹窗（仅本人广播） */
+  pendingSlackHits?: SlackHitNotice[];
 
   /** 本轮（BUFF+投资窗口）已购买咖啡杯数，可退订 */
   coffeePurchasesThisRound?: number;
@@ -184,6 +236,12 @@ export interface GainBreakdown {
   base: number;
   rank: number;
   era: number;
+  /** 点石成金乘算前的基础项合计；仅该分项被乘过时存在 */
+  baseBeforeGold?: number;
+  /** 点石成金乘算前的排名奖合计；仅该分项被乘过时存在 */
+  rankBeforeGold?: number;
+  /** 点石成金乘算前的时代加成合计；仅该分项被乘过时存在 */
+  eraBeforeGold?: number;
 }
 
 export interface SettlementProjectResult {
@@ -194,6 +252,8 @@ export interface SettlementProjectResult {
   totalInvested: number;
   isExploded: boolean;
   isCompleted: boolean;
+  /** 本轮被【项目做空】短路结算 */
+  shortSold?: boolean;
   playerInvestments: Record<string, number>; 
   playerGains: Record<string, GainBreakdown>;
 }
@@ -206,8 +266,11 @@ export interface GameState {
   phaseFinished: Set<string>; 
   readyPlayers: Set<string>;  
   discussionEndsAt?: number;
-  investmentEndsAt?: number; 
+  investmentEndsAt?: number;
+  /** 有值表示投资倒计时已暂停；剩余 = investmentEndsAt - pausedAt */
+  investmentTimerPausedAt?: number;
   buffPhaseEndsAt?: number;  
+
   tutorialStep?: number;    
 
   transactions: Transaction[];
@@ -224,8 +287,10 @@ export interface GameState {
   uncompletedProjects: ActiveProject[];
   completedProjects: ActiveProject[];
   
-  drawnProjects: Set<number>; 
-  
+  drawnProjects: Set<number>;
+  /** 已为哪一时代发过第一轮项目牌；避免跳过时代介绍后漏发或重复发 */
+  projectDrawEra?: number;
+
   totalRiskEnergyAvailable: number;
 
   currentEraCard?: EraCard;
@@ -244,9 +309,15 @@ export interface GameState {
   globalLeaderboard?: { name: string; score: number; roomId?: string; recordedAt?: number }[];
   /** 本轮拍卖已成功成交的道具卡 id */
   auctionDistributedCardIds?: string[];
+  /** 主持标出的「当前正在拍」的卡（强买强卖用） */
+  auctionFocusCardId?: string;
+  /** 本场拍卖已使用过强买强卖的玩家 id */
+  forceBuyUsedPlayerIds?: string[];
   /** 本场拍卖成交明细（主持可撤销） */
   auctionCompletedDeals?: AuctionCompletedDeal[];
-  /** 主持已发出、等待玩家确认的拍卖报价（不广播） */
+  /** 本场拍卖全部出价记录（含分析字段） */
+  auctionBids?: AuctionBidRecord[];
+  /** @deprecated 旧「主持填价确认」；竞价流程不再写入 */
   pendingAuctionOffers?: AuctionOffer[];
   /** 主持已发出、等待玩家确认的彩票开奖（不广播给玩家） */
   pendingLotteryOffers?: LotteryOffer[];
@@ -309,6 +380,7 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
     playerLogs: {},
 
     investmentEndsAt: undefined,
+    investmentTimerPausedAt: undefined,
     tutorialStep: 0,
 
     sessionTelemetry: emptySessionTelemetry(),
@@ -336,6 +408,7 @@ function freshPlayerFromIdentity(
     inventory: [],
     usedCards: [],
     activeBuffs: [],
+    buffRoundNotes: [],
     slackedBy: [],
     coffeePurchasesThisRound: 0,
     totalEnergyConsumed: 15,
@@ -377,6 +450,7 @@ export function resetGameSession(game: GameState): void {
   game.uncompletedProjects = fresh.uncompletedProjects;
   game.completedProjects = fresh.completedProjects;
   game.drawnProjects = fresh.drawnProjects;
+  game.projectDrawEra = undefined;
   game.totalRiskEnergyAvailable = fresh.totalRiskEnergyAvailable;
   game.currentEraCard = fresh.currentEraCard;
   game.pendingEvents = fresh.pendingEvents;
@@ -385,6 +459,7 @@ export function resetGameSession(game: GameState): void {
   game.logs = fresh.logs;
   game.playerLogs = fresh.playerLogs;
   game.investmentEndsAt = undefined;
+  game.investmentTimerPausedAt = undefined;
   game.buffPhaseEndsAt = undefined;
   game.discussionEndsAt = undefined;
   game.tutorialStep = 0;
@@ -394,6 +469,9 @@ export function resetGameSession(game: GameState): void {
   game.globalLeaderboard = undefined;
   game.auctionDistributedCardIds = undefined;
   game.auctionCompletedDeals = undefined;
+  game.auctionBids = undefined;
+  game.auctionFocusCardId = undefined;
+  game.forceBuyUsedPlayerIds = undefined;
   game.pendingAuctionOffers = undefined;
   game.pendingLotteryOffers = undefined;
   game.lotteryCompletedDeals = undefined;

@@ -6,6 +6,7 @@ import {
   shouldTreatAsAbandon,
   syncLongTermRecordsFromHistory,
 } from "./longTermLogic.js";
+import { applyGoldMultiplier } from "./buffLogic.js";
 
 // 辅助：创建零收益对象
 const zeroGain = (): GainBreakdown => ({ total: 0, base: 0, rank: 0, era: 0 });
@@ -13,6 +14,22 @@ const zeroGain = (): GainBreakdown => ({ total: 0, base: 0, rank: 0, era: 0 });
 // 辅助：检查是否有 Buff
 function hasBuff(player: Player, buffId: string): boolean {
     return player.activeBuffs && player.activeBuffs.some(b => b.cardId === buffId);
+}
+
+function insurancePayout(player: Player): number {
+  return applyGoldMultiplier(player, 100);
+}
+
+/** 点石成金乘过时累计乘前原值（仅正项放大） */
+function noteBeforeGold(
+  g: GainBreakdown,
+  field: "baseBeforeGold" | "rankBeforeGold" | "eraBeforeGold",
+  original: number,
+  amplified: number
+): void {
+  if (original > 0 && amplified !== original) {
+    g[field] = (g[field] ?? 0) + original;
+  }
 }
 
 export function settlePhase(game: GameState) {
@@ -30,11 +47,13 @@ export function settlePhase(game: GameState) {
     const result = settleOneProject(game, project, logs);
     snapshot.push(result);
 
-    // 检查连续空投
-    if (project.currentInvested === 0) {
-        project.roundsNoInvestment = (project.roundsNoInvestment || 0) + 1;
+    // 检查连续空投（做空当轮当作新发，不计无人投）
+    if (result.shortSold) {
+      project.roundsNoInvestment = 0;
+    } else if (project.currentInvested === 0) {
+      project.roundsNoInvestment = (project.roundsNoInvestment || 0) + 1;
     } else {
-        project.roundsNoInvestment = 0;
+      project.roundsNoInvestment = 0;
     }
 
     if (result.isCompleted) {
@@ -92,6 +111,40 @@ export function settleOneProject(
     playerInvestments: {},
     playerGains: {}
   };
+
+  // === 项目做空：只清零该项目已积累精力，已入账财富不追回 ===
+  const shortedBy = game.players.find((p) =>
+    p.activeBuffs.some((b) => b.cardId === "buff_short" && b.targetProjectId === project.id)
+  );
+  if (shortedBy) {
+    const priorRecords = { ...(project.investorRecords || {}) };
+    const wipedInvestors = Object.keys(priorRecords);
+    result.shortSold = true;
+    for (const p of game.players) {
+      const roundAmt = p.investment?.[project.id] || 0;
+      const wipedAmt = (priorRecords[p.id] || 0) + roundAmt;
+      // 含历史累计：本轮 0 投入的旧股东也能在结算单看到被清零
+      if (wipedAmt > 0) result.playerInvestments[p.id] = wipedAmt;
+      if (p.investment) p.investment[project.id] = 0;
+      if (p.longTerm?.[project.id]) {
+        delete p.longTerm[project.id];
+      }
+      // 账本清零、不改财富：当作新项目，避免日后投爆误追做空前分红
+      if (p.riskGains?.[project.id]) p.riskGains[project.id] = 0;
+    }
+    project.investorRecords = {};
+    project.accumulatedInvested = 0;
+    project.currentInvested = 0;
+    project.earningRecords = {};
+    project.totalPayout = 0;
+    project.roundsNoInvestment = 0;
+    project.investedThisRound = false;
+    result.totalInvested = 0;
+    logs.push(
+      `📉 「${project.name}」被 ${shortedBy.name} 【项目做空】：已积累精力清零，已入账财富不追回，本轮不再发放回报；项目留在桌上可再投（曾累计投入人数 ${wipedInvestors.length}）`
+    );
+    return result;
+  }
 
   // === 0. 长期项目放弃检测 ===
   if (project.type === 'long') {
@@ -178,40 +231,9 @@ export function settleOneProject(
   })
   .sort((a, b) => b.total - a.total);
 
+  // （旧版做空猜空/猜满已下线；新版做空在 settleProject 开头短路）
 
-  // === 处理【项目做空】(buff_short) ===
-  game.players.forEach(p => {
-      const shortBuffs = p.activeBuffs.filter(b => b.cardId === 'buff_short' && b.targetProjectId === project.id);
-      
-      shortBuffs.forEach(buff => {
-          const prediction = buff.extraData; 
-          let success = false;
-          
-          if (prediction === 'empty' && currentRoundInvestors.length === 0) {
-              success = true;
-          }
-          // 预测恰好完成 (严格等于)
-          else if (prediction === 'full' && totalAccumulated === project.maxEnergy) {
-              success = true;
-          }
-
-          if (success) {
-              const reward = prediction === 'empty' ? 200 : 150;
-              p.wealth += reward;
-              
-              project.totalPayout += reward;
-              project.earningRecords[p.id] = (project.earningRecords[p.id] || 0) + reward;
-              
-              const g = result.playerGains[p.id] || zeroGain();
-              g.total += reward;
-              result.playerGains[p.id] = g;
-
-              logs.push(`📉 ${p.name} 【项目做空】判定成功(${prediction})，获得 ${reward} 财富！`);
-          } else {
-              logs.push(`📉 ${p.name} 【项目做空】判定失败(${prediction})。当前进度: ${totalAccumulated}/${project.maxEnergy}`);
-          }
-      });
-  });
+  // === 1. 计算基础回报与排名 ===
 
   if (currentRoundInvestors.length === 0 && !isExploded && !isCompleted) return result; 
 
@@ -220,19 +242,20 @@ export function settleOneProject(
     if (isExploded) {
       logs.push(`💥 风险项目「${project.name}」累计${totalAccumulated}，投入超过上限，投爆！`);
       game.players.forEach(p => {
-        // 【保险】
-        const myRiskInvest = p.investment?.[project.id] || 0; // 保险看的是本轮投入? 还是累计? 需求说是投入>=5，通常指累计比较合理，但为了稳妥这里先读本轮，或者读记录
-        // 修正：保险看的是累计投入还是本轮？原逻辑是 p.investment。假设只保本轮。
-        // 但为了更符合"投入过"的概念，这里用本轮判断比较安全。
-        if (hasBuff(p, 'buff_insurance') && myRiskInvest >= 5) {
-            p.wealth += 100;
-            logs.push(`🛡️ ${p.name} 触发【保险】(风险项目)，获得赔付 100 财富！`);
+        // 【保险】本轮参与该风险项目（投入>0）且投爆：赔付 100（点石成金可×1.5）
+        const myRiskInvest = p.investment?.[project.id] || 0;
+        if (hasBuff(p, 'buff_insurance') && myRiskInvest > 0) {
+            const payout = insurancePayout(p);
+            p.wealth += payout;
+            logs.push(`🛡️ ${p.name} 触发【保险】(风险项目)，获得赔付 ${payout} 财富！`);
             
-            project.totalPayout += 100;
-            project.earningRecords[p.id] = (project.earningRecords[p.id] || 0) + 100;
+            project.totalPayout += payout;
+            project.earningRecords[p.id] = (project.earningRecords[p.id] || 0) + payout;
             
             const g = result.playerGains[p.id] || zeroGain();
-            g.total += 100;
+            g.base += payout;
+            g.total += payout;
+            noteBeforeGold(g, "baseBeforeGold", 100, payout);
             result.playerGains[p.id] = g;
         }
 
@@ -244,6 +267,11 @@ export function settleOneProject(
           
           project.totalPayout -= historyGain;
           project.earningRecords[p.id] = (project.earningRecords[p.id] || 0) - historyGain;
+
+          const g = result.playerGains[p.id] || zeroGain();
+          g.base -= historyGain;
+          g.total -= historyGain;
+          result.playerGains[p.id] = g;
         }
       });
     } else {
@@ -253,9 +281,9 @@ export function settleOneProject(
       // 风险项目回报只给本轮投资者
       currentRoundInvestors.forEach(({ player, amount }) => {
         let gain = amount * rate;
+        const original = gain;
 
         if (hasBuff(player, 'buff_gold')) {
-            const original = gain;
             gain = Math.floor(gain * 1.5);
             logs.push(`✨ ${player.name} 【点石成金】生效，收益 ${original} -> ${gain}`);
         }
@@ -268,6 +296,7 @@ export function settleOneProject(
         const g = result.playerGains[player.id] || zeroGain();
         g.base += gain;
         g.total += gain;
+        noteBeforeGold(g, "baseBeforeGold", original, gain);
         result.playerGains[player.id] = g;
         
         project.totalPayout += gain;
@@ -301,9 +330,9 @@ export function settleOneProject(
 
         // 1. 基础收益 = 累计投入 * 15
         let baseGain = total * 15;
+        const original = baseGain;
 
         if (hasBuff(player, 'buff_gold')) {
-            const original = baseGain;
             baseGain = Math.floor(baseGain * 1.5);
             logs.push(`✨ ${player.name} 【点石成金】生效，收益 ${original} -> ${baseGain}`);
         }
@@ -314,6 +343,7 @@ export function settleOneProject(
         const g = result.playerGains[player.id] || zeroGain();
         g.base += baseGain;
         g.total += baseGain;
+        noteBeforeGold(g, "baseBeforeGold", original, baseGain);
         result.playerGains[player.id] = g;
         
         project.totalPayout += baseGain;
@@ -337,25 +367,25 @@ export function settleOneProject(
     // 1. 基础收益：只发给本轮投资者
     currentRoundInvestors.forEach(({ player, amount }) => {
         let baseGain = amount * 10;
-        let totalGain = baseGain;
+        const original = baseGain;
 
-        if (hasBuff(player, 'buff_gold') && totalGain > 0) {
-            const original = totalGain;
-            totalGain = Math.floor(totalGain * 1.5);
-            logs.push(`✨ ${player.name} 【点石成金】生效，收益 ${original} -> ${totalGain}`);
+        if (hasBuff(player, 'buff_gold') && baseGain > 0) {
+            baseGain = Math.floor(baseGain * 1.5);
+            logs.push(`✨ ${player.name} 【点石成金】生效，收益 ${original} -> ${baseGain}`);
         }
 
-        player.wealth += totalGain;
+        player.wealth += baseGain;
         
         const g = result.playerGains[player.id] || zeroGain();
-        g.base += baseGain; // 记录原始base
-        g.total += totalGain; // 记录加成后的total
+        g.base += baseGain;
+        g.total += baseGain;
+        noteBeforeGold(g, "baseBeforeGold", original, baseGain);
         result.playerGains[player.id] = g;
         
-        project.totalPayout += totalGain;
-        project.earningRecords[player.id] = (project.earningRecords[player.id] || 0) + totalGain;
+        project.totalPayout += baseGain;
+        project.earningRecords[player.id] = (project.earningRecords[player.id] || 0) + baseGain;
 
-        logs.push(`  💰 ${player.name} 短期收益 ${totalGain}`);
+        logs.push(`  💰 ${player.name} 短期收益 ${baseGain}`);
     });
 
     // 2. 排名惩罚 (超上限投爆时) -> 针对所有历史投资人，投入相同则并列共享惩罚
@@ -383,19 +413,6 @@ export function settleOneProject(
                         ? `    💀 ${player.name} 并列第${group.startIndex + 1}（${group.size}人共享），惩罚 ${penaltyEach}`
                         : `    💀 ${player.name} 排名第${group.startIndex + 1}，受到惩罚 ${penaltyEach}`
                     );
-                }
-
-                // 【保险】for Short (并列第一且超上限投爆) -> 获赔
-                if (group.startIndex === 0 && hasBuff(player, 'buff_insurance')) {
-                    player.wealth += 100;
-                    logs.push(`    🛡️ ${player.name} 在短期项目并列第一且超上限投爆，触发【保险】，获赔 100！`);
-
-                    project.totalPayout += 100;
-                    project.earningRecords[player.id] = (project.earningRecords[player.id] || 0) + 100;
-
-                    const g = result.playerGains[player.id] || zeroGain();
-                    g.total += 100;
-                    result.playerGains[player.id] = g;
                 }
             }
         }
@@ -493,19 +510,26 @@ function applyRankAndEraBonus(
                 );
             }
 
-            let totalExtra = rankExtra + eraExtra;
+            let rankPaid = rankExtra;
+            let eraPaid = eraExtra;
 
-            if (hasBuff(player, 'buff_gold') && totalExtra > 0) {
-                totalExtra = Math.floor(totalExtra * 1.5);
+            // 点石成金：各正项分别 ×1.5 向下取整（分解栏与总回报一致；惩罚不放大）
+            if (hasBuff(player, 'buff_gold')) {
+                if (rankPaid > 0) rankPaid = Math.floor(rankPaid * 1.5);
+                if (eraPaid > 0) eraPaid = Math.floor(eraPaid * 1.5);
             }
+
+            const totalExtra = rankPaid + eraPaid;
 
             if (totalExtra !== 0) {
                 player.wealth += totalExtra;
 
                 const g = result.playerGains[player.id] || zeroGain();
-                g.rank += rankExtra;
-                g.era += eraExtra;
+                g.rank += rankPaid;
+                g.era += eraPaid;
                 g.total += totalExtra;
+                noteBeforeGold(g, "rankBeforeGold", rankExtra, rankPaid);
+                noteBeforeGold(g, "eraBeforeGold", eraExtra, eraPaid);
                 result.playerGains[player.id] = g;
 
                 project.totalPayout += totalExtra;

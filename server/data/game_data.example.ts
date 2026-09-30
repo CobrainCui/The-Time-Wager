@@ -54,13 +54,14 @@ export interface BuffCard {
 
 // ====== Buff 卡池 (数值已脱敏) ======
 export const buffCards: BuffCard[] = [
-  { id: 'buff_gold', name: '点石成金', type: 'gain', description: '本轮投资回报 x[Hidden]', auctionRound: 1 },
-  { id: 'buff_short', name: '项目做空', type: 'special', description: '猜测项目状态，赢取回报', auctionRound: 1 },
-  { id: 'buff_slack', name: '摸鱼传染', type: 'interfere', description: '指定对手减少 [Hidden] 精力', auctionRound: 2 },
-  { id: 'buff_rebound', name: '反弹琵琶', type: 'special', description: '被干扰时获得 [Hidden] 精力', auctionRound: 2 },
-  { id: 'buff_insurance', name: '保险', type: 'special', description: '项目爆掉且投入>=[Hidden]时获[Hidden]财富', auctionRound: 2 },
-  { id: 'buff_spirit', name: '精神老伙', type: 'gain', description: '本轮增加 [Hidden] 精力', auctionRound: 3 },
-  { id: 'buff_lottery', name: '彩票', type: 'special', description: '投骰子获财富', auctionRound: 3 },
+  { id: 'buff_insurance', name: '保险', type: 'special', description: '本轮参与的风险项目投爆则赔付 [Hidden]', auctionRound: 1 },
+  { id: 'buff_gold', name: '点石成金', type: 'gain', description: '本轮正收益与保险、彩票 x[Hidden]；惩罚不放大', auctionRound: 1 },
+  { id: 'buff_slack', name: '摸鱼传染', type: 'interfere', description: '指定玩家精力 -[Hidden]；对方发动劳逸结合则获得 +[Hidden]', auctionRound: 1 },
+  { id: 'buff_force_buy', name: '强买强卖', type: 'special', description: '拍卖期一次免费拿当前卡', auctionRound: 2 },
+  { id: 'buff_work_rest', name: '劳逸结合', type: 'special', description: '被摸鱼后获得 +[Hidden] 精力；单独使用无效', auctionRound: 2 },
+  { id: 'buff_short', name: '项目做空', type: 'special', description: '指定项目结算时已积累精力清零，已入账财富不追回', auctionRound: 2 },
+  { id: 'buff_lighter', name: '打火机', type: 'special', description: '烧毁一张尚未结算道具', auctionRound: 3 },
+  { id: 'buff_lottery', name: '彩票', type: 'special', description: '主持输入金额开奖', auctionRound: 3 },
 ];
 
 // ====== 短期项目 (数值已脱敏) ======
@@ -79,13 +80,13 @@ export const shortTermProjects: ProjectCard[] = [
 
 // ====== 长期项目 (数值已脱敏) ======
 export const longTermProjects: ProjectCard[] = [
-  {id:101, name:'植树造林', type:'long', maxEnergy:50, era:'气候', rankRewards:[10,5,0,0,0,0]},
-  {id:102, name:'城市海绵体改造', type:'long', maxEnergy:50, era:'气候', rankRewards:[10,5,0,0,0,0]},
-  {id:103, name:'数字图书馆', type:'long', maxEnergy:50, era:'科技', rankRewards:[10,5,0,0,0,0]},
-  {id:104, name:'遗产保护基金', type:'long', maxEnergy:50, era:'文化', rankRewards:[10,5,0,0,0,0]},
-  {id:105, name:'文化桥梁使者', type:'long', maxEnergy:50, era:'文化', rankRewards:[10,5,0,0,0,0]},
-  {id:106, name:'建立体育俱乐部', type:'long', maxEnergy:50, era:'健康', rankRewards:[10,5,0,0,0,0]},
-  {id:107, name:'心理学教育普及', type:'long', maxEnergy:50, era:'心理', rankRewards:[10,5,0,0,0,0]}
+  {id:101, name:'植树造林', type:'long', maxEnergy:90, era:'气候', rankRewards:[10,5,0,0,0,0]},
+  {id:102, name:'城市海绵体改造', type:'long', maxEnergy:100, era:'气候', rankRewards:[10,5,0,0,0,0]},
+  {id:103, name:'数字图书馆', type:'long', maxEnergy:90, era:'科技', rankRewards:[10,5,0,0,0,0]},
+  {id:104, name:'遗产保护基金', type:'long', maxEnergy:90, era:'文化', rankRewards:[10,5,0,0,0,0]},
+  {id:105, name:'文化桥梁使者', type:'long', maxEnergy:100, era:'文化', rankRewards:[10,5,0,0,0,0]},
+  {id:106, name:'建立体育俱乐部', type:'long', maxEnergy:90, era:'健康', rankRewards:[10,5,0,0,0,0]},
+  {id:107, name:'心理学教育普及', type:'long', maxEnergy:110, era:'心理', rankRewards:[10,5,0,0,0,0]}
 ];
 
 // ====== 风险项目 (数值已脱敏) ======

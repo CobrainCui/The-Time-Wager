@@ -122,7 +122,7 @@ export const AdminPlayerPdfCapture: React.FC<Props> = ({ job, onComplete }) => {
         position: "fixed",
         left: 0,
         top: 0,
-        transform: "translateX(-120vw)",
+        transform: "translateX(calc(-100% - 100vw))",
         width: `${containerWidth}px`,
         height: `${containerHeight}px`,
         opacity: 1,
@@ -164,7 +164,7 @@ export const AdminPlayerPdfCapture: React.FC<Props> = ({ job, onComplete }) => {
         style={{
           width: `${PDF_PROJECT_BAR_CAPTURE.width}px`,
           height: `${PDF_PROJECT_BAR_CAPTURE.height}px`,
-          background: "#ffffff",
+          background: "transparent",
         }}
       >
         <Bar

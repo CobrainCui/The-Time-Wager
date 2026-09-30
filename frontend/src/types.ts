@@ -98,6 +98,19 @@ export interface PersonaAnalysis {
   };
 }
 
+export interface SlackHitNotice {
+  id: string;
+  fromName: string;
+  energyDelta: number;
+  energyAfter: number;
+}
+
+export interface BuffRoundNote {
+  cardId: string;
+  role: "used" | "hit";
+  text: string;
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -113,9 +126,13 @@ export interface Player {
   inventory: string[]; 
   usedCards: string[];
   activeBuffs: ActiveBuff[];
+  /** 本轮道具发动/被用短记录（仅本人可见） */
+  buffRoundNotes?: BuffRoundNote[];
   
-  // ✅ 新增：记录本轮被谁使用了摸鱼传染，用于反弹琵琶的回溯判定
+  // 本轮被谁使用了摸鱼传染
   slackedBy: string[];
+  /** 被摸鱼后待本人确认（仅本人可见） */
+  pendingSlackHits?: SlackHitNotice[];
 
   /** 本轮已购咖啡杯数（服务端权威） */
   coffeePurchasesThisRound?: number;
@@ -159,6 +176,12 @@ export interface GainBreakdown {
   base: number;
   rank: number;
   era: number;
+  /** 点石成金乘算前的基础项合计；仅该分项被乘过时存在 */
+  baseBeforeGold?: number;
+  /** 点石成金乘算前的排名奖合计；仅该分项被乘过时存在 */
+  rankBeforeGold?: number;
+  /** 点石成金乘算前的时代加成合计；仅该分项被乘过时存在 */
+  eraBeforeGold?: number;
 }
 
 export interface SettlementProjectResult {
@@ -169,6 +192,8 @@ export interface SettlementProjectResult {
   totalInvested: number;
   isExploded: boolean;
   isCompleted: boolean;
+  /** 本轮被【项目做空】短路结算 */
+  shortSold?: boolean;
   playerInvestments: Record<string, number>; 
   playerGains: Record<string, GainBreakdown>;
 }
@@ -193,6 +218,8 @@ export interface GameState {
 
   discussionEndsAt?: number;
   investmentEndsAt?: number;
+  /** 有值表示投资倒计时已暂停；剩余 = investmentEndsAt - pausedAt */
+  investmentTimerPausedAt?: number;
   buffPhaseEndsAt?: number;
   /** 与 investmentEndsAt 同包下发，用于校正倒计时 */
   serverNow?: number;
@@ -220,10 +247,53 @@ export interface GameState {
   globalLeaderboard?: { name: string; score: number; recordedAt?: number }[];
   /** 本轮拍卖已成功成交的道具卡 id */
   auctionDistributedCardIds?: string[];
+  /** 正在拍的卡 */
+  auctionFocusCardId?: string;
+  /** 本场拍卖已用过强买强卖的玩家 */
+  forceBuyUsedPlayerIds?: string[];
   /** 本场拍卖成交明细（主持撤销发放用） */
   auctionCompletedDeals?: { cardId: string; playerId: string; cost: number }[];
-  /** 仅管理端上帝视图：待玩家确认的拍卖报价 */
+  /** 起拍价（固定为 1） */
+  auctionStartingBid?: number;
+  /** 现在最高价 */
+  auctionCurrentBid?: number;
+  auctionHighBidderId?: string | null;
+  auctionHighBidderName?: string | null;
+  /** 当前领先出价的 id（主持确认成交防过期用） */
+  auctionHighBidId?: string | null;
+  /** 至少要出到 */
+  auctionMinimumNextBid?: number;
+  /** 本场已成交（玩家可见：卡、得主、成交价；不含出价时的财富比例） */
+  auctionSoldLots?: { cardId: string; playerId: string; playerName: string; cost: number }[];
+  auctionBidHistory?: {
+    bidId: string;
+    playerId: string;
+    playerName: string;
+    amount: number;
+    incrementFromPrevious: number;
+    timestamp: number;
+    status: "leading" | "outbid" | "won" | "void_passed" | "void_force_buy" | "void_lot_changed";
+  }[];
+  /** 仅管理端：全部出价（含可用财富与比例） */
+  auctionBids?: {
+    bidId: string;
+    auctionRound: number;
+    cardId: string;
+    playerId: string;
+    playerName: string;
+    amount: number;
+    wealthAtBid: number;
+    availableWealthAtBid: number;
+    bidToAvailableRatio: number | null;
+    timestamp: number;
+    status: string;
+  }[];
+  /** @deprecated 旧填价确认 */
   pendingAuctionOffers?: { offerId: string; playerId: string; cardId: string; cost: number }[];
+  /** @deprecated */
+  pendingAuctionOffer?: { offerId: string; playerId: string; cardId: string; cost: number };
+  /** @deprecated */
+  myPendingAuctionOffers?: { offerId: string; playerId: string; cardId: string; cost: number }[];
   /** 仅管理端：待玩家确认的彩票开奖 */
   pendingLotteryOffers?: { offerId: string; playerId: string; amount: number }[];
   /** 仅本人：待确认的彩票开奖（刷新/重连后仍显示弹窗） */

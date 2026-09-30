@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useRef } from "react";
 import { uiRem } from "../utils/typography";
 import { ActiveProject } from "../types";
 import { getProjectImageDisplay } from "../utils/gameImageDisplay";
@@ -14,6 +14,7 @@ import {
 import { LONG_CONTINUE_MIN_ENERGY } from "../config/longTermRules";
 import { ProjectTypeLabel } from "./help/ProjectTypeLabel";
 import { TYPE_COLORS } from "./ProjectCard";
+import { useImageWithFallback } from "../hooks/useImageWithFallback";
 
 interface Props {
   project: ActiveProject | null;
@@ -182,12 +183,12 @@ function RulesSection({
         <div>
           <div style={ruleLabel}>跟投要求</div>
           <p style={ruleValue}>
-            参投后每轮须投入 ≥{LONG_CONTINUE_MIN_ENERGY} 精力，否则视为放弃并 1:1 退回累计投入
+            参投后每轮须投入 ≥{LONG_CONTINUE_MIN_ENERGY} 精力，否则视为放弃：累计投入按 1:1 退回为财富，并退出完成时的排名与时代加成
           </p>
         </div>
         <div>
           <div style={ruleLabel}>完成回报</div>
-          <p style={ruleValue}>填满后：累计精力 × 15 财富</p>
+          <p style={ruleValue}>达到或超过上限后：个人历史累计精力 × 15 财富（超填同样发放，无短期式投爆罚）</p>
         </div>
         {rankRows.length > 0 && (
           <div>
@@ -250,14 +251,20 @@ export const ProjectDetailModal: React.FC<Props> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const doneRef = useRef<HTMLButtonElement>(null);
-  const [coverBroken, setCoverBroken] = useState(false);
 
   const open = project != null;
   const close = useCallback(() => onClose(), [onClose]);
 
-  useEffect(() => {
-    setCoverBroken(false);
-  }, [project?.id, uploadedVersion]);
+  const display = project
+    ? getProjectImageDisplay(project.id, project.name, {}, uploadedVersion)
+    : { src: "", source: "default" as const };
+  const defaultCoverSrc = project
+    ? getProjectImageDisplay(project.id, project.name, {}, 0).src
+    : "";
+  const cover = useImageWithFallback(
+    display.src,
+    display.source === "custom" ? defaultCoverSrc : null,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -312,11 +319,7 @@ export const ProjectDetailModal: React.FC<Props> = ({
   const tc = TYPE_COLORS[project.type] || TYPE_COLORS.short;
   const isEraMatch = eraTheme && project.era === eraTheme && project.type !== "risk";
 
-  const display = getProjectImageDisplay(project.id, project.name, {}, uploadedVersion);
-  const imageUrl =
-    coverBroken && display.source === "custom"
-      ? getProjectImageDisplay(project.id, project.name, {}, 0).src
-      : display.src;
+  const imageUrl = cover.src;
 
   const brief = getProjectInvestorBrief(project.id);
 
@@ -354,12 +357,23 @@ export const ProjectDetailModal: React.FC<Props> = ({
 
         <div className="project-detail-modal-scroll">
           <div className="project-detail-modal-cover">
-            <img
-              className="project-detail-modal-cover-img"
-              src={imageUrl}
-              alt=""
-              onError={() => setCoverBroken(true)}
-            />
+            {cover.showPlaceholder ? (
+              <div
+                aria-hidden
+                className="project-detail-modal-cover-img"
+                style={{
+                  minHeight: "8rem",
+                  background: "rgba(0,0,0,0.35)",
+                }}
+              />
+            ) : (
+              <img
+                className="project-detail-modal-cover-img"
+                src={imageUrl}
+                alt=""
+                onError={cover.onError}
+              />
+            )}
           </div>
 
           <div className="project-detail-modal-body">

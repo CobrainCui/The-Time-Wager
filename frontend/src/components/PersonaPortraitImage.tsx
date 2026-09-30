@@ -1,9 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { uiRem } from "../utils/typography";
+import { useImageWithFallback } from "../hooks/useImageWithFallback";
 
 interface Props {
   src: string;
   alt: string;
+  /** 自定义立绘加载失败时回退（通常为 /images/personas 默认图） */
+  fallbackSrc?: string;
   borderColor?: string;
   className?: string;
   style?: React.CSSProperties;
@@ -12,18 +15,13 @@ interface Props {
 export const PersonaPortraitImage: React.FC<Props> = ({
   src,
   alt,
+  fallbackSrc,
   borderColor = "rgba(255,255,255,0.12)",
   style,
 }) => {
-  const [currentSrc, setCurrentSrc] = useState(src);
-  const [failed, setFailed] = useState(false);
+  const img = useImageWithFallback(src, fallbackSrc);
 
-  useEffect(() => {
-    setCurrentSrc(src);
-    setFailed(false);
-  }, [src]);
-
-  if (failed) {
+  if (img.showPlaceholder) {
     return (
       <div
         style={{
@@ -47,7 +45,7 @@ export const PersonaPortraitImage: React.FC<Props> = ({
 
   return (
     <img
-      src={currentSrc}
+      src={img.src}
       alt={alt}
       style={{
         width: "100%",
@@ -57,7 +55,7 @@ export const PersonaPortraitImage: React.FC<Props> = ({
         border: `1px solid ${borderColor}`,
         ...style,
       }}
-      onError={() => setFailed(true)}
+      onError={img.onError}
     />
   );
 };

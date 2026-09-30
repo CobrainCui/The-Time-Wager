@@ -432,6 +432,26 @@ h1, h2, h3, h4, h5, h6 {
   padding: 1rem;
 }
 
+.project-card-invest-controls {
+  flex-wrap: wrap;
+}
+
+/* 内联 flex:1 的基准为 0，靠 min-width 触发换行，避免窄卡里滑条被挤没 */
+.project-card-invest-controls input[type="range"] {
+  min-width: 6rem;
+}
+
+@media (max-width: 639px) {
+  .project-card-invest-controls input[type="number"] {
+    min-height: 2.75rem;
+    min-width: 3rem;
+    font-size: max(1rem, calc(1rem * var(--text-ui-scale)));
+  }
+  .project-card-invest-controls input[type="range"] {
+    min-height: 2.75rem;
+  }
+}
+
 .project-card-cover {
   width: 100%;
   height: 160px;
@@ -849,7 +869,7 @@ h1, h2, h3, h4, h5, h6 {
   min-height: 0;
   overflow-y: auto;
   /* 避开投资/道具等阶段底部固定操作栏，保证能滚到最后一行 */
-  padding: 0 0.85rem calc(7.5rem + env(safe-area-inset-bottom, 0px));
+  padding: 0 0.85rem calc(10rem + env(safe-area-inset-bottom, 0px));
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1089,8 +1109,8 @@ h1, h2, h3, h4, h5, h6 {
   line-height: 1;
 }
 
-.countdown.warning { color: #f97316; animation: pulse 1s infinite; }
-.countdown.danger  { color: #ef4444; animation: pulse 0.5s infinite; }
+.countdown.warning { color: #f97316; animation: countdown-urgent 1s ease-in-out infinite; }
+.countdown.danger  { color: #ef4444; animation: countdown-urgent 0.5s ease-in-out infinite; }
 
 /* --- Log Panel --- */
 .log-entry {
@@ -1138,6 +1158,12 @@ h1, h2, h3, h4, h5, h6 {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.5; }
+}
+
+/* 倒计时告警：勿用 opacity，半透明会透出旁边蓝底分段叠成红蓝 */
+@keyframes countdown-urgent {
+  0%, 100% { filter: brightness(1); }
+  50%       { filter: brightness(1.35); }
 }
 
 @keyframes glow-pulse {
@@ -1189,13 +1215,13 @@ h1, h2, h3, h4, h5, h6 {
 .page { min-height: 100vh; display: flex; flex-direction: column; }
 .page-center { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
 
-/* Era intro — single viewport, vertical era card */
+/* Era intro — 内容超出视口时由窗口（正式局）或预览外层滚动，本层不截获滚动手势 */
 .era-intro-shell {
   width: 100%;
-  height: 100dvh;
-  max-height: 100dvh;
-  min-height: 0 !important;
-  overflow: hidden;
+  min-height: 100dvh;
+  height: auto;
+  max-height: none;
+  overflow: visible;
   box-sizing: border-box;
   justify-content: flex-start !important;
   align-items: center;
@@ -1203,8 +1229,6 @@ h1, h2, h3, h4, h5, h6 {
 .era-intro-inner {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
   width: 100%;
   max-width: 960px;
   justify-content: flex-start;
@@ -1213,6 +1237,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 .era-intro-footer {
   margin-top: 0.35rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
 }
 .era-intro-header {
   padding-top: clamp(1.5rem, 5vh, 3.5rem);
@@ -1224,14 +1249,17 @@ h1, h2, h3, h4, h5, h6 {
 .era-intro-card-img-wrap {
   width: min(58vw, 320px);
   aspect-ratio: 2 / 3;
-  max-height: min(52vh, 420px);
   margin: 0 auto;
 }
-.era-intro-card-img-wrap img {
+.era-intro-card-img-wrap img,
+.era-intro-card-img-wrap .era-intro-card-fallback {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
+}
+.era-intro-card-img-wrap .era-intro-card-fallback {
+  object-fit: unset;
 }
 .era-intro-bonus {
   width: 100%;
@@ -1249,7 +1277,6 @@ h1, h2, h3, h4, h5, h6 {
   }
   .era-intro-card-img-wrap {
     width: min(38vw, 380px);
-    max-height: min(58vh, 480px);
   }
   .era-intro-bonus {
     font-size: calc(1.125rem * var(--text-ui-scale)) !important;
@@ -1259,6 +1286,91 @@ h1, h2, h3, h4, h5, h6 {
 .container { max-width: 1200px; margin: 0 auto; padding: 0 1rem; }
 .container-sm { max-width: 640px; margin: 0 auto; padding: 0 1rem; }
 .container-md { max-width: 860px; margin: 0 auto; padding: 0 1rem; }
+
+/* 玩家端窄屏栅格（桌面 ≥1024 与改前一致） */
+.player-responsive-grid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.player-responsive-grid > * {
+  min-width: 0;
+}
+
+.investment-view {
+  box-sizing: border-box;
+}
+
+.investment-project-grid {
+  padding-bottom: 0.5rem;
+}
+@media (max-width: 1023px) {
+  .player-responsive-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 639px) {
+  .player-responsive-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.player-responsive-split {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: 2fr 1fr;
+  align-items: start;
+}
+@media (max-width: 899px) {
+  .player-responsive-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.player-responsive-stats {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(3, 1fr);
+}
+.player-responsive-stats > * {
+  min-width: 0;
+}
+@media (max-width: 639px) {
+  .player-responsive-stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+.player-responsive-split > * {
+  min-width: 0;
+}
+
+/* 底部留白由 --dock-clearance（useFixedDockClearance 实测底栏）驱动；回退值略大于常见底栏 */
+.investment-page-main {
+  padding-bottom: var(--dock-clearance, calc(8rem + env(safe-area-inset-bottom, 0px)));
+  scroll-padding-bottom: var(--dock-clearance, calc(8rem + env(safe-area-inset-bottom, 0px)));
+}
+
+/* 道具阶段固定「进入讨论和投资」底栏 */
+.buff-usage-page {
+  padding-bottom: var(--dock-clearance, calc(8rem + env(safe-area-inset-bottom, 0px)));
+  scroll-padding-bottom: var(--dock-clearance, calc(8rem + env(safe-area-inset-bottom, 0px)));
+  box-sizing: border-box;
+}
+
+.investment-submit-dock {
+  padding-top: 1rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  box-sizing: border-box;
+}
+@media (max-width: 639px) {
+  .investment-submit-dock .btn-lg {
+    min-width: 0;
+    width: min(100%, 24rem);
+  }
+}
 
 /* =========================================
    Era-Specific Themes
@@ -1515,7 +1627,7 @@ h1, h2, h3, h4, h5, h6 {
   margin: 1rem 0;
 }
 
-/* 状态栏用靛蓝背景 */
+/* 状态栏用靛蓝背景；右侧为固定「退出游戏」留空（平板/笔记本也需避让） */
 .status-bar {
   position: sticky;
   top: 0;
@@ -1524,6 +1636,32 @@ h1, h2, h3, h4, h5, h6 {
   backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(201,151,58,0.15);
   padding: 0.75rem 1.25rem;
+  /* 固定「退出游戏」约占右侧 6.5rem（含 right 偏移）；教程演示用内联 padding 覆盖 */
+  padding-right: calc(7rem + env(safe-area-inset-right, 0px));
+}
+.status-bar > div {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+/* 分段切换时顶栏粘在分段条下方，而不是被它盖住 */
+.buff-invest-split .status-bar {
+  top: var(--buff-invest-tab-h, 0px);
+}
+
+@media (max-width: 1023px) {
+  .status-bar > div {
+    flex-wrap: wrap;
+    row-gap: 0.75rem;
+    width: 100%;
+  }
+}
+
+@media (max-width: 639px) {
+  .status-bar {
+    padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
+    padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  }
 }
 
 /* 金色圆形图标背景 */
@@ -1544,11 +1682,13 @@ h1, h2, h3, h4, h5, h6 {
 .shadow-xl { box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
 
 /* --- 右侧玩家私信/转账坞（不占底部主操作区）--- */
+/* 高于拍卖确认遮罩(100)，低于顶部全局提示(10000)，以便拍卖确认时仍可私信/转账 */
 .player-chat-dock {
   position: fixed;
-  z-index: 42;
+  z-index: 110;
   right: clamp(0.5rem, 1.5vw, 1.25rem);
-  bottom: 5.75rem;
+  /* 跟随 useFixedDockClearance 写入的 --dock-clearance，避免压住底栏主按钮 */
+  bottom: var(--dock-clearance, 5.75rem);
   top: 3.5rem;
   width: min(288px, calc(100vw - 1rem));
   display: flex;
@@ -1757,7 +1897,6 @@ h1, h2, h3, h4, h5, h6 {
   .player-chat-dock {
     width: min(260px, 72vw);
     right: 0.35rem;
-    bottom: 5.25rem;
   }
   .player-chat-panel {
     max-height: min(38vh, 300px);
@@ -1782,6 +1921,11 @@ h1, h2, h3, h4, h5, h6 {
   max-height: min(70vh, 520px);
   justify-content: flex-end;
   pointer-events: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 165, 250, 0.45) transparent;
 }
 
 /* 教程转账试玩：保证展开面板时底部输入框始终可见 */
@@ -1986,12 +2130,6 @@ h1, h2, h3, h4, h5, h6 {
     min-width: min(96vw, 56rem);
   }
 
-  .tutorial-slide-panel--fit[data-demo-key="eraTheme"] .tutorial-slide-panel__copy {
-    max-height: none;
-    overflow: visible;
-    scrollbar-gutter: auto;
-  }
-
   .tutorial-slide-panel--fit[data-demo-key="eraTheme"] .tutorial-slide-panel__copy,
   .tutorial-slide-panel--fit[data-demo-key="eraTheme"] .tutorial-slide-panel__copy span {
     font-size: calc(0.92rem * var(--text-ui-scale)) !important;
@@ -2001,16 +2139,6 @@ h1, h2, h3, h4, h5, h6 {
   .tutorial-slide-panel--fit[data-demo-key="eraTheme"] .tutorial-slide-panel__copy > div {
     padding-top: 0.3rem !important;
     padding-bottom: 0.3rem !important;
-  }
-
-  .tutorial-slide-panel--fit[data-demo-key="eraTheme"] .tutorial-slide-panel__demo {
-    flex: 0 1 auto;
-  }
-
-  .tutorial-slide-panel--fit[data-demo-key="eraTheme"] .tutorial-slide-panel__demo-inner,
-  .tutorial-slide-panel--fit[data-demo-key="eraTheme"] .tutorial-demo-shell__body {
-    overflow-y: hidden;
-    overscroll-behavior: none;
   }
 
   .tutorial-era-theme-demo__row {
@@ -2059,23 +2187,6 @@ h1, h2, h3, h4, h5, h6 {
     box-sizing: border-box;
   }
 
-  /* 并列页：上半段文案完整展示，不出现内部滚动条 */
-  .tutorial-slide-panel--fit[data-demo-key="tiedRank"] .tutorial-slide-panel__copy {
-    max-height: none;
-    overflow: visible;
-    scrollbar-gutter: auto;
-  }
-
-  .tutorial-slide-panel--fit[data-demo-key="tiedRank"] .tutorial-slide-panel__demo {
-    flex: 0 1 auto;
-  }
-
-  .tutorial-slide-panel--fit[data-demo-key="tiedRank"] .tutorial-slide-panel__demo-inner,
-  .tutorial-slide-panel--fit[data-demo-key="tiedRank"] .tutorial-demo-shell__body {
-    overflow-y: hidden;
-    overscroll-behavior: none;
-  }
-
   .tutorial-slide-panel--fit .tutorial-slide-panel__demo {
     flex: 1 1 auto;
     min-height: 0;
@@ -2115,8 +2226,9 @@ h1, h2, h3, h4, h5, h6 {
 
   .tutorial-slide-panel--fit[data-demo-key="projectTypes"] .tutorial-slide-panel__demo-inner,
   .tutorial-slide-panel--fit[data-demo-key="projectTypes"] .tutorial-demo-shell__body {
-    overflow-y: hidden;
-    overscroll-behavior: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
   }
 
   .tutorial-slide-panel--fit .tutorial-slide-panel__footer {
@@ -2158,13 +2270,24 @@ h1, h2, h3, h4, h5, h6 {
   }
 
   .tutorial-slide-panel--fit .tutorial-transfer-demo .player-chat-panel {
-    max-height: min(36vh, 280px);
-    min-height: 10.75rem;
+    max-height: min(26vh, 240px);
+    min-height: 9.5rem;
   }
 
-  .tutorial-slide-panel--fit .tutorial-chat-demo__dock {
-    max-height: min(38vh, 300px);
+  /* 双框展开：坞不限高，只由下半 demo-inner 滚动，避免坞内再套一层滚不动 */
+  .tutorial-slide-panel--fit[data-demo-key="transferAndMessage"] .tutorial-chat-demo__dock {
+    max-height: none;
     min-height: 10.75rem;
+    overflow: visible;
+    justify-content: flex-start;
+  }
+
+  .tutorial-slide-panel--fit[data-demo-key="transferAndMessage"] .tutorial-slide-panel__demo-inner {
+    scroll-padding-bottom: 0.75rem;
+  }
+
+  .tutorial-slide-panel--fit[data-demo-key="transferAndMessage"] .tutorial-transfer-demo {
+    padding-bottom: 0.75rem;
   }
 
   .tutorial-slide-panel--fit .seat-btn {
@@ -2189,5 +2312,31 @@ h1, h2, h3, h4, h5, h6 {
 @media (max-width: 720px) {
   .tutorial-project-types-grid {
     grid-template-columns: 1fr !important;
+  }
+}
+
+/* 设备预览：禁止误触；滚动在外层 .device-preview-stage，勿加 pointer-events:none */
+.device-preview-static,
+.device-preview-static * {
+  pointer-events: none !important;
+  user-select: none;
+}
+
+/* 预览中仅放开投资/道具分段切换 */
+.device-preview-static .buff-invest-tab-bar [role="tab"] {
+  pointer-events: auto !important;
+  cursor: pointer;
+}
+
+.device-preview-shell .device-preview-stage {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 480px) {
+  .device-preview-shell .device-preview-rail {
+    width: min(38vw, 9.5rem) !important;
+    max-width: 9.5rem !important;
+    padding: 0.5rem 0.45rem !important;
   }
 }

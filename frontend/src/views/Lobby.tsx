@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, lazy, Suspense } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState } from "../types";
 import { socket } from "../socket";
 import { saveGameSession } from "../gameSession";
+const DevicePreviewShell = lazy(() =>
+  import("../devicePreview/DevicePreviewShell").then((m) => ({ default: m.DevicePreviewShell }))
+);
 
 interface Props {
   game: GameState;
@@ -12,6 +15,7 @@ export const Lobby: React.FC<Props> = ({ game }) => {
   const [name, setName] = useState("");
   const [roomId, setRoomId] = useState("");
   const [isJoining, setIsJoining] = useState(false);
+  const [devicePreviewOpen, setDevicePreviewOpen] = useState(false);
 
   useEffect(() => {
     const clearJoining = () => setIsJoining(false);
@@ -37,6 +41,12 @@ export const Lobby: React.FC<Props> = ({ game }) => {
   };
 
   return (
+    <>
+      {devicePreviewOpen && (
+        <Suspense fallback={null}>
+          <DevicePreviewShell onClose={() => setDevicePreviewOpen(false)} />
+        </Suspense>
+      )}
     <div
       className="page-center"
       style={{
@@ -143,6 +153,20 @@ export const Lobby: React.FC<Props> = ({ game }) => {
                 "🚀 进入游戏"
               )}
             </button>
+
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setDevicePreviewOpen(true)}
+              style={{
+                width: "100%",
+                marginTop: "0.5rem",
+                fontSize: uiRem(0.78),
+                color: "var(--color-text-muted)",
+              }}
+            >
+              设备预览
+            </button>
           </div>
 
           {game?.players && game.players.length > 0 && (
@@ -187,5 +211,6 @@ export const Lobby: React.FC<Props> = ({ game }) => {
         </div>
       </div>
     </div>
+    </>
   );
 };

@@ -46,3 +46,7 @@ server/data/session_archive.json
 .npm
 eslintcache
 *.zip
+_pack_staging/
+*.bak
+scratch/eng.traineddata
+卡牌图片/

@@ -1,5 +1,5 @@
 import { GameState, Player } from "../state/gameState.js";
-import { appendSessionEvent } from "../state/sessionTelemetry.js";
+import { appendSessionEvent, InvestmentSubmitSource } from "../state/sessionTelemetry.js";
 import { sanitizeLongContribution } from "./longTermLogic.js";
 
 /** 将预填投资裁剪为合法方案（精力上限、长期项目规则等） */
@@ -28,7 +28,8 @@ export function sanitizeInvestments(
 export function applyInvestments(
   game: GameState,
   playerId: string,
-  investments: Record<number, number>
+  investments: Record<number, number>,
+  source: InvestmentSubmitSource = "player"
 ): boolean {
   const player = game.players.find(p => p.id === playerId);
   if (!player) return false;
@@ -83,6 +84,7 @@ export function applyInvestments(
       roundInEra: game.roundInEra,
       investments: { ...investments },
       totalSpent,
+      source,
     },
     playerId
   );

@@ -61,7 +61,13 @@ function App() {
       setGame(null);
       setMyPlayerId("");
     };
-    const onPlayerNotify = ({ message }: { message: string }) => setPlayerNotify(message);
+    const onPlayerNotify = (payload: { message?: string; msg?: string } | string) => {
+      const text =
+        typeof payload === "string"
+          ? payload
+          : payload?.message || payload?.msg || "";
+      if (text) setPlayerNotify(text);
+    };
     const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
     const onSyncEraImages = (images: Record<string, number>) => setEraImages(images);
     const onSyncBuffImages = (images: Record<string, number>) => setBuffImages(images);

@@ -46,10 +46,13 @@ const STATUS_META: Record<
     chipColor: LONG_COMPLETE_CHIP_COLOR,
   },
   withdrawn: { chip: "🗑️ 已撤场", tooltip: "连续 2 轮无人投资，项目离场" },
-  abandoned: { chip: "🚫 已放弃", tooltip: "你已退出该长期项目排名" },
+  abandoned: {
+    chip: "🚫 已放弃",
+    tooltip: "已 1:1 退回累计投入，并退出该项目完成时的排名与时代加成",
+  },
   committed_long: {
     chip: "📌 已参投",
-    tooltip: "每轮须投入≥3⚡，否则视为放弃并退回累计投入",
+    tooltip: "参投后每轮须投入≥3⚡，否则放弃：1:1 退回累计投入并退出完成排名",
   },
   investable: { chip: "✅ 可投", tooltip: "当前阶段可对本项目分配精力" },
   unpaid_long: { chip: "🔒 已锁定", tooltip: "本轮投资已提交，等待结算" },

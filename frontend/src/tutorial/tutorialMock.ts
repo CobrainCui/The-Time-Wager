@@ -50,7 +50,7 @@ export const TUTORIAL_LONG_PROJECT: ActiveProject = {
   id: 101,
   name: "植树造林",
   type: "long",
-  maxEnergy: 70,
+  maxEnergy: 90,
   accumulatedInvested: 12,
   era: "气候",
   ...emptyProjectFields,
@@ -101,7 +101,7 @@ export const TUTORIAL_ERA_SAMPLE_PROJECT: ActiveProject = {
   id: 102,
   name: "城市海绵体改造",
   type: "long",
-  maxEnergy: 80,
+  maxEnergy: 100,
   accumulatedInvested: 5,
   era: "气候",
   ...emptyProjectFields,
@@ -119,4 +119,4 @@ export const TUTORIAL_NPCS: TutorialNpc[] = [
   { id: "npc-c", name: "美玲", wealth: 200 },
 ];
 
-export const TUTORIAL_SHOP_CARDS = ["buff_gold", "buff_spirit", "buff_insurance"] as const;
+export const TUTORIAL_SHOP_CARDS = ["buff_gold", "buff_slack", "buff_insurance"] as const;

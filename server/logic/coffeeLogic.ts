@@ -2,7 +2,7 @@ import { GameState, Player } from "../state/gameState.js";
 import { appendSessionEvent } from "../state/sessionTelemetry.js";
 import { sanitizeInvestments } from "./investmentLogic.js";
 
-export const COFFEE_WEALTH_COST = 15;
+export const COFFEE_WEALTH_COST = 16;
 export const COFFEE_ENERGY_GAIN = 1;
 
 function draftEnergySum(player: Player): number {
@@ -12,6 +12,15 @@ function draftEnergySum(player: Player): number {
     sum += Math.max(0, Math.floor(Number(v)));
   }
   return sum;
+}
+
+function coffeeRoundContext(game: GameState) {
+  return {
+    globalRound: game.globalRound,
+    currentEra: game.currentEra,
+    roundInEra: game.roundInEra,
+    phase: game.phase,
+  };
 }
 
 export type CoffeePurchaseResult =
@@ -30,7 +39,14 @@ export function purchaseCoffee(game: GameState, player: Player): CoffeePurchaseR
   appendSessionEvent(
     game,
     "coffee_purchased",
-    { wealthCost: COFFEE_WEALTH_COST, energyGain: COFFEE_ENERGY_GAIN },
+    {
+      ...coffeeRoundContext(game),
+      wealthCost: COFFEE_WEALTH_COST,
+      energyGain: COFFEE_ENERGY_GAIN,
+      wealthAfter: player.wealth,
+      energyAfter: player.energy,
+      coffeePurchasesThisRound: player.coffeePurchasesThisRound,
+    },
     player.id
   );
   return { ok: true };
@@ -81,9 +97,13 @@ export function refundCoffee(
     game,
     "coffee_refunded",
     {
+      ...coffeeRoundContext(game),
       count,
       wealthRefund: COFFEE_WEALTH_COST * count,
       energyLoss: count * COFFEE_ENERGY_GAIN,
+      wealthAfter: player.wealth,
+      energyAfter: player.energy,
+      coffeePurchasesThisRound: player.coffeePurchasesThisRound,
     },
     player.id
   );

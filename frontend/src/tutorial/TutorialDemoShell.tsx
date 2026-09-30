@@ -16,7 +16,6 @@ export const TutorialDemoShell: React.FC<Props> = ({ children, onReset, dense = 
       background: "rgba(59,130,246,0.06)",
       border: "1px solid rgba(59,130,246,0.2)",
       borderRadius: dense ? "0.75rem" : "1rem",
-      overflow: "visible",
     }}
   >
     <div

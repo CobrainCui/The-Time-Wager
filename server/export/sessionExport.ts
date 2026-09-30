@@ -3,14 +3,32 @@ import { GameState, ActiveProject, Player } from "../state/gameState.js";
 import { EXPORT_SCHEMA_VERSION, getAnalysisWeightsVersion } from "./constants.js";
 import { emptySessionTelemetry } from "../state/sessionTelemetry.js";
 import { getCommunityLeaderboard } from "../state/communityLeaderboard.js";
+import { eraCards } from "../data/game_data.js";
 
-function uniqueProjects(game: GameState): ActiveProject[] {
-  const all = [...game.activeProjects, ...game.completedProjects, ...game.uncompletedProjects];
+type ProjectListKind = "active" | "completed" | "uncompleted";
+
+function uniqueProjectsWithList(game: GameState): Array<ActiveProject & { list: ProjectListKind }> {
+  const bags: Array<{ list: ProjectListKind; items: ActiveProject[] }> = [
+    { list: "active", items: game.activeProjects },
+    { list: "completed", items: game.completedProjects },
+    { list: "uncompleted", items: game.uncompletedProjects },
+  ];
   const seen = new Set<number>();
-  return all.filter((p) => {
-    if (seen.has(p.id)) return false;
-    seen.add(p.id);
-    return true;
+  const out: Array<ActiveProject & { list: ProjectListKind }> = [];
+  for (const bag of bags) {
+    for (const p of bag.items) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      out.push({ ...p, list: bag.list });
+    }
+  }
+  return out;
+}
+
+function eraThemeNames(eraSequence: number[]): string[] {
+  return eraSequence.map((idx) => {
+    const card = eraCards.find((c) => c.id === idx + 1);
+    return card?.name ?? `era_${idx}`;
   });
 }
 
@@ -22,6 +40,8 @@ function playerExportRow(p: Player) {
     aiPersona: p.aiPersona ?? "",
     energy: p.energy,
     wealth: p.wealth,
+    rank: p.rank,
+    connected: p.connected,
     socialRank: p.socialRank,
     totalEnergyConsumed: p.totalEnergyConsumed,
     investedLongEnergy: p.investedLongEnergy,
@@ -42,9 +62,12 @@ export function buildSessionExport(game: GameState) {
       exportSchemaVersion: EXPORT_SCHEMA_VERSION,
       analysisWeightsVersion: getAnalysisWeightsVersion(),
       roomId: game.roomId,
+      sessionId: game.sessionId ?? null,
       communityName: game.communityName ?? null,
       playerCount: game.players.length,
+      energyTableSize: game.energyTableSize ?? null,
       eraSequence: game.eraSequence,
+      eraThemeNames: eraThemeNames(game.eraSequence),
       eraTheme: game.currentEraCard?.name ?? null,
       phase: game.phase,
       currentEra: game.currentEra,
@@ -60,26 +83,39 @@ export function buildSessionExport(game: GameState) {
         : null,
       inventory: p.inventory,
       usedCards: p.usedCards,
+      activeBuffs: (p.activeBuffs ?? []).map((b) => ({
+        cardId: b.cardId,
+        targetPlayerId: b.targetPlayerId ?? null,
+        targetProjectId: b.targetProjectId ?? null,
+      })),
       longTerm: p.longTerm,
       riskGains: p.riskGains,
     })),
-    projects: uniqueProjects(game).map((proj) => ({
+    projects: uniqueProjectsWithList(game).map((proj) => ({
       id: proj.id,
       name: proj.name,
       type: proj.type,
       maxEnergy: proj.maxEnergy,
       era: proj.era,
+      list: proj.list,
       accumulatedInvested: proj.accumulatedInvested,
       investorRecords: proj.investorRecords,
       earningRecords: proj.earningRecords,
       totalPayout: proj.totalPayout,
     })),
     transactions: game.transactions,
+    auctionBids: game.auctionBids ?? [],
+    auctionCompletedDeals: game.auctionCompletedDeals ?? [],
+    lotteryDeals: (game.lotteryCompletedDeals ?? []).map((d) => ({
+      playerId: d.playerId,
+      creditedAmount: d.amount,
+      enteredAmount: d.enteredAmount ?? null,
+      goldApplied: d.goldApplied ?? null,
+    })),
     settlementHistory: tel.settlementHistory,
     events: tel.events,
     logs: game.logs,
     globalLeaderboard: getCommunityLeaderboard(),
-    eventChoices: game.eventChoices,
   };
 }
 
@@ -115,7 +151,12 @@ export async function buildSessionWorkbook(
     AI: p.isAI,
     财富: p.wealth,
     精力: p.energy,
+    排名: p.rank,
     社交档: p.socialRank,
+    长期精力: p.investedLongEnergy,
+    短期精力: p.investedShortEnergy,
+    风险精力: p.investedRiskEnergy,
+    财富曲线: p.wealthHistory,
     命运素描: sanitizeCell(p.fatePersona),
     决策基因: p.geneCode,
   }));
@@ -138,6 +179,7 @@ export async function buildSessionWorkbook(
           轮次: round.round,
           时代: round.currentEra,
           时代内轮: round.roundInEra,
+          项目ID: res.projectId,
           项目: sanitizeCell(res.name),
           项目类型: res.type,
           玩家ID: pid,
@@ -146,9 +188,13 @@ export async function buildSessionWorkbook(
           收益基础: gain?.base ?? 0,
           收益排名: gain?.rank ?? 0,
           收益时代: gain?.era ?? 0,
+          点石前基础: gain?.baseBeforeGold ?? "",
+          点石前排名: gain?.rankBeforeGold ?? "",
+          点石前时代: gain?.eraBeforeGold ?? "",
           投爆: res.isExploded && res.type !== "long",
           超额完成: res.type === "long" && res.isExploded && res.isCompleted,
           完成: res.isCompleted,
+          做空: res.shortSold === true,
         });
       }
     }
@@ -169,11 +215,134 @@ export async function buildSessionWorkbook(
     ID: p.id,
     名称: sanitizeCell(p.name),
     类型: p.type,
+    列表: p.list,
     容量: p.maxEnergy,
     累计投入: p.accumulatedInvested,
     总派发: p.totalPayout,
   }));
   addSheet(wb, "项目", projRows.length ? projRows : [{ 提示: "无项目" }]);
+
+  const statusLabel: Record<string, string> = {
+    leading: "暂时领先",
+    outbid: "已被超过",
+    won: "成交拿走",
+    void_passed: "跳过作废",
+    void_force_buy: "被强买打断",
+    void_lot_changed: "换卡作废",
+  };
+  const bidDetailRows = (exportData.auctionBids ?? []).map((b) => ({
+    场次: b.auctionRound,
+    道具卡ID: b.cardId,
+    玩家ID: b.playerId,
+    玩家: sanitizeCell(b.playerName),
+    出价: b.amount,
+    当时账面: b.wealthAtBid,
+    当时可用: b.availableWealthAtBid,
+    占可用比例:
+      b.bidToAvailableRatio != null ? Math.round(b.bidToAvailableRatio * 10000) / 100 : "",
+    结果: statusLabel[b.status] ?? b.status,
+    时间: new Date(b.timestamp).toISOString(),
+  }));
+  addSheet(wb, "出价明细", bidDetailRows.length ? bidDetailRows : [{ 提示: "无出价" }]);
+
+  const dealSourceLabel: Record<string, string> = {
+    hammer: "确认成交",
+    force_buy: "强买强卖",
+  };
+  const dealRows = (exportData.auctionCompletedDeals ?? []).map((d) => {
+    const wonBid = (exportData.auctionBids ?? [])
+      .filter((b) => b.cardId === d.cardId && b.playerId === d.playerId && b.status === "won")
+      .sort((a, b) => b.timestamp - a.timestamp)[0];
+    return {
+      道具卡ID: d.cardId,
+      得主ID: d.playerId,
+      成交价: d.cost,
+      来源: d.source ? dealSourceLabel[d.source] ?? d.source : "",
+      最高出价当时可用: wonBid?.availableWealthAtBid ?? "",
+      最高出价占可用比例:
+        wonBid?.bidToAvailableRatio != null
+          ? Math.round(wonBid.bidToAvailableRatio * 10000) / 100
+          : "",
+    };
+  });
+  addSheet(wb, "成交", dealRows.length ? dealRows : [{ 提示: "无成交" }]);
+
+  type SummaryRow = {
+    场次: number;
+    道具卡ID: string;
+    玩家ID: string;
+    玩家: string;
+    出价次数: number;
+    最高出价: number;
+    最高价当时可用: number;
+    最高价占可用比例: number | "";
+    是否得标: boolean;
+    _highTs: number;
+  };
+  const summaryMap = new Map<string, SummaryRow>();
+  for (const b of exportData.auctionBids ?? []) {
+    const key = `${b.auctionRound}:${b.cardId}:${b.playerId}`;
+    const prev = summaryMap.get(key);
+    if (!prev) {
+      summaryMap.set(key, {
+        场次: b.auctionRound,
+        道具卡ID: b.cardId,
+        玩家ID: b.playerId,
+        玩家: String(sanitizeCell(b.playerName)),
+        出价次数: 1,
+        最高出价: b.amount,
+        最高价当时可用: b.availableWealthAtBid,
+        最高价占可用比例:
+          b.bidToAvailableRatio != null ? Math.round(b.bidToAvailableRatio * 10000) / 100 : "",
+        是否得标: b.status === "won",
+        _highTs: b.timestamp,
+      });
+      continue;
+    }
+    prev.出价次数 += 1;
+    if (b.status === "won") prev.是否得标 = true;
+    if (b.amount > prev.最高出价 || (b.amount === prev.最高出价 && b.timestamp >= prev._highTs)) {
+      prev.最高出价 = b.amount;
+      prev.最高价当时可用 = b.availableWealthAtBid;
+      prev.最高价占可用比例 =
+        b.bidToAvailableRatio != null ? Math.round(b.bidToAvailableRatio * 10000) / 100 : "";
+      prev._highTs = b.timestamp;
+    }
+  }
+  for (const deal of exportData.auctionCompletedDeals ?? []) {
+    let found = false;
+    for (const row of summaryMap.values()) {
+      if (row.道具卡ID === deal.cardId && row.玩家ID === deal.playerId) {
+        row.是否得标 = true;
+        found = true;
+      }
+    }
+    if (!found) {
+      const p = exportData.players.find((x) => x.id === deal.playerId);
+      summaryMap.set(`deal:${deal.cardId}:${deal.playerId}`, {
+        场次: 0,
+        道具卡ID: deal.cardId,
+        玩家ID: deal.playerId,
+        玩家: String(sanitizeCell(p?.name ?? deal.playerId)),
+        出价次数: 0,
+        最高出价: deal.cost,
+        最高价当时可用: deal.cost,
+        最高价占可用比例: "",
+        是否得标: true,
+        _highTs: 0,
+      });
+    }
+  }
+  const summaryRows = Array.from(summaryMap.values()).map(({ _highTs: _, ...rest }) => rest);
+  addSheet(wb, "出价摘要", summaryRows.length ? summaryRows : [{ 提示: "无出价" }]);
+
+  const lotteryRows = (exportData.lotteryDeals ?? []).map((d) => ({
+    玩家ID: d.playerId,
+    主持原额: d.enteredAmount ?? "",
+    入账额: d.creditedAmount,
+    点石成金: d.goldApplied === true ? "是" : d.goldApplied === false ? "否" : "",
+  }));
+  addSheet(wb, "彩票", lotteryRows.length ? lotteryRows : [{ 提示: "无彩票开奖" }]);
 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

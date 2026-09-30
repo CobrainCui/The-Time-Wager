@@ -12,7 +12,7 @@ import {
 } from "../state/gameState.js";
 import { togglePlayerReady, forceSubmitPendingInvestments, adminUnlockPlayer, resetAllReady } from "../state/gameActions.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
-import { clearActionDeadline, startInvestmentDeadline } from "../state/actionDeadline.js";
+import { clearActionDeadline, startInvestmentDeadline, pauseInvestmentDeadline, resumeInvestmentDeadline, getInvestmentRemainingMs } from "../state/actionDeadline.js";
 import { applyInvestments, sanitizeInvestments } from "../logic/investmentLogic.js"; 
 import { purchaseCoffee, refundCoffee } from "../logic/coffeeLogic.js";
 import { broadcastUpdate, serializeGameForClient } from "./broadcast.js"; 
@@ -24,21 +24,23 @@ import {
   sanitizeCommunityName,
 } from "../state/communityLeaderboard.js";
 import { archiveCompletedSession } from "../state/sessionArchive.js"; 
-import { drawProjectsForEra } from "../state/gameEra.js";
+import { ensureProjectsDrawnForEra } from "../state/gameEra.js";
 import { applyRoundEnergy, syncEnergyAfterRosterChange } from "../logic/energySchedule.js";
-import { useBuffCard } from "../logic/buffLogic.js";
+import { useBuffCard, useForceBuyCard, ackSlackHit, FORCE_BUY_CARD_ID } from "../logic/buffLogic.js";
 import { analyzeGamePersona } from "../logic/analysisLogic.js";
 import { verifyAdminToken } from "../config/adminAuth.js";
 import {
   beginAuctionSession,
+  buildAuctionLotPublicView,
   clearAuctionOffers,
-  claimAuctionResponse,
-  createAuctionOffer,
-  isAuctionCardAvailable,
-  isValidAuctionCost,
-  markAuctionCardDistributed,
-  recordAuctionCompletedDeal,
+  hammerAuctionLot,
+  passAuctionLot,
+  placeAuctionBid,
+  playerAvailableWealth,
+  formatPlayerHoldSuffix,
   revokeAuctionGrant,
+  setAuctionFocusCard,
+  voidAllOpenAuctionBids,
 } from "../logic/auctionCards.js";
 import {
   applyLotteryAccept,
@@ -48,6 +50,7 @@ import {
   revokeLotteryGrant,
 } from "../logic/lotterySettle.js";
 import { pruneSettledTransactions, pendingCountFrom, MAX_PENDING_PER_SENDER } from "../util/pruneTransactions.js";
+import { resolvePendingTransfer } from "../logic/transferResolve.js";
 import { allow } from "../util/rateLimit.js";
 import { canCreateRoom } from "../logic/roomCreatePolicy.js";
 import {
@@ -56,6 +59,16 @@ import {
   recordPhaseChange,
 } from "../state/sessionTelemetry.js";
 
+function presencePayload(game: GameState, action: string, playerId: string) {
+  return {
+    action,
+    playerId,
+    phase: game.phase,
+    globalRound: game.globalRound,
+    currentEra: game.currentEra,
+    roundInEra: game.roundInEra,
+  };
+}
 function buildAdminRoomList() {
   return Object.keys(rooms).map((rid) => ({
     roomId: rid,
@@ -237,6 +250,12 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         game.readyPlayers.delete(player.id);
       }
       if (rejoining) syncEnergyAfterRosterChange(game, player);
+      appendSessionEvent(
+        game,
+        "presence",
+        presencePayload(game, "rejoin", player.id),
+        player.id
+      );
     } else {
       const newPlayer: Player = {
         id: socket.id,
@@ -267,6 +286,12 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       syncEnergyAfterRosterChange(game, newPlayer);
       player = newPlayer;
       game.logs.push(`👤 玩家 ${player.name} 加入游戏`);
+      appendSessionEvent(
+        game,
+        "presence",
+        presencePayload(game, "join", player.id),
+        player.id
+      );
     }
 
     socket.emit("playerJoined", { playerId: player.id, reconnectToken: player.reconnectToken });
@@ -278,7 +303,10 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         amount: pendingLottery.amount,
       });
     }
-    
+    if (game.phase === "AUCTION") {
+      // 公开加价流程：不再重发旧的「确认支付」弹窗
+    }
+
     broadcastRoomList(io);
   });
 
@@ -295,6 +323,12 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       player.ready = false;
       game.readyPlayers.delete(player.id);
       syncEnergyAfterRosterChange(game);
+      appendSessionEvent(
+        game,
+        "presence",
+        presencePayload(game, "leave", player.id),
+        player.id
+      );
     }
     leaveAllGameRooms(socket);
     broadcastUpdate(io, game);
@@ -452,11 +486,10 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         game.uncompletedProjects = [];
         game.completedProjects = [];
         game.drawnProjects = new Set();
+        game.projectDrawEra = undefined;
         game.totalRiskEnergyAvailable = 0;
-        drawProjectsForEra(game);
-      } else if (game.activeProjects.length === 0) {
-        drawProjectsForEra(game);
       }
+      ensureProjectsDrawnForEra(game);
       game.phase = "INVESTMENT";
       startInvestmentDeadline(game);
 
@@ -473,6 +506,12 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const playerIndex = game.players.findIndex(p => p.id === targetPlayerId);
     if (playerIndex !== -1) {
       const [removed] = game.players.splice(playerIndex, 1);
+      appendSessionEvent(
+        game,
+        "presence",
+        presencePayload(game, "kick", removed.id),
+        removed.id
+      );
       detachKickedPlayerSocket(io, roomId, removed.socketId);
       syncEnergyAfterRosterChange(game);
       broadcastUpdate(io, game);
@@ -540,6 +579,59 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     broadcastUpdate(io, game);
   });
 
+  socket.on("adminInvestmentTimer", ({ roomId, action }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game) return;
+    if (game.phase !== "INVESTMENT") {
+      socket.emit("error", "仅投资阶段可控制倒计时");
+      return;
+    }
+    if (action === "pause") {
+      const result = pauseInvestmentDeadline(game);
+      if (!result.ok) {
+        socket.emit("error", result.message);
+        return;
+      }
+      game.logs.push("⏸ 主持人暂停了投资倒计时");
+      appendSessionEvent(game, "investment_timer", {
+        action: "pause",
+        remainingMs: getInvestmentRemainingMs(game),
+        globalRound: game.globalRound,
+        currentEra: game.currentEra,
+        roundInEra: game.roundInEra,
+      });
+    } else if (action === "resume") {
+      const result = resumeInvestmentDeadline(game);
+      if (!result.ok) {
+        socket.emit("error", result.message);
+        return;
+      }
+      game.logs.push("▶️ 主持人继续了投资倒计时");
+      appendSessionEvent(game, "investment_timer", {
+        action: "resume",
+        remainingMs: getInvestmentRemainingMs(game),
+        globalRound: game.globalRound,
+        currentEra: game.currentEra,
+        roundInEra: game.roundInEra,
+      });
+    } else if (action === "reset") {
+      startInvestmentDeadline(game);
+      game.logs.push("🔄 主持人重置了投资倒计时（10:00）");
+      appendSessionEvent(game, "investment_timer", {
+        action: "reset",
+        remainingMs: getInvestmentRemainingMs(game),
+        globalRound: game.globalRound,
+        currentEra: game.currentEra,
+        roundInEra: game.roundInEra,
+      });
+    } else {
+      socket.emit("error", "无效的倒计时操作");
+      return;
+    }
+    broadcastUpdate(io, game);
+  });
+
   socket.on("adminDissolveRoom", ({ roomId }) => {
     if (!socket.data.isSuperAdmin) return;
     if (rooms[roomId]) {
@@ -579,23 +671,26 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
           resetAllReady(game);
           game.logs.push(`⏭️ 上帝强制跳转至 [${nextPhase}]（已重置局内状态）`);
         } else {
-          game.phase = nextPhase;
-          if (nextPhase === "AUCTION") beginAuctionSession(game);
-          if (
-            (nextPhase === "ERA_INTRO" || nextPhase === "INVESTMENT") &&
-            game.energyTableSize == null
-          ) {
-            applyRoundEnergy(game, { relock: true });
-          }
-          if (nextPhase === "INVESTMENT") {
+          if (nextPhase === "INVESTMENT" || nextPhase === "BUFF_USAGE") {
+            // 道具已并入投资阶段；旧「道具使用」跳转一并落到 INVESTMENT
+            game.phase = "INVESTMENT";
+            ensureProjectsDrawnForEra(game);
             clearActionDeadline(game);
             startInvestmentDeadline(game);
-          }
-          if (nextPhase === "BUFF_USAGE") {
-            clearActionDeadline(game);
             resetAllReady(game);
+            game.logs.push(
+              nextPhase === "BUFF_USAGE"
+                ? "⏭️ 上帝强制跳转至 [INVESTMENT]（道具已并入投资）"
+                : "⏭️ 上帝强制跳转至 [INVESTMENT]"
+            );
+          } else {
+            game.phase = nextPhase;
+            if (nextPhase === "AUCTION") beginAuctionSession(game);
+            if (nextPhase === "ERA_INTRO" && game.energyTableSize == null) {
+              applyRoundEnergy(game, { relock: true });
+            }
+            game.logs.push(`⏭️ 上帝强制跳转至 [${nextPhase}]`);
           }
-          game.logs.push(`⏭️ 上帝强制跳转至 [${nextPhase}]`);
         }
         recordPhaseChange(game, prevPhase, game.phase, "adminSkipPhase");
         broadcastUpdate(io, game);
@@ -613,7 +708,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     }
     if (game.phase === "INVESTMENT") {
       clearActionDeadline(game);
-      forceSubmitPendingInvestments(game);
+      forceSubmitPendingInvestments(game, "admin_force");
     } else {
       game.players.forEach((p) => {
         p.ready = true;
@@ -629,99 +724,134 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const game = rooms[roomId];
     if (game && game.phase === "INVESTMENT") {
        clearActionDeadline(game);
-       forceSubmitPendingInvestments(game);
+       forceSubmitPendingInvestments(game, "admin_force");
        tryAdvancePhase(game);
        broadcastUpdate(io, game);
     }
   });
 
-  // 拍卖交易请求
-  socket.on("adminProposeBuff", ({ roomId, playerId, cardId, cost }) => {
-      if (!socket.data.isSuperAdmin) return;
-      const game = rooms[roomId];
-      if (!game || game.phase !== "AUCTION") return;
-      if (typeof cardId !== "string" || !isAuctionCardAvailable(game, cardId)) {
-          socket.emit("error", "该道具已成交或不在本轮拍卖池");
-          return;
-      }
-      if (!isValidAuctionCost(cost)) {
-          socket.emit("error", "拍卖价格必须为非负整数");
-          return;
-      }
-
-      const player = game.players.find(p => p.id === playerId);
-      if (!player || player.isAI) {
-          socket.emit("error", "拍卖得主无效");
-          return;
-      }
-      if (!player.socketId) {
-          socket.emit("error", "玩家未在线，无法发送拍卖确认");
-          return;
-      }
-      const { offer, replaced } = createAuctionOffer(game, player.id, cardId, cost);
-      if (replaced && replaced.playerId !== player.id) {
-        const previousTarget = game.players.find((p) => p.id === replaced.playerId);
-        if (previousTarget?.socketId) {
-          io.to(previousTarget.socketId).emit("auctionOfferCancelled", {
-            offerId: replaced.offerId,
-            cardId,
-          });
-        }
-      }
-      io.to(player.socketId).emit("auctionTradeRequest", { offerId: offer.offerId, cardId, cost });
-      game.logs.push(`🔨 上帝向 ${player.name} 发起拍卖确认：[${cardId}] 价格 ${cost}`);
-      appendSessionEvent(game, "auction_offered", {
-        targetPlayerId: playerId,
-        cardId,
-        cost,
-      });
-      broadcastUpdate(io, game);
+  // 拍卖：改正在拍的卡 / 确认成交 / 跳过 / 玩家出价
+  socket.on("adminSetAuctionFocus", ({ roomId, cardId }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game || game.phase !== "AUCTION") {
+      socket.emit("error", "现在不能改正在拍的卡");
+      return;
+    }
+    const prev = game.auctionFocusCardId;
+    const result = setAuctionFocusCard(game, cardId == null || cardId === "" ? null : cardId);
+    if (!result.ok) {
+      socket.emit("error", result.message);
+      return;
+    }
+    if (game.auctionFocusCardId) {
+      game.logs.push(`📌 改成正在拍：[${game.auctionFocusCardId}]`);
+    } else {
+      game.logs.push(`📌 已取消正在拍的卡`);
+    }
+    appendSessionEvent(game, "auction_lot_changed", {
+      fromCardId: prev ?? null,
+      toCardId: game.auctionFocusCardId ?? null,
+    });
+    broadcastUpdate(io, game);
   });
 
-  socket.on("playerRespondAuction", (data) => {
-      const roomId = getRoomId(socket);
-      if (!roomId || !rooms[roomId]) return;
-      const game = rooms[roomId];
-      const player = game.players.find(p => p.socketId === socket.id);
-      
-      if (!player) return;
-      const accept = data?.accept === true;
-      const claimed = claimAuctionResponse(game, player.id, data?.offerId, accept);
-      if (!claimed.ok) {
-          socket.emit("error", claimed.message);
-          return;
+  socket.on("adminHammerAuction", ({ roomId, expectedBidId, expectedAmount, expectedPlayerId }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game) {
+      socket.emit("error", "房间不存在");
+      return;
+    }
+    const result = hammerAuctionLot(game, {
+      expectedBidId: typeof expectedBidId === "string" ? expectedBidId : undefined,
+      expectedAmount: typeof expectedAmount === "number" ? expectedAmount : undefined,
+      expectedPlayerId: typeof expectedPlayerId === "string" ? expectedPlayerId : undefined,
+    });
+    if (!result.ok) {
+      socket.emit("error", result.message);
+      return;
+    }
+    appendSessionEvent(game, "auction_lot_sold", {
+      cardId: result.cardId,
+      playerId: result.playerId,
+      cost: result.cost,
+      nextFocusId: game.auctionFocusCardId ?? null,
+    });
+    broadcastUpdate(io, game);
+  });
+
+  socket.on("adminPassAuction", ({ roomId }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game) {
+      socket.emit("error", "房间不存在");
+      return;
+    }
+    const result = passAuctionLot(game);
+    if (!result.ok) {
+      socket.emit("error", result.message);
+      return;
+    }
+    appendSessionEvent(game, "auction_lot_passed", {
+      cardId: result.cardId,
+      nextFocusId: result.nextFocusId ?? null,
+    });
+    broadcastUpdate(io, game);
+  });
+
+  socket.on("adminProposeBuff", () => {
+    socket.emit("error", "已改为玩家出价、主持确认成交，请使用「确认成交」");
+  });
+
+  socket.on("playerRespondAuction", () => {
+    socket.emit("error", "已改为公开加价，无需再确认支付弹窗");
+  });
+
+  socket.on("playerPlaceAuctionBid", (payload?: { amount?: unknown }) => {
+    const roomId = getRoomId(socket);
+    if (!roomId || !rooms[roomId]) {
+      socket.emit("error", "不在房间内，无法出价（请刷新后重新进入）");
+      return;
+    }
+    const game = rooms[roomId];
+    const player = game.players.find((p) => p.socketId === socket.id);
+    if (!player) {
+      socket.emit("error", "身份未绑定，无法出价（请刷新后重新进入）");
+      return;
+    }
+    if (!allow(`auctionBid:${player.id}`, 30, 60_000)) {
+      socket.emit("error", "出价过于频繁，请稍后再试");
+      return;
+    }
+    const amount = payload?.amount;
+    const result = placeAuctionBid(game, player.id, amount);
+    if (!result.ok) {
+      socket.emit("error", result.message);
+      return;
+    }
+    appendSessionEvent(
+      game,
+      "auction_bid_placed",
+      {
+        bidId: result.bid.bidId,
+        cardId: result.bid.cardId,
+        amount: result.bid.amount,
+        availableWealthAtBid: result.bid.availableWealthAtBid,
+        bidToAvailableRatio: result.bid.bidToAvailableRatio,
+      },
+      player.id
+    );
+    if (result.outbidPlayerId) {
+      const target = game.players.find((p) => p.id === result.outbidPlayerId);
+      if (target?.socketId) {
+        io.to(target.socketId).emit("playerNotify", {
+          type: "auction",
+          message: `有人出得比你高：现在最高价 ${result.bid.amount}`,
+        });
       }
-      const { cardId, cost } = claimed;
-
-      let accepted = false;
-      let costPaid = 0;
-      let cardEnteredInventory = false;
-
-      if (accept) {
-          if (player.wealth >= cost) {
-              player.wealth -= cost;
-              player.inventory.push(cardId);
-              markAuctionCardDistributed(game, cardId);
-              recordAuctionCompletedDeal(game, cardId, player.id, cost);
-              accepted = true;
-              costPaid = cost;
-              cardEnteredInventory = true;
-              game.logs.push(`✅ ${player.name} 支付 ${cost} 财富，拍得 [${cardId}]`);
-          } else {
-              game.logs.push(`❌ ${player.name} 试图购买 [${cardId}] 但财富不足 (${player.wealth}/${cost})`);
-              socket.emit("error", "财富不足，交易失败");
-          }
-      } else {
-          game.logs.push(`🚫 ${player.name} 拒绝了拍卖交易 [${cardId}]`);
-      }
-
-      appendSessionEvent(
-        game,
-        "auction_resolved",
-        { cardId, cost, accepted, costPaid, cardEnteredInventory },
-        player.id
-      );
-      broadcastUpdate(io, game);
+    }
+    broadcastUpdate(io, game);
   });
 
   socket.on("adminRevokeAuctionCard", ({ roomId, cardId }) => {
@@ -775,6 +905,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (game && game.phase === "AUCTION") {
           const prevPhase = game.phase;
           clearAuctionOffers(game);
+          // 保留 auctionBids / auctionCompletedDeals 供导出；仅作废未落槌出价
+          voidAllOpenAuctionBids(game, "void_lot_changed");
+          game.auctionFocusCardId = undefined;
           game.phase = "ERA_INTRO";
           recordPhaseChange(game, prevPhase, game.phase, "adminEndAuction");
           io.to(game.roomId).emit("auctionOffersCleared");
@@ -845,12 +978,18 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       }
 
       if (accept) {
-          applyLotteryAccept(game, player, claimed.amount);
-          game.logs.push(`🎲 彩票开奖！${player.name} 确认领取 ${claimed.amount} 财富`);
+          const settled = applyLotteryAccept(game, player, claimed.amount);
+          game.logs.push(`🎲 彩票开奖！${player.name} 确认领取 ${settled.creditedAmount} 财富`);
           appendSessionEvent(
             game,
             "lottery_settled",
-            { targetPlayerId: player.id, amount: claimed.amount, accepted: true },
+            {
+              targetPlayerId: player.id,
+              enteredAmount: settled.enteredAmount,
+              creditedAmount: settled.creditedAmount,
+              goldApplied: settled.goldApplied,
+              accepted: true,
+            },
             player.id
           );
       } else {
@@ -971,6 +1110,17 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const player = game.players.find(p => p.socketId === socket.id);
     if (!player) return;
     if (!togglePlayerReady(game, player.id)) return;
+    appendSessionEvent(
+      game,
+      "player_ready",
+      {
+        phase: game.phase,
+        globalRound: game.globalRound,
+        currentEra: game.currentEra,
+        roundInEra: game.roundInEra,
+      },
+      player.id
+    );
     tryAdvancePhase(game);
     broadcastUpdate(io, game);
   });
@@ -994,7 +1144,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const player = game.players.find(p => p.socketId === socket.id);
     if (!player || player.ready) return;
     const sanitized = sanitizeInvestments(game, player, investment ?? {});
-    if (!applyInvestments(game, player.id, sanitized)) {
+    if (!applyInvestments(game, player.id, sanitized, "player")) {
       socket.emit("error", "投资方案无效（精力不足或超出限制）");
       return;
     }
@@ -1063,8 +1213,12 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       socket.emit("error", "转账金额无效");
       return;
     }
-    if (sender.wealth < amt) {
-      socket.emit("error", "财富不足，无法转账");
+    const available = playerAvailableWealth(game, sender);
+    if (amt > available) {
+      socket.emit(
+        "error",
+        `可用财富不足，无法转账（可用 ${available}${formatPlayerHoldSuffix(game, sender.id)}）`
+      );
       return;
     }
 
@@ -1092,32 +1246,17 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const game = rooms[roomId];
     const tx = game.transactions.find(t => t.id === txId);
     const player = game.players.find(p => p.socketId === socket.id);
-    if (tx && player && tx.toId === player.id && tx.status === "pending") {
-      if (accept) {
-        if (tx.amount === 0) {
-          tx.status = "accepted";
-        } else {
-          const sender = game.players.find(p => p.id === tx.fromId);
-          if (sender && sender.wealth >= tx.amount) {
-            sender.wealth -= tx.amount;
-            player.wealth += tx.amount;
-            tx.status = "accepted";
-          } else {
-            tx.status = "rejected";
-          }
-        }
-      } else {
-        tx.status = "rejected";
-      }
-      appendSessionEvent(
-        game,
-        "transaction_resolved",
-        { txId: tx.id, accept, status: tx.status, amount: tx.amount },
-        player.id
-      );
-      pruneSettledTransactions(game);
-      broadcastUpdate(io, game);
-    }
+    if (!tx || !player) return;
+    const resolved = resolvePendingTransfer(game, txId, player.id, accept === true);
+    if (!resolved.ok) return;
+    appendSessionEvent(
+      game,
+      "transaction_resolved",
+      { txId, accept, status: resolved.status, amount: resolved.amount },
+      player.id
+    );
+    pruneSettledTransactions(game);
+    broadcastUpdate(io, game);
   });
 
   socket.on("performCoffee", () => {
@@ -1169,24 +1308,79 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (!roomId || !rooms[roomId]) return;
     const game = rooms[roomId];
     const player = game.players.find(p => p.socketId === socket.id);
-    
-    if (player && game.phase === "BUFF_USAGE") {
-        if (player.ready) {
-          socket.emit("error", "已进入讨论队列，无法再使用道具卡");
-          return;
-        }
-        const result = useBuffCard(game, player.id, data.cardId, data);
-        if (result.success) {
-            if (!player.usedCards) player.usedCards = [];
-            player.usedCards.push(data.cardId);
-            if (data.cardId === 'buff_spirit') {
-                player.totalEnergyConsumed += 5;
-            }
-            broadcastUpdate(io, game);
-        } else {
-            socket.emit("error", result.msg);
-        }
+    if (!player) return;
+
+    const cardId = typeof data?.cardId === "string" ? data.cardId : "";
+    if (!cardId) {
+      socket.emit("error", "未指定道具卡");
+      return;
     }
+
+    // 强买强卖：仅拍卖阶段
+    if (cardId === FORCE_BUY_CARD_ID) {
+      if (game.phase !== "AUCTION") {
+        socket.emit("error", "强买强卖仅可在拍卖阶段使用");
+        return;
+      }
+      const result = useForceBuyCard(game, player.id);
+      if (result.success) {
+        for (const cancelled of result.cancelledOffers ?? []) {
+          const target = game.players.find((p) => p.id === cancelled.playerId);
+          if (target?.socketId) {
+            io.to(target.socketId).emit("auctionOfferCancelled", {
+              offerId: cancelled.offerId,
+              cardId: cancelled.cardId,
+            });
+          }
+        }
+        broadcastUpdate(io, game);
+        socket.emit("playerNotify", { type: "buff", message: result.msg });
+      } else {
+        socket.emit("error", result.msg);
+      }
+      return;
+    }
+
+    // 道具可在投资阶段使用（未锁定前）；兼容遗留 BUFF_USAGE
+    if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") {
+      socket.emit("error", "当前阶段不能使用道具卡");
+      return;
+    }
+    if (player.ready) {
+      socket.emit("error", "已锁定投资，无法再使用道具卡");
+      return;
+    }
+    const result = useBuffCard(game, player.id, cardId, data);
+    if (result.success) {
+      if (!player.usedCards) player.usedCards = [];
+      player.usedCards.push(cardId);
+      broadcastUpdate(io, game);
+      socket.emit("playerNotify", { type: "buff", message: result.msg });
+      if (result.notifyTargetId && result.notifyTargetMsg) {
+        const target = game.players.find((p) => p.id === result.notifyTargetId);
+        if (target?.socketId && target.id !== player.id) {
+          io.to(target.socketId).emit("playerNotify", {
+            type: "buff_hit",
+            message: result.notifyTargetMsg,
+          });
+        }
+      }
+    } else {
+      socket.emit("error", result.msg);
+    }
+  });
+
+  socket.on("ackSlackHit", (payload?: { hitId?: unknown }) => {
+    const roomId = getRoomId(socket);
+    if (!roomId || !rooms[roomId]) return;
+    const game = rooms[roomId];
+    const player = game.players.find((p) => p.socketId === socket.id);
+    if (!player) return;
+    if (!ackSlackHit(game, player.id, payload?.hitId)) {
+      socket.emit("error", "摸鱼提示已失效，请刷新后重试");
+      return;
+    }
+    broadcastUpdate(io, game);
   });
 
   socket.on("submitCommunityName", ({ name }) => {
@@ -1249,6 +1443,12 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (player) {
         player.connected = false;
         syncEnergyAfterRosterChange(game);
+        appendSessionEvent(
+          game,
+          "presence",
+          presencePayload(game, "disconnect", player.id),
+          player.id
+        );
         broadcastUpdate(io, game);
       }
       return;
@@ -1258,6 +1458,12 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (player) {
         player.connected = false;
         syncEnergyAfterRosterChange(game);
+        appendSessionEvent(
+          game,
+          "presence",
+          presencePayload(game, "disconnect", player.id),
+          player.id
+        );
         broadcastUpdate(io, game);
       }
     }

@@ -3,7 +3,7 @@ import { uiRem } from "../../utils/typography";
 
 const ITEMS = [
   { id: "energy", label: "每轮精力会重置，鼓励花完" },
-  { id: "long", label: "长期项目断供（<3）会放弃前期投入" },
+  { id: "long", label: "长期参投后断供（<3）会 1:1 退回累计投入并退出完成排名" },
   { id: "risk", label: "风险项目超上限会倒扣历史收益" },
   { id: "tie", label: "投入相同则并列，共享奖励/惩罚/时代加成" },
   { id: "era", label: "时代加成：短期恰好满额/长期满或超，契合主题第 1 名；短期爆与风险无" },

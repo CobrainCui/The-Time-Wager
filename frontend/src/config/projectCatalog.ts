@@ -44,13 +44,13 @@ const short: ProjectCatalogEntry[] = [
 ];
 
 const long: ProjectCatalogEntry[] = [
-  { id: 101, name: "植树造林", type: "long", era: "气候", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
-  { id: 102, name: "城市海绵体改造", type: "long", era: "气候", maxEnergy: 80, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "15/⚡" },
-  { id: 103, name: "数字图书馆", type: "long", era: "科技", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
-  { id: 104, name: "遗产保护基金", type: "long", era: "文化", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
-  { id: 105, name: "文化桥梁使者", type: "long", era: "文化", maxEnergy: 80, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "15/⚡" },
-  { id: 106, name: "建立体育俱乐部", type: "long", era: "健康", maxEnergy: 70, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
-  { id: 107, name: "心理学教育普及", type: "long", era: "心理", maxEnergy: 90, rankRewards: [75, 55, 45, 35, 25, 15], baseReturnHint: "15/⚡" },
+  { id: 101, name: "植树造林", type: "long", era: "气候", maxEnergy: 90, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
+  { id: 102, name: "城市海绵体改造", type: "long", era: "气候", maxEnergy: 100, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "15/⚡" },
+  { id: 103, name: "数字图书馆", type: "long", era: "科技", maxEnergy: 90, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
+  { id: 104, name: "遗产保护基金", type: "long", era: "文化", maxEnergy: 90, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
+  { id: 105, name: "文化桥梁使者", type: "long", era: "文化", maxEnergy: 100, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "15/⚡" },
+  { id: 106, name: "建立体育俱乐部", type: "long", era: "健康", maxEnergy: 90, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
+  { id: 107, name: "心理学教育普及", type: "long", era: "心理", maxEnergy: 110, rankRewards: [75, 55, 45, 35, 25, 15], baseReturnHint: "15/⚡" },
 ];
 
 const risk: ProjectCatalogEntry[] = [

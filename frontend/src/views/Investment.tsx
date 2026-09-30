@@ -5,18 +5,18 @@ import { socket } from "../socket";
 import { ProjectCard } from "../components/ProjectCard";
 import { EraThemeBanner } from "../components/EraThemeBanner";
 import { useActionCountdown } from "../hooks/useActionCountdown";
+import { useFixedDockClearance } from "../hooks/useFixedDockClearance";
 import { useServerClockSkewRef } from "../hooks/useServerClockSkewRef";
 import { getRemainingMs } from "../utils/actionCountdown";
-import { LONG_CONTINUE_MIN_ENERGY, needsLongContinueWarn } from "../config/longTermRules";
+import { LONG_CONTINUE_MIN_ENERGY, needsLongContinueWarn, sanitizeLongContribution } from "../config/longTermRules";
 import {
   resolveRankPlayerCountFromGame,
   resolveRankRewardTierCountFromGame,
 } from "../config/projectCatalog";
 import { CoffeeRoundIndicators } from "../components/CoffeeRoundIndicators";
 import { CoffeeUnsubscribeModal } from "../components/CoffeeUnsubscribeModal";
-
-const COFFEE_WEALTH_COST = 15;
-const COFFEE_ENERGY_GAIN = 1;
+import { BuffRoundChips } from "../components/BuffRoundChips";
+import { COFFEE_ENERGY_GAIN, COFFEE_WEALTH_COST } from "../config/coffeeConfig";
 import { ProjectDetailModal } from "../components/ProjectDetailModal";
 import type { ActiveProject } from "../types";
 
@@ -43,12 +43,11 @@ interface Props {
   me: Player;
   mode: "discussion" | "investment";
   projectImages?: Record<number, number>;
-  onBackToBuff?: () => void;
-  /** 道具阶段预览内「进入讨论和投资」（与 BuffUsage 同源，不含人数计数） */
-  onEnterDiscussion?: () => void;
-  /** 跨预览/正式阶段保留的预填（由 GameRoom 持有） */
+  /** 跨阶段保留的预填（由 GameRoom 持有） */
   draft: Record<number, number>;
   onDraftChange: React.Dispatch<React.SetStateAction<Record<number, number>>>;
+  /** 分段顶栏已展示倒计时时隐藏本页内倒计时 */
+  hideCountdown?: boolean;
 }
 
 // ——— 顶部状态栏 ———
@@ -57,34 +56,42 @@ const StatusBar: React.FC<{
   remainingEnergy: number;
   showCountdown: boolean;
   investmentEndsAt?: number;
+  investmentTimerPausedAt?: number;
   serverNow?: number;
   onCoffee: () => void;
   coffeeLoading: boolean;
   coffeeLocked?: boolean;
   coffeePurchases: number;
   onOpenUnsubscribe: () => void;
+  actionsDisabled?: boolean;
+  buffActionsEnabled?: boolean;
 }> = ({
   me,
   remainingEnergy,
   showCountdown,
   investmentEndsAt,
+  investmentTimerPausedAt,
   serverNow,
   onCoffee,
   coffeeLoading,
   coffeeLocked,
   coffeePurchases,
   onOpenUnsubscribe,
+  actionsDisabled,
+  buffActionsEnabled,
 }) => {
+  const timerPaused = typeof investmentTimerPausedAt === "number";
   const timeLeft = useActionCountdown(
     showCountdown && !!investmentEndsAt,
     investmentEndsAt,
-    serverNow
+    serverNow,
+    investmentTimerPausedAt
   );
 
   const mins = Math.floor(timeLeft / 60);
   const secs = (timeLeft % 60).toString().padStart(2, "0");
-  const isUrgent = timeLeft < 60 && timeLeft > 0;
-  const isDanger = timeLeft < 20 && timeLeft > 0;
+  const isUrgent = !timerPaused && timeLeft < 60 && timeLeft > 0;
+  const isDanger = !timerPaused && timeLeft < 20 && timeLeft > 0;
 
   return (
     <div className="status-bar">
@@ -106,7 +113,7 @@ const StatusBar: React.FC<{
                 color: remainingEnergy < 0 ? "#ef4444" : "#34d399",
               }}
             >
-              {remainingEnergy}
+              {Math.max(0, remainingEnergy)}
             </span>
             <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}>/ {me.energy}</span>
           </div>
@@ -116,29 +123,60 @@ const StatusBar: React.FC<{
               {me.wealth}
             </span>
           </div>
+          <BuffRoundChips
+            me={me}
+            actionsDisabled={!!actionsDisabled || !!coffeeLocked}
+            canAct={!!buffActionsEnabled}
+            compact
+          />
         </div>
 
         {/* 右侧：倒计时 + 咖啡 */}
         <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
           {showCountdown && investmentEndsAt && (
             <div
+              className="action-countdown-chip"
               style={{
                 fontFamily: "var(--font-mono)",
                 fontWeight: 700,
                 fontSize: "1.4rem",
-                color: isDanger ? "#ef4444" : isUrgent ? "#f97316" : "#60a5fa",
-                animation: isDanger ? "pulse 0.5s infinite" : isUrgent ? "pulse 1s infinite" : undefined,
-                background: isDanger
-                  ? "rgba(239,68,68,0.1)"
-                  : isUrgent
-                  ? "rgba(249,115,22,0.1)"
-                  : "rgba(59,130,246,0.1)",
+                lineHeight: 1.2,
+                color: timerPaused
+                  ? "#fbbf24"
+                  : isDanger
+                    ? "#ef4444"
+                    : isUrgent
+                      ? "#f97316"
+                      : "#60a5fa",
+                animation:
+                  !timerPaused && (isDanger || isUrgent)
+                    ? `countdown-urgent ${isDanger ? "0.5s" : "1s"} ease-in-out infinite`
+                    : undefined,
+                background: timerPaused
+                  ? "#2a2210"
+                  : isDanger
+                    ? "#321414"
+                    : isUrgent
+                      ? "#2e1c10"
+                      : "#121a2c",
                 padding: "0.375rem 0.875rem",
                 borderRadius: "0.5rem",
-                border: `1px solid ${isDanger ? "rgba(239,68,68,0.3)" : isUrgent ? "rgba(249,115,22,0.3)" : "rgba(59,130,246,0.2)"}`,
+                border: `1px solid ${
+                  timerPaused
+                    ? "rgba(251,191,36,0.45)"
+                    : isDanger
+                      ? "rgba(239,68,68,0.55)"
+                      : isUrgent
+                        ? "rgba(249,115,22,0.5)"
+                        : "rgba(59,130,246,0.4)"
+                }`,
+                isolation: "isolate",
               }}
             >
               ⏱ {mins}:{secs}
+              {timerPaused ? (
+                <span style={{ fontSize: "0.75rem", fontWeight: 600, marginLeft: "0.4rem" }}>已暂停</span>
+              ) : null}
             </div>
           )}
           <button
@@ -150,9 +188,12 @@ const StatusBar: React.FC<{
               border: "1px solid rgba(180,83,9,0.4)",
               color: me.wealth >= COFFEE_WEALTH_COST ? "#fcd34d" : "var(--color-text-muted)",
             }}
-            title="消耗15财富换1精力"
+            title={`消耗${COFFEE_WEALTH_COST}财富换${COFFEE_ENERGY_GAIN}精力`}
           >
-            ☕ {coffeeLoading ? "..." : "来杯咖啡（-15💰+1⚡）"}
+            ☕{" "}
+            {coffeeLoading
+              ? "..."
+              : `来杯咖啡（-${COFFEE_WEALTH_COST}💰+${COFFEE_ENERGY_GAIN}⚡）`}
           </button>
         </div>
       </div>
@@ -164,12 +205,11 @@ const StatusBar: React.FC<{
 export const Investment: React.FC<Props> = ({
   game,
   me,
-  mode,
+  mode: _mode,
   projectImages = {},
-  onBackToBuff,
-  onEnterDiscussion,
   draft: investments,
   onDraftChange: setInvestments,
+  hideCountdown = false,
 }) => {
   const [coffeeLoading, setCoffeeLoading] = useState(false);
   /** 服务端未下发 coffeePurchasesThisRound 时，用资源变化推断杯数 */
@@ -203,12 +243,20 @@ export const Investment: React.FC<Props> = ({
   const clockSkewRef = useServerClockSkewRef(game.serverNow);
 
   const currentAllocated = Object.values(investments).reduce((a, b) => a + b, 0);
-  const remainingEnergy = me.energy - currentAllocated;
-  const isWaitingPhase = game.phase === "BUFF_USAGE";
-  const isSubmitted = me.ready && !isWaitingPhase;
+  const isSubmitted = me.ready && game.phase === "INVESTMENT";
+  // 本轮已入账后 energy 已扣；本地预填仍保留分配额，不可再减一次
+  const investmentApplied =
+    me.ready ||
+    (game.readyPlayers ?? []).includes(me.id) ||
+    Object.values(me.investment ?? {}).reduce((a, b) => a + (Number(b) || 0), 0) > 0;
+  const remainingEnergy = investmentApplied
+    ? me.energy
+    : me.energy - currentAllocated;
   isSubmittedRef.current = isSubmitted;
-  /** 道具阶段仅预览预填，尚未点「进入讨论和投资」 */
-  const isPreviewOnly = isWaitingPhase && mode === "discussion";
+  const { contentRef: investmentMainRef, dockRef: submitDockRef } = useFixedDockClearance(
+    true,
+    `${isSubmitted}-${me.ready}`
+  );
 
   const flushDraftToServer = () => {
     if (draftSyncTimerRef.current) {
@@ -263,17 +311,6 @@ export const Investment: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.phase]);
 
-  const handleBackToBuff = () => {
-    flushDraftToServer();
-    onBackToBuff?.();
-  };
-
-  const handleEnterDiscussion = () => {
-    flushDraftToServer();
-    if (onEnterDiscussion) onEnterDiscussion();
-    else socket.emit("playerReady");
-  };
-
   const handleInputChange = (projectId: number, val: number) => {
     if (val < 0) return;
     setInvestments((prev) => ({ ...prev, [projectId]: val }));
@@ -285,7 +322,16 @@ export const Investment: React.FC<Props> = ({
   };
 
   const handleSubmit = (auto = false) => {
-    const payload = investmentsRef.current;
+    const raw = investmentsRef.current;
+    // 与服务端 sanitizeInvestments / sanitizeLongContribution 对齐后再提交
+    const payload: Record<number, number> = {};
+    for (const proj of game.activeProjects) {
+      let val = Math.max(0, Math.floor(Number(raw[proj.id] ?? 0)));
+      if (proj.type === "long") {
+        val = sanitizeLongContribution(me.longTerm[proj.id]?.status, val);
+      }
+      if (val > 0) payload[proj.id] = val;
+    }
 
     if (auto) {
       commitInvestment(payload);
@@ -300,22 +346,21 @@ export const Investment: React.FC<Props> = ({
     const abandonWarnings: string[] = [];
     for (const proj of game.activeProjects) {
       if (!needsLongContinueWarn(proj, me)) continue;
+      const rawVal = Math.max(0, Math.floor(Number(raw[proj.id] ?? 0)));
       const val = payload[proj.id] || 0;
-      if (val > 0 && val < LONG_CONTINUE_MIN_ENERGY) {
-        alert(
-          `长期项目「${proj.name}」追加投资须至少 ${LONG_CONTINUE_MIN_ENERGY} 精力，或设为 0 以放弃参投。`
-        );
-        return;
-      }
       if (val < LONG_CONTINUE_MIN_ENERGY) {
-        abandonWarnings.push(`「${proj.name}」`);
+        const note =
+          rawVal > 0 && rawVal < LONG_CONTINUE_MIN_ENERGY
+            ? `「${proj.name}」(本轮 ${rawVal} 将按规则视为 0)`
+            : `「${proj.name}」`;
+        abandonWarnings.push(note);
       }
     }
 
     if (abandonWarnings.length > 0) {
       if (
         !window.confirm(
-          `确认提交？注意：你对 ${abandonWarnings.join(", ")} 本轮投入不足 ${LONG_CONTINUE_MIN_ENERGY}，将视为放弃并退回累计投入，且不能再参投分红！`
+          `确认提交？注意：你对 ${abandonWarnings.join(", ")} 本轮投入不足 ${LONG_CONTINUE_MIN_ENERGY}，将视为放弃：累计投入按 1:1 退回为财富，并退出该项目完成时的排名与时代加成。`
         )
       ) {
         return;
@@ -337,8 +382,10 @@ export const Investment: React.FC<Props> = ({
     const end = game.investmentEndsAt;
     if (!end || isSubmitted) return;
     if (game.phase !== "INVESTMENT") return;
+    if (typeof game.investmentTimerPausedAt === "number") return;
 
     const tick = () => {
+      if (typeof game.investmentTimerPausedAt === "number") return;
       const msLeft = getRemainingMs(end, clockSkewRef.current);
       if (msLeft <= 1500 && msLeft > 0) {
         socket.emit("syncInvestmentDraft", { investment: investmentsRef.current });
@@ -346,13 +393,20 @@ export const Investment: React.FC<Props> = ({
       if (msLeft > 0) return;
       if (autoSubmittedRef.current) return;
       autoSubmittedRef.current = true;
-      commitInvestment(investmentsRef.current);
+      handleSubmit(true);
     };
 
     const id = setInterval(tick, 250);
     tick();
     return () => clearInterval(id);
-  }, [game.investmentEndsAt, game.phase, game.serverNow, isSubmitted, clockSkewRef]);
+  }, [
+    game.investmentEndsAt,
+    game.investmentTimerPausedAt,
+    game.phase,
+    game.serverNow,
+    isSubmitted,
+    clockSkewRef,
+  ]);
 
   useEffect(() => {
     const cups = me.coffeePurchasesThisRound ?? 0;
@@ -461,7 +515,8 @@ export const Investment: React.FC<Props> = ({
   const investSecondsLeft = useActionCountdown(
     game.phase === "INVESTMENT" && !!game.investmentEndsAt && !isSubmitted,
     game.investmentEndsAt,
-    game.serverNow
+    game.serverNow,
+    game.investmentTimerPausedAt
   );
 
   const longAbandonRiskNames = useMemo(() => {
@@ -495,10 +550,12 @@ export const Investment: React.FC<Props> = ({
   }, [detailProjectId, game.activeProjects]);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#070b14" }}>
+    <div className="investment-view" style={{ minHeight: "100dvh", background: "#070b14" }}>
       <CoffeeUnsubscribeModal
         open={unsubscribeOpen}
         maxPurchased={coffeePurchases}
+        wealth={me.wealth}
+        energy={me.energy}
         onClose={() => setUnsubscribeOpen(false)}
         onRefunded={(count) =>
           setInferredCoffeeCups((n) => Math.max(0, n - count))
@@ -516,13 +573,16 @@ export const Investment: React.FC<Props> = ({
       <StatusBar
         me={me}
         remainingEnergy={remainingEnergy}
-        showCountdown={game.phase === "INVESTMENT" && !!game.investmentEndsAt}
+        showCountdown={!hideCountdown && game.phase === "INVESTMENT" && !!game.investmentEndsAt}
         investmentEndsAt={game.investmentEndsAt}
+        investmentTimerPausedAt={game.investmentTimerPausedAt}
         serverNow={game.serverNow}
         onCoffee={handleCoffee}
         coffeeLoading={coffeeLoading}
         coffeeLocked={isSubmitted}
         coffeePurchases={coffeePurchases}
+        actionsDisabled={isSubmitted || me.ready}
+        buffActionsEnabled={(game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") && !me.ready}
         onOpenUnsubscribe={() => {
           if (isSubmitted || coffeePurchases <= 0) return;
           setUnsubscribeOpen(true);
@@ -530,106 +590,16 @@ export const Investment: React.FC<Props> = ({
       />
 
       <div
+        ref={investmentMainRef}
+        className="investment-page-main"
         style={{
           maxWidth: "1100px",
           margin: "0 auto",
-          padding: isPreviewOnly ? "1.5rem 1rem 2rem" : "1.5rem 1rem 8rem",
+          paddingTop: "1.5rem",
+          paddingLeft: "1rem",
+          paddingRight: "1rem",
         }}
       >
-        {/* 等待提示 */}
-        {isWaitingPhase && (
-          <div
-            className={me.ready ? "buff-phase-waiting-inline" : undefined}
-            style={{
-              background: "rgba(168,85,247,0.08)",
-              border: "1px solid rgba(168,85,247,0.25)",
-              borderRadius: "0.875rem",
-              padding: "0.875rem 1.25rem",
-              textAlign: "center",
-              color: "#c084fc",
-              fontSize: uiRem(0.9),
-              fontWeight: 600,
-              marginBottom: "1.5rem",
-              ...(me.ready ? {} : { animation: "pulse 2s infinite" }),
-            }}
-          >
-            {me.ready
-              ? "已进入讨论队列，等待其他玩家进入讨论和投资；可继续调整预填"
-              : "可预览并预填投资；全员点击「进入讨论和投资」后开始 10 分钟倒计时"}
-            {onBackToBuff && (
-              <div
-                style={{
-                  marginTop: "0.75rem",
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "0.75rem",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={handleBackToBuff}
-                  style={{
-                    background: "rgba(255,255,255,0.04)",
-                    border: "1px solid rgba(255,255,255,0.18)",
-                    borderRadius: "9999px",
-                    color: "var(--color-text-secondary)",
-                    cursor: "pointer",
-                    fontSize: uiRem(1.05),
-                    fontWeight: 600,
-                    padding: "0.75rem 2rem",
-                    letterSpacing: "0.03em",
-                    transition: "all 0.2s ease",
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.35)";
-                    (e.currentTarget as HTMLButtonElement).style.color = "white";
-                    (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.08)";
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.18)";
-                    (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-secondary)";
-                    (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
-                  }}
-                >
-                  ← 返回道具使用
-                </button>
-                {!me.ready && (
-                  <button
-                    type="button"
-                    onClick={handleEnterDiscussion}
-                    style={{
-                      background: "rgba(212,175,55,0.07)",
-                      border: "1px solid rgba(212,175,55,0.35)",
-                      borderRadius: "9999px",
-                      color: "var(--color-text-secondary)",
-                      cursor: "pointer",
-                      fontSize: uiRem(1.05),
-                      fontWeight: 600,
-                      padding: "0.75rem 2rem",
-                      letterSpacing: "0.03em",
-                      transition: "all 0.2s ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(212,175,55,0.7)";
-                      (e.currentTarget as HTMLButtonElement).style.color = "#d4af37";
-                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(212,175,55,0.14)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(212,175,55,0.35)";
-                      (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-secondary)";
-                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(212,175,55,0.07)";
-                    }}
-                  >
-                    进入讨论和投资 →
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
         {reopenEditHint && game.phase === "INVESTMENT" && !isSubmitted && (
           <div
             role="status"
@@ -666,7 +636,7 @@ export const Investment: React.FC<Props> = ({
             }}
           >
             倒计时结束将自动提交当前方案：{longAbandonRiskNames.join("、")} 未满 {LONG_CONTINUE_MIN_ENERGY}{" "}
-            精力，将视为放弃并退回累计投入。
+            精力，将视为放弃（1:1 退回累计投入，退出完成排名）。
           </div>
         )}
 
@@ -679,7 +649,7 @@ export const Investment: React.FC<Props> = ({
         {/* 标题 */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
           <h2 style={{ fontSize: "1.4rem", fontWeight: 800, color: "white" }}>
-            {mode === "discussion" || isWaitingPhase ? "📊 投资预览" : "📊 投资决策"}
+            📊 投资决策
           </h2>
           {remainingEnergy !== 0 && (
             <div
@@ -696,14 +666,7 @@ export const Investment: React.FC<Props> = ({
         </div>
 
         {/* 项目网格 */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-            gap: "1.25rem",
-            marginBottom: "2rem",
-          }}
-        >
+        <div className="player-responsive-grid investment-project-grid" style={{ marginBottom: "2rem" }}>
           {game.activeProjects.map((proj) => (
             <ProjectCard
               key={proj.id}
@@ -734,10 +697,12 @@ export const Investment: React.FC<Props> = ({
             </div>
           )}
         </div>
+      </div>
 
-        {/* 提交区域（预览预填时不显示底栏） */}
-        {!isPreviewOnly && (
+        {/* 提交区域；置于主内容外，避免挤占滚动高度计算 */}
         <div
+          ref={submitDockRef}
+          className="investment-submit-dock"
           style={{
             position: "fixed",
             bottom: 0,
@@ -746,7 +711,6 @@ export const Investment: React.FC<Props> = ({
             background: "rgba(7,11,20,0.95)",
             borderTop: "1px solid var(--color-border)",
             backdropFilter: "blur(20px)",
-            padding: "1rem",
             display: "flex",
             justifyContent: "center",
             zIndex: 50,
@@ -778,14 +742,10 @@ export const Investment: React.FC<Props> = ({
                 已提交，等待其他玩家...
               </span>
             </div>
-          ) : isWaitingPhase && me.ready ? (
-            <div className="buff-phase-waiting buff-phase-waiting--in-bar">
-              等待其他玩家进入讨论和投资
-            </div>
           ) : (
             <button
               onClick={() => handleSubmit(false)}
-              disabled={isWaitingPhase || remainingEnergy < 0}
+              disabled={remainingEnergy < 0}
               className="btn btn-success btn-lg"
               style={{
                 padding: "1rem 4rem",
@@ -794,16 +754,10 @@ export const Investment: React.FC<Props> = ({
                 minWidth: "280px",
               }}
             >
-              {isWaitingPhase
-                ? "⏳ 计时未开始，请先进入讨论和投资"
-                : remainingEnergy < 0
-                ? "⚠️ 精力超限"
-                : "🔒 锁定并提交投资"}
+              {remainingEnergy < 0 ? "⚠️ 精力超限" : "🔒 锁定并提交投资"}
             </button>
           )}
         </div>
-        )}
-      </div>
     </div>
   );
 };

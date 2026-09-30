@@ -57,7 +57,7 @@ npm run dev
 
 - `location /socket.io/` → Node
 - `location /api/` → Node
-- `location ^~ /uploads/`、`location ^~ /uploads_eras/`、`location ^~ /uploads_buffs/` → Node（上传图片静态资源；建议使用 `^~` 避免被站点内「按后缀匹配 jpg」的规则拦截）
+- `location ^~ /uploads/`、`location ^~ /uploads_eras/`、`location ^~ /uploads_buffs/`、`location ^~ /uploads_personas/` → Node（上传图片静态资源；建议使用 `^~` 避免被站点内「按后缀匹配 jpg」的规则拦截）
 
 开发环境下 Vite 还会代理上述三个 `/uploads*` 路径到 `localhost:3001`。
 
@@ -83,7 +83,7 @@ pm2 logs guangyin --lines 30   # 登录时应出现 [admin] authenticate request
 
 `.env` 格式：`ADMIN_TOKEN=密钥`（等号两侧勿加空格）。错误密钥应立刻提示「密钥无效」，不应等到超时。
 
-**投资阶段「来杯咖啡」买了咖啡但左侧不出现 ☕ 退订图标**（财富已 -15、精力已 +1）：多为 **服务端 `dist` 未含 `coffeePurchasesThisRound` 广播字段**。浏览器 DevTools → Network → WebSocket → 最新 `gameUpdate`，在己方 `players[]` 中查看 `coffeePurchasesThisRound` 是否 ≥1。服务器上：
+**投资阶段「来杯咖啡」买了咖啡但左侧不出现 ☕ 退订图标**（财富已 -16、精力已 +1）：多为 **服务端 `dist` 未含 `coffeePurchasesThisRound` 广播字段**。浏览器 DevTools → Network → WebSocket → 最新 `gameUpdate`，在己方 `players[]` 中查看 `coffeePurchasesThisRound` 是否 ≥1。服务器上：
 
 ```bash
 grep coffeePurchasesThisRound /www/wwwroot/guangyinduidu.com/server/dist/network/broadcast.js
@@ -92,6 +92,22 @@ cd /www/wwwroot/guangyinduidu.com/server && npm run build && pm2 restart guangyi
 ```
 
 合并含咖啡功能的提交到 `main` 并跑通 GitHub Deploy 后，硬刷新玩家页再测。
+
+**投资倒计时「暂停 / 继续 / 重置」在 Admin 不显示或点了无效**：多为 **管理前端或 server dist 未同步更新**。投资阶段顶栏应始终显示 `⏱ M:SS`，旁有「暂停/继续」「重置」。服务器自检：
+
+```bash
+# 后端事件与广播字段
+grep adminInvestmentTimer /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
+grep investmentTimerPausedAt /www/wwwroot/guangyinduidu.com/server/dist/network/broadcast.js
+
+# 管理前端 bundle（子域）
+grep -l adminInvestmentTimer /www/wwwroot/admin.guangyinduidu.com/assets/admin-*.js
+
+# pm2 必须跑 dist（script 应为 .../server/dist/index.js）
+pm2 describe guangyin | grep -E "script path|exec cwd"
+```
+
+若 grep 无输出：将含本功能的提交合并到 `main` 触发 Deploy，或本机 `frontend`/`server` 分别 `npm run build` 后按 CI 同路径覆盖并 `pm2 restart guangyin`。部署后对 `admin.guangyinduidu.com` **硬刷新**（Ctrl+F5）。WebSocket `gameUpdate` 在暂停时应带 `investmentTimerPausedAt` 数字。
 
 ## 📚 相关文档
 
@@ -102,3 +118,4 @@ cd /www/wwwroot/guangyinduidu.com/server && npm run build && pm2 restart guangyi
 ## ⚖️ License
 
 MIT License
+

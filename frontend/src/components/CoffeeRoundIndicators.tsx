@@ -11,31 +11,31 @@ export const CoffeeRoundIndicators: React.FC<Props> = ({ count, disabled, onOpen
   if (count <= 0) return null;
 
   return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <button
-          key={i}
-          type="button"
-          className="coffee-round-indicator"
-          title="咖啡退订"
-          aria-label="咖啡退订"
-          disabled={disabled}
-          onClick={onOpenUnsubscribe}
-          style={{
-            minHeight: "2.75rem",
-            minWidth: "2.75rem",
-            padding: "0.15rem 0.35rem",
-            border: "none",
-            background: "transparent",
-            cursor: disabled ? "default" : "pointer",
-            fontSize: uiRem(1.15),
-            lineHeight: 1,
-            opacity: disabled ? 0.45 : 1,
-          }}
-        >
-          ☕
-        </button>
-      ))}
-    </>
+    <button
+      type="button"
+      className="coffee-round-indicator"
+      title="咖啡退订"
+      aria-label={`咖啡退订，已购 ${count} 杯`}
+      disabled={disabled}
+      onClick={onOpenUnsubscribe}
+      style={{
+        minHeight: "2.75rem",
+        padding: "0.25rem 0.55rem",
+        border: "1px solid rgba(180,83,9,0.45)",
+        borderRadius: "0.5rem",
+        background: "rgba(180,83,9,0.12)",
+        cursor: disabled ? "default" : "pointer",
+        fontSize: uiRem(0.9),
+        fontWeight: 700,
+        lineHeight: 1.2,
+        color: "#fcd34d",
+        fontFamily: "var(--font-mono)",
+        letterSpacing: "0.02em",
+        opacity: disabled ? 0.45 : 1,
+        whiteSpace: "nowrap",
+      }}
+    >
+      ☕×{count}
+    </button>
   );
 };

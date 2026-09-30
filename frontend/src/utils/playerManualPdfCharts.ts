@@ -38,16 +38,16 @@ function parseHexRgb(hex: string): { r: number; g: number; b: number } | null {
 }
 
 /**
- * 未完成 / 已完成 / 投爆：取自多个人格立绘的蓝绿红（非当前人格单色）
- * 蓝=罗盘精算师主题色 · 绿=时荫植者主题色 · 红=随机诗人立绘赭红（UI 主题为灰，不可复用）
+ * 未完成 / 恰好完成 / 投爆：取自 Navigator / Planter / Poet 立绘主题，PDF 矿物调和
  */
-const POET_ART_BURST_RED = "#dc2626";
-
 export const PDF_PROJECT_BAR_COLORS = [
-  FATE_SKETCH_PERSONA_COLORS["罗盘精算师"] ?? "#3b82f6",
-  FATE_SKETCH_PERSONA_COLORS["时荫植者"] ?? "#10b981",
-  POET_ART_BURST_RED,
+  "#4f7a9e",
+  "#38735b",
+  "#b85a42",
 ] as const;
+
+/** 与 buildPdfProjectParticipationChart 三列顺序一致 */
+export const PDF_PROJECT_BAR_AXIS_LABELS = ["未完成", "恰好完成", "投爆"] as const;
 
 export function buildPdfProjectBarChartColors(): [string, string, string] {
   return [
@@ -175,7 +175,7 @@ export function buildPdfLineChartData(player: Player) {
 export function buildPdfProjectBarChartData(chart: PdfProjectParticipationChart) {
   const barColors = buildPdfProjectBarChartColors();
   return {
-    labels: ["未完成", "已完成", "投爆"],
+    labels: [...PDF_PROJECT_BAR_AXIS_LABELS],
     datasets: [
       {
         label: "参与项目",
@@ -188,6 +188,7 @@ export function buildPdfProjectBarChartData(chart: PdfProjectParticipationChart)
         hoverBackgroundColor: barColors,
         borderColor: barColors,
         borderWidth: 0,
+        borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
         barPercentage: 0.55,
         categoryPercentage: 0.72,
       },

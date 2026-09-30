@@ -113,7 +113,7 @@ function longProject(
     name: "长期",
     type: "long",
     era: "气候",
-    maxEnergy: 70,
+    maxEnergy: 90,
     accumulatedInvested: invest,
     currentInvested: 0,
     roundsNoInvestment: 0,
