@@ -70,6 +70,47 @@ describe("coffee purchase and refund", () => {
     assert.equal(player.energy, 16 - COFFEE_ENERGY_GAIN);
     assert.equal(player.coffeePurchasesThisRound, 0);
   });
+
+  it("purchaseCoffee rejects when wealth is below cost and does not go negative", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "INVESTMENT";
+    const player = makePlayer("p1", { wealth: COFFEE_WEALTH_COST - 1 });
+    game.players = [player];
+
+    const result = purchaseCoffee(game, player);
+    assert.equal(result.ok, false);
+    assert.equal(player.wealth, COFFEE_WEALTH_COST - 1);
+    assert.equal(player.coffeePurchasesThisRound, 0);
+  });
+
+  it("purchaseCoffee rejects when wealth is already negative", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "INVESTMENT";
+    const player = makePlayer("p1", { wealth: -70 });
+    game.players = [player];
+
+    const result = purchaseCoffee(game, player);
+    assert.equal(result.ok, false);
+    assert.equal(player.wealth, -70);
+  });
+
+  it("refundCoffee floors energy at 0", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "BUFF_USAGE";
+    const player = makePlayer("p1", {
+      wealth: 85,
+      energy: 0,
+      coffeePurchasesThisRound: 1,
+      investmentDraft: {},
+    });
+    game.players = [player];
+    game.activeProjects = [];
+
+    // draftSum=0, energyAfter=-1 < 0 → 应拒绝；若绕过则封底仍为 0
+    const result = refundCoffee(game, player, 1);
+    assert.equal(result.ok, false);
+    assert.equal(player.energy, 0);
+  });
 });
 
 describe("coffee in gameUpdate payload", () => {

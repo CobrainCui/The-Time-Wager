@@ -434,6 +434,11 @@ app.use((err: unknown, _req: express.Request, res: express.Response, next: expre
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: corsOrigins },
+  pingTimeout: 60_000,
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 120_000,
+    skipMiddlewares: true,
+  },
 });
 
 setGameIo(io);

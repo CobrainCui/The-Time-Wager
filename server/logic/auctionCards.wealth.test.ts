@@ -48,16 +48,16 @@ describe("公开加价与确认成交", () => {
     game.auctionFocusCardId = focusId;
   }
 
-  it("开场不默认正在拍，至少要出到 1（选定后）", () => {
+  it("开场不默认正在拍，至少要出到 5（选定后）", () => {
     const game = createInitialGame("room", []);
     game.phase = "AUCTION";
     game.currentEra = 2;
     game.players = [player("p1")];
     beginAuctionSession(game);
     assert.equal(game.auctionFocusCardId, undefined);
-    assert.equal(getMinimumNextBid(game), 1);
+    assert.equal(getMinimumNextBid(game), 5);
     game.auctionFocusCardId = "buff_insurance";
-    assert.equal(getMinimumNextBid(game), 1);
+    assert.equal(getMinimumNextBid(game), 5);
   });
 
   it("加价链更新领先与已被超过", () => {
@@ -71,13 +71,13 @@ describe("公开加价与确认成交", () => {
     assert.equal(a.ok, true);
     const b = placeAuctionBid(game, "p2", 5);
     assert.equal(b.ok, false);
-    if (!b.ok) assert.match(b.message, /至少要出到 6/);
+    if (!b.ok) assert.match(b.message, /至少要出到 10/);
 
-    const c = placeAuctionBid(game, "p2", 6);
+    const c = placeAuctionBid(game, "p2", 10);
     assert.equal(c.ok, true);
     assert.equal(game.auctionBids?.[0]?.status, "outbid");
     assert.equal(game.auctionBids?.[1]?.status, "leading");
-    assert.equal(getMinimumNextBid(game), 7);
+    assert.equal(getMinimumNextBid(game), 15);
   });
 
   it("自己继续加价时会被拒绝（你已暂时领先）", () => {
@@ -106,7 +106,9 @@ describe("公开加价与确认成交", () => {
     passAuctionLot(game);
     assert.equal(game.auctionFocusCardId, "buff_slack");
     passAuctionLot(game);
-    // 三张都跳过但仍可拍 → 绕回第一张
+    assert.equal(game.auctionFocusCardId, "buff_work_rest");
+    passAuctionLot(game);
+    // 四张都跳过但仍可拍 → 绕回第一张
     assert.equal(game.auctionFocusCardId, "buff_insurance");
   });
 
@@ -116,14 +118,14 @@ describe("公开加价与确认成交", () => {
     game.currentEra = 2;
     game.players = [player("p1", { wealth: 40 })];
     beginAuctionSession(game);
-    game.auctionDistributedCardIds = ["buff_gold", "buff_slack"];
+    game.auctionDistributedCardIds = ["buff_gold", "buff_slack", "buff_work_rest"];
     game.auctionFocusCardId = "buff_insurance";
-    assert.equal(placeAuctionBid(game, "p1", 4).ok, true);
+    assert.equal(placeAuctionBid(game, "p1", 5).ok, true);
     const passed = passAuctionLot(game);
     assert.equal(passed.ok, true);
     if (passed.ok) assert.equal(passed.nextFocusId, "buff_insurance");
     assert.equal(game.auctionFocusCardId, "buff_insurance");
-    assert.equal(getMinimumNextBid(game), 1);
+    assert.equal(getMinimumNextBid(game), 5);
     assert.equal(game.auctionBids?.some((b) => b.status === "leading"), false);
   });
 
@@ -333,7 +335,7 @@ describe("公开加价与确认成交", () => {
       auctionSoldLots?: { playerName: string; cost: number }[];
     };
     assert.equal(mine.auctionCurrentBid, 8);
-    assert.equal(mine.auctionMinimumNextBid, 9);
+    assert.equal(mine.auctionMinimumNextBid, 13);
     assert.equal(mine.auctionBidHistory?.[0]?.amount, 8);
     assert.equal("auctionBids" in mine, false);
 
@@ -341,10 +343,13 @@ describe("公开加价与确认成交", () => {
     assert.equal(sold.ok, true);
     const after = serializeGameForClient(game, {}, "me") as {
       auctionSoldLots?: { playerName: string; cost: number; cardId: string }[];
+      auctionSessionWins?: { playerId: string; cardId: string }[];
       auctionBids?: unknown;
     };
     assert.equal(after.auctionSoldLots?.[0]?.playerName, "me");
     assert.equal(after.auctionSoldLots?.[0]?.cost, 8);
+    assert.equal(after.auctionSessionWins?.length, 1);
+    assert.equal(after.auctionSessionWins?.[0]?.playerId, "me");
     assert.equal("auctionBids" in after, false);
 
     const god = serializeGameForClient(game, { isGodView: true }, null) as {
@@ -352,5 +357,32 @@ describe("公开加价与确认成交", () => {
     };
     assert.equal(god.auctionBids?.length, 1);
     assert.ok(god.auctionBids?.[0]?.bidToAvailableRatio != null);
+  });
+
+  it("负账面：可用财富为 0，待确认转账接受时不得再扣成更负", () => {
+    const game = createInitialGame("room", []);
+    const sender = player("sender", { wealth: -70 });
+    const receiver = player("receiver", { wealth: 10 });
+    game.players = [sender, receiver];
+    game.transactions = [
+      {
+        id: "tx1",
+        fromId: "sender",
+        fromName: "sender",
+        toId: "receiver",
+        toName: "receiver",
+        amount: 20,
+        note: "",
+        status: "pending",
+        timestamp: Date.now(),
+      },
+    ];
+
+    assert.equal(playerAvailableWealth(game, sender), 0);
+    const resolved = resolvePendingTransfer(game, "tx1", "receiver", true);
+    assert.equal(resolved.ok, true);
+    if (resolved.ok) assert.equal(resolved.status, "rejected");
+    assert.equal(sender.wealth, -70);
+    assert.equal(receiver.wealth, 10);
   });
 });

@@ -5,6 +5,7 @@ import {
   NormalizedPersonaScores,
   PERSONA_RADAR_LABELS,
   personaRadarValues,
+  scalePersonaBarFillWidth,
   secondaryFateSketches,
   sessionDimensionPercentiles,
 } from "../utils/personaReport";
@@ -34,15 +35,18 @@ const DIMENSION_LABEL: Record<keyof NormalizedPersonaScores, string> = {
 function DimensionBar({
   label,
   value,
+  dimensionKey,
   percentile,
   accent,
 }: {
   label: string;
   value: number;
+  dimensionKey: keyof NormalizedPersonaScores;
   percentile?: number;
   accent: string;
 }) {
   const v = Math.round(Math.min(100, Math.max(0, value)));
+  const barWidth = scalePersonaBarFillWidth(dimensionKey, value);
   return (
     <div style={{ marginBottom: "0.65rem" }}>
       <div
@@ -74,7 +78,7 @@ function DimensionBar({
       >
         <div
           style={{
-            width: `${v}%`,
+            width: `${barWidth}%`,
             height: "100%",
             borderRadius: "999px",
             background: accent,
@@ -164,6 +168,7 @@ export const PersonaBehaviorProfile: React.FC<{
           key={key}
           label={DIMENSION_LABEL[key]}
           value={scores[key]}
+          dimensionKey={key}
           percentile={percentiles?.[key]}
           accent={accent}
         />

@@ -3,9 +3,26 @@ import { Server } from "socket.io";
 import { GameState, Transaction } from "../state/gameState.js";
 import { getPublicCommunityLeaderboard } from "../state/communityLeaderboard.js";
 import { peekNextRoundEnergy } from "../logic/energySchedule.js";
-import { buildAuctionLotPublicView } from "../logic/auctionCards.js";
+import { buildAuctionLotPublicView, publicSessionAuctionWins } from "../logic/auctionCards.js";
+import { LIGHTER_CARD_ID } from "../logic/buffLogic.js";
+import { pendingDeviceClaimsForGodView } from "../logic/deviceClaim.js";
 
 const HIDDEN_INVESTMENT_PHASES = new Set<GameState["phase"]>(["INVESTMENT", "BUFF_USAGE"]);
+
+/** 本局拍卖所得（成交记录），供持打火机的玩家选烧目标 */
+function burnableAuctionCardIdsForPlayer(game: GameState, targetPlayerId: string): string[] {
+  const deals = game.auctionCompletedDeals ?? [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const d of deals) {
+    if (d.playerId !== targetPlayerId) continue;
+    if (d.cardId === LIGHTER_CARD_ID) continue;
+    if (seen.has(d.cardId)) continue;
+    seen.add(d.cardId);
+    ids.push(d.cardId);
+  }
+  return ids;
+}
 
 export function transactionsForViewer(
   transactions: Transaction[],
@@ -31,7 +48,9 @@ export function serializeGameForClient(
     pendingAuctionOffers,
     pendingLotteryOffers,
     lotteryCompletedDeals,
+    pendingWealthAdjustments,
     auctionBids,
+    auctionCompletedDeals: _auctionCompletedDeals,
     createdByIp: _createdByIp,
     ...gamePublic
   } = game;
@@ -40,21 +59,33 @@ export function serializeGameForClient(
     !isGodView && viewerPlayerId
       ? (pendingLotteryOffers ?? []).find((o) => o.playerId === viewerPlayerId)
       : undefined;
+  const ownWealthAdjust =
+    !isGodView && viewerPlayerId
+      ? (pendingWealthAdjustments ?? []).find((o) => o.playerId === viewerPlayerId)
+      : undefined;
   const lotView = buildAuctionLotPublicView(game);
+  const viewerPlayer =
+    viewerPlayerId != null ? game.players.find((p) => p.id === viewerPlayerId) : undefined;
+  const viewerHasLighter =
+    !isGodView && (viewerPlayer?.inventory ?? []).includes(LIGHTER_CARD_ID);
 
   return {
     ...gamePublic,
     ...lotView,
+    auctionSessionWins: publicSessionAuctionWins(game),
     ...(isGodView
       ? {
           pendingAuctionOffers: pendingAuctionOffers ?? [],
           pendingLotteryOffers: pendingLotteryOffers ?? [],
           lotteryCompletedDeals: lotteryCompletedDeals ?? [],
+          pendingWealthAdjustments: pendingWealthAdjustments ?? [],
+          pendingDeviceClaims: pendingDeviceClaimsForGodView(game),
           auctionCompletedDeals: game.auctionCompletedDeals ?? [],
           auctionBids: auctionBids ?? [],
         }
       : {
           ...(ownLotteryOffer ? { pendingLotteryOffer: ownLotteryOffer } : {}),
+          ...(ownWealthAdjust ? { pendingWealthAdjustment: ownWealthAdjust } : {}),
         }),
     readyPlayers: Array.from(game.readyPlayers),
     phaseFinished: Array.from(game.phaseFinished),
@@ -67,17 +98,39 @@ export function serializeGameForClient(
         receivedRoundEnergy: _receivedRoundEnergy,
         buffRoundNotes,
         pendingSlackHits,
+        inventory,
+        activeBuffs,
+        usedCards,
+        // 旧局内存可能仍带幽灵字段，避免漏进玩家 payload
+        lighterBurnGhostIds: _lighterBurnGhostIds,
         ...rest
-      } = p;
+      } = p as typeof p & { lighterBurnGhostIds?: string[] };
       const visibleToViewer = isGodView || p.id === viewerPlayerId;
+      if (visibleToViewer) {
+        return {
+          ...rest,
+          inventory,
+          activeBuffs,
+          usedCards,
+          // 本轮道具短记录仅本人（或上帝）可见
+          buffRoundNotes: buffRoundNotes ?? [],
+          pendingSlackHits: pendingSlackHits ?? [],
+          investmentDraft: p.investmentDraft,
+          investment: p.investment,
+          coffeePurchasesThisRound: p.coffeePurchasesThisRound ?? 0,
+        };
+      }
       return {
         ...rest,
-        // 本轮道具短记录仅本人（或上帝）可见
-        buffRoundNotes: visibleToViewer ? buffRoundNotes ?? [] : undefined,
-        pendingSlackHits: visibleToViewer ? pendingSlackHits ?? [] : undefined,
-        investmentDraft: visibleToViewer ? p.investmentDraft : undefined,
-        investment: visibleToViewer || !hideInvestments ? p.investment : {},
+        // 他人手牌 / 已发动 / 已用对玩家隐藏；持打火机时仅下发拍卖成交卡种列表
+        buffRoundNotes: undefined,
+        pendingSlackHits: undefined,
+        investmentDraft: undefined,
+        investment: hideInvestments ? {} : p.investment,
         coffeePurchasesThisRound: p.coffeePurchasesThisRound ?? 0,
+        ...(viewerHasLighter && p.id !== viewerPlayerId
+          ? { burnableCardIds: burnableAuctionCardIdsForPlayer(game, p.id) }
+          : {}),
       };
     }),
     transactions,

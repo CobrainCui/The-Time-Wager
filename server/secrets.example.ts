@@ -29,14 +29,17 @@ export const AnalysisWeights = {
 
 export const FateSketchThresholds = {
     bridgeSocialMin: 100,
-    gardenerLongTermMin: 62,
-    compassLongTermMax: 58,
-    compassRiskMax: 38,
-    compassRuleMax: 38,
-    compassRoiMin: 42,
-    triggerRiskMin: 48,
-    triggerSecondaryMin: 42,
-    alchemistShortTermMin: 48,
-    alchemistRuleMin: 38,
-    alchemistRiskMax: 52,
+    /** 真实对局 lt 多在 32–55；曲线抬分后 48+ 才对应明显长期精力主导 */
+    gardenerLongTermMin: 48,
+    compassLongTermMax: 32,
+    compassRiskMax: 20,
+    compassRuleMax: 22,
+    compassRoiMin: 18,
+    /** 须 > compassRiskMax */
+    triggerRiskMin: 24,
+    triggerSecondaryMin: 18,
+    /** 真实对局 short 维 25–33；27+ 且低风险可判炼金（规则分可为 0） */
+    alchemistShortTermMin: 27,
+    alchemistRuleMin: 0,
+    alchemistRiskMax: 45,
 };

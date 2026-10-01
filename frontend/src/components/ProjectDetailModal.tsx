@@ -183,7 +183,7 @@ function RulesSection({
         <div>
           <div style={ruleLabel}>跟投要求</div>
           <p style={ruleValue}>
-            参投后每轮须投入 ≥{LONG_CONTINUE_MIN_ENERGY} 精力，否则视为放弃：累计投入按 1:1 退回为财富，并退出完成时的排名与时代加成
+            参投后每轮须投入 ≥{LONG_CONTINUE_MIN_ENERGY} 精力，否则视为放弃：累计投入按 1:1 结算为财富，并退出完成时的排名与时代加成
           </p>
         </div>
         <div>

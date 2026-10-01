@@ -145,6 +145,7 @@ describe("buffLogic new roster effects", () => {
     assert.deepEqual(result.playerGains, {});
     assert.equal(proj.accumulatedInvested, 0);
     assert.deepEqual(proj.investorRecords, {});
+    assert.deepEqual(proj.investorRoundSlices, {});
     assert.equal(a.investment[1], 0);
     assert.equal(a.longTerm[1], undefined);
     // investorRecords 历史 + 本轮投入
@@ -344,12 +345,77 @@ describe("buffLogic new roster effects", () => {
     const res = useBuffCard(game, "a", LIGHTER_CARD_ID, {
       targetPlayerId: "b",
       burnCardId: "buff_insurance",
-      burnFromInventory: false,
     });
     assert.equal(res.success, true);
+    assert.equal(res.msg, "对b使用打火机，指定【保险】");
     assert.equal(b.activeBuffs.some((x) => x.cardId === "buff_insurance"), false);
     assert.equal(b.activeBuffs.some((x) => x.cardId === WORK_REST_CARD_ID), true);
     assert.equal(a.inventory.includes(LIGHTER_CARD_ID), false);
+    assert.equal(res.notifyTargetId, "b");
+    assert.match(game.logs.join("\n"), /对 b 使用【打火机】，指定【保险】/);
+    assert.equal(/烧毁了|未命中/.test(game.logs.join("\n")), false);
+  });
+
+  it("lighter prefers active over inventory and hides zone from holder", () => {
+    const game = createInitialGame("r", []);
+    game.phase = "BUFF_USAGE";
+    const a = player("a", { inventory: [LIGHTER_CARD_ID] });
+    const b = player("b", {
+      inventory: ["buff_insurance"],
+      activeBuffs: [{ cardId: "buff_insurance" }],
+    });
+    game.players = [a, b];
+    const res = useBuffCard(game, "a", LIGHTER_CARD_ID, {
+      targetPlayerId: "b",
+      burnCardId: "buff_insurance",
+      burnFromInventory: true, // 客户端分区被忽略
+    });
+    assert.equal(res.success, true);
+    assert.equal(res.msg, "对b使用打火机，指定【保险】");
+    assert.equal(b.activeBuffs.some((x) => x.cardId === "buff_insurance"), false);
+    assert.deepEqual(b.inventory, ["buff_insurance"]);
+    assert.equal((a.buffRoundNotes ?? []).some((n) => /手牌|已发动|烧毁/.test(n.text)), false);
+  });
+
+  it("lighter miss still consumes card with same holder message and no target notify", () => {
+    const game = createInitialGame("r", []);
+    game.phase = "BUFF_USAGE";
+    const a = player("a", { inventory: [LIGHTER_CARD_ID] });
+    const b = player("b", { inventory: ["buff_gold"], activeBuffs: [] });
+    game.players = [a, b];
+    const res = useBuffCard(game, "a", LIGHTER_CARD_ID, {
+      targetPlayerId: "b",
+      burnCardId: "buff_insurance",
+    });
+    assert.equal(res.success, true);
+    assert.equal(res.msg, "对b使用打火机，指定【保险】");
+    assert.equal(res.notifyTargetId, undefined);
+    assert.equal(a.inventory.includes(LIGHTER_CARD_ID), false);
+    assert.deepEqual(b.inventory, ["buff_gold"]);
+    assert.equal((b.buffRoundNotes ?? []).length, 0);
+    assert.equal(game.logs.includes("🔥 a 对 b 使用【打火机】，指定【保险】"), true);
+    assert.equal(/未命中|烧毁了/.test(game.logs.join("\n")), false);
+  });
+
+  it("lighter hit and miss share the same public log line shape", () => {
+    const game = createInitialGame("r", []);
+    game.phase = "BUFF_USAGE";
+    const a = player("a", { inventory: [LIGHTER_CARD_ID, LIGHTER_CARD_ID] });
+    const b = player("b", { inventory: ["buff_insurance"], activeBuffs: [] });
+    game.players = [a, b];
+    useBuffCard(game, "a", LIGHTER_CARD_ID, {
+      targetPlayerId: "b",
+      burnCardId: "buff_gold",
+    });
+    useBuffCard(game, "a", LIGHTER_CARD_ID, {
+      targetPlayerId: "b",
+      burnCardId: "buff_insurance",
+    });
+    const lighterLogs = game.logs.filter((l) => l.includes("打火机"));
+    assert.deepEqual(lighterLogs, [
+      "🔥 a 对 b 使用【打火机】，指定【点石成金】",
+      "🔥 a 对 b 使用【打火机】，指定【保险】",
+    ]);
   });
 
   it("lighter cannot burn own cards", () => {
@@ -363,13 +429,77 @@ describe("buffLogic new roster effects", () => {
     const res = useBuffCard(game, "a", LIGHTER_CARD_ID, {
       targetPlayerId: "a",
       burnCardId: "buff_insurance",
-      burnFromInventory: true,
     });
     assert.equal(res.success, false);
     if (!res.success) assert.match(res.msg, /不能烧毁自己/);
     assert.equal(a.inventory.includes(LIGHTER_CARD_ID), true);
     assert.equal(a.inventory.includes("buff_insurance"), true);
     assert.equal(a.activeBuffs.some((x) => x.cardId === WORK_REST_CARD_ID), true);
+  });
+
+  it("lighter holder sees auction deals as burnableCardIds; others stay hidden", () => {
+    const game = createInitialGame("r", []);
+    const held = player("held", {
+      inventory: ["buff_insurance"],
+      activeBuffs: [],
+      usedCards: ["buff_slack"],
+    });
+    const active = player("active", {
+      inventory: [],
+      activeBuffs: [{ cardId: "buff_insurance" }],
+      usedCards: [],
+    });
+    const viewer = player("viewer", { inventory: [LIGHTER_CARD_ID] });
+    game.players = [held, active, viewer];
+    game.auctionCompletedDeals = [
+      { cardId: "buff_insurance", playerId: "held", cost: 40, source: "hammer", auctionRound: 1 },
+      { cardId: "buff_slack", playerId: "held", cost: 30, source: "hammer", auctionRound: 1 },
+      { cardId: "buff_gold", playerId: "active", cost: 50, source: "hammer", auctionRound: 2 },
+      { cardId: LIGHTER_CARD_ID, playerId: "active", cost: 55, source: "hammer", auctionRound: 3 },
+    ];
+
+    const forViewer = serializeGameForClient(game, {}, "viewer") as {
+      players: {
+        id: string;
+        inventory?: string[];
+        activeBuffs?: unknown;
+        usedCards?: string[];
+        burnableCardIds?: string[];
+      }[];
+    };
+    const heldView = forViewer.players.find((p) => p.id === "held")!;
+    const activeView = forViewer.players.find((p) => p.id === "active")!;
+    assert.deepEqual(heldView.burnableCardIds, ["buff_insurance", "buff_slack"]);
+    assert.deepEqual(activeView.burnableCardIds, ["buff_gold"]);
+    assert.equal(heldView.inventory, undefined);
+    assert.equal(heldView.activeBuffs, undefined);
+    assert.equal(heldView.usedCards, undefined);
+    assert.equal(activeView.inventory, undefined);
+    assert.equal(activeView.activeBuffs, undefined);
+
+    const forHeld = serializeGameForClient(game, {}, "held") as {
+      players: { id: string; burnableCardIds?: string[]; inventory?: string[] }[];
+    };
+    const activeFromHeld = forHeld.players.find((p) => p.id === "active")!;
+    assert.equal(activeFromHeld.burnableCardIds, undefined);
+    const me = forHeld.players.find((p) => p.id === "held")!;
+    assert.deepEqual(me.inventory, ["buff_insurance"]);
+  });
+
+  it("lighter cannot target another lighter card id", () => {
+    const game = createInitialGame("r", []);
+    game.phase = "BUFF_USAGE";
+    const a = player("a", { inventory: [LIGHTER_CARD_ID] });
+    const b = player("b", { inventory: [LIGHTER_CARD_ID] });
+    game.players = [a, b];
+    const res = useBuffCard(game, "a", LIGHTER_CARD_ID, {
+      targetPlayerId: "b",
+      burnCardId: LIGHTER_CARD_ID,
+    });
+    assert.equal(res.success, false);
+    if (!res.success) assert.match(res.msg, /不可烧毁/);
+    assert.equal(a.inventory.includes(LIGHTER_CARD_ID), true);
+    assert.equal(b.inventory.includes(LIGHTER_CARD_ID), true);
   });
 
   it("self-slack does not push hit note", () => {

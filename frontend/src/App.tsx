@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { socket } from "./socket";
 import { GameState } from "./types";
 import GameRoom from "./GameRoom";
+import { DeviceClaimWait } from "./views/DeviceClaimWait";
 import { Lobby } from "./views/Lobby";
 import { clearGameSession, loadGameSession, saveReconnectToken } from "./gameSession";
 import { ConnectionGate } from "./components/ConnectionGate";
@@ -19,28 +20,49 @@ function tryRejoinFromSession() {
 }
 
 function App() {
-  const { connected, error: connectError, retry: retryConnect } = useSocketConnection();
+  const { connected, everConnected, error: connectError, retry: retryConnect } = useSocketConnection();
   const [game, setGame] = useState<GameState | null>(null);
   const [myPlayerId, setMyPlayerId] = useState<string>("");
   const [projectImages, setProjectImages] = useState<Record<number, number>>({});
   const [eraImages, setEraImages] = useState<Record<string, number>>({});
   const [buffImages, setBuffImages] = useState<Record<string, number>>({});
   const [personaImages, setPersonaImages] = useState<Record<string, number>>({});
-  const [playerNotify, setPlayerNotify] = useState<string | null>(null);
+  const [playerNotify, setPlayerNotify] = useState<{ seq: number; text: string } | null>(null);
+  const [deviceClaimWait, setDeviceClaimWait] = useState<{
+    roomId: string;
+    playerName: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!playerNotify) return;
     const t = window.setTimeout(() => setPlayerNotify(null), 6000);
     return () => window.clearTimeout(t);
-  }, [playerNotify]);
+  }, [playerNotify?.seq]);
 
   useEffect(() => {
     const onConnect = () => tryRejoinFromSession();
 
     const onGameUpdate = (newGame: GameState) => setGame(newGame);
     const onPlayerJoined = ({ playerId, reconnectToken }: { playerId: string; reconnectToken?: string }) => {
+      setDeviceClaimWait(null);
       setMyPlayerId(playerId);
       if (reconnectToken) saveReconnectToken(reconnectToken);
+    };
+    const onDeviceClaimPending = (payload: {
+      roomId?: string;
+      playerName?: string;
+    }) => {
+      const roomId = payload?.roomId?.trim();
+      const playerName = payload?.playerName?.trim();
+      if (!roomId || !playerName) return;
+      setDeviceClaimWait({ roomId, playerName });
+      setGame(null);
+      setMyPlayerId("");
+    };
+    const onDeviceClaimCancelled = () => setDeviceClaimWait(null);
+    const onDeviceClaimSuperseded = ({ message }: { message?: string }) => {
+      alert(message || "认领请求已失效，请重新加入");
+      setDeviceClaimWait(null);
     };
     const onSessionReplaced = ({ message }: { message?: string }) => {
       alert(message || "你的身份已在其他页面登录");
@@ -66,7 +88,7 @@ function App() {
         typeof payload === "string"
           ? payload
           : payload?.message || payload?.msg || "";
-      if (text) setPlayerNotify(text);
+      if (text) setPlayerNotify({ seq: Date.now(), text });
     };
     const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
     const onSyncEraImages = (images: Record<string, number>) => setEraImages(images);
@@ -76,6 +98,9 @@ function App() {
     socket.on("connect", onConnect);
     socket.on("gameUpdate", onGameUpdate);
     socket.on("playerJoined", onPlayerJoined);
+    socket.on("deviceClaimPending", onDeviceClaimPending);
+    socket.on("deviceClaimCancelled", onDeviceClaimCancelled);
+    socket.on("deviceClaimSuperseded", onDeviceClaimSuperseded);
     socket.on("roomDissolved", onRoomDissolved);
     socket.on("error", onError);
     socket.on("playerKicked", onPlayerKicked);
@@ -92,6 +117,9 @@ function App() {
       socket.off("connect", onConnect);
       socket.off("gameUpdate", onGameUpdate);
       socket.off("playerJoined", onPlayerJoined);
+      socket.off("deviceClaimPending", onDeviceClaimPending);
+      socket.off("deviceClaimCancelled", onDeviceClaimCancelled);
+      socket.off("deviceClaimSuperseded", onDeviceClaimSuperseded);
       socket.off("roomDissolved", onRoomDissolved);
       socket.off("error", onError);
       socket.off("playerKicked", onPlayerKicked);
@@ -125,13 +153,28 @@ function App() {
 
   const notifyToast = playerNotify ? (
     <div className="player-notify-toast" role="status" aria-live="polite">
-      {playerNotify}
+      {playerNotify.text}
     </div>
   ) : null;
 
   return (
-    <ConnectionGate connected={connected} error={connectError} onRetry={retryConnect} variant="player">
-      {game && me ? (
+    <ConnectionGate
+      connected={connected}
+      everConnected={everConnected}
+      error={connectError}
+      onRetry={retryConnect}
+      variant="player"
+    >
+      {deviceClaimWait ? (
+        <>
+          {notifyToast}
+          <DeviceClaimWait
+            roomId={deviceClaimWait.roomId}
+            playerName={deviceClaimWait.playerName}
+            onCancel={() => setDeviceClaimWait(null)}
+          />
+        </>
+      ) : game && me ? (
         <>
           {notifyToast}
           <GameRoom

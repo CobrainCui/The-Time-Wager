@@ -311,11 +311,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
             : `tutorial-slide-panel${isIntro ? " tutorial-slide-panel--intro" : ""}${isFinale ? " tutorial-slide-panel--finale" : ""}`
         }
         data-demo-key={slide.demoKey ?? "none"}
-        style={
-          fitViewport
-            ? { display: "flex", flexDirection: "column", flex: "1 1 auto", minHeight: 0, maxHeight: "100%", width: "100%" }
-            : undefined
-        }
+        style={fitViewport ? { display: "flex", flexDirection: "column", width: "100%" } : undefined}
       >
         <div style={{ width: "100%", height: "3px", background: "rgba(255,255,255,0.06)", flexShrink: 0 }}>
           <div

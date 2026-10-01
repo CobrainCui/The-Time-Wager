@@ -251,9 +251,14 @@ export async function buildSessionWorkbook(
   };
   const dealRows = (exportData.auctionCompletedDeals ?? []).map((d) => {
     const wonBid = (exportData.auctionBids ?? [])
-      .filter((b) => b.cardId === d.cardId && b.playerId === d.playerId && b.status === "won")
+      .filter((b) => {
+        if (b.cardId !== d.cardId || b.playerId !== d.playerId || b.status !== "won") return false;
+        if (d.auctionRound != null) return b.auctionRound === d.auctionRound;
+        return true;
+      })
       .sort((a, b) => b.timestamp - a.timestamp)[0];
     return {
+      场次: d.auctionRound ?? "",
       道具卡ID: d.cardId,
       得主ID: d.playerId,
       成交价: d.cost,
@@ -310,28 +315,38 @@ export async function buildSessionWorkbook(
     }
   }
   for (const deal of exportData.auctionCompletedDeals ?? []) {
-    let found = false;
-    for (const row of summaryMap.values()) {
-      if (row.道具卡ID === deal.cardId && row.玩家ID === deal.playerId) {
-        row.是否得标 = true;
-        found = true;
+    const round = deal.auctionRound ?? 0;
+    const key = `${round}:${deal.cardId}:${deal.playerId}`;
+    const prev = summaryMap.get(key);
+    if (prev) {
+      prev.是否得标 = true;
+      if (deal.cost > prev.最高出价) prev.最高出价 = deal.cost;
+      continue;
+    }
+    if (deal.auctionRound == null) {
+      let found = false;
+      for (const row of summaryMap.values()) {
+        if (row.道具卡ID === deal.cardId && row.玩家ID === deal.playerId) {
+          row.是否得标 = true;
+          found = true;
+          break;
+        }
       }
+      if (found) continue;
     }
-    if (!found) {
-      const p = exportData.players.find((x) => x.id === deal.playerId);
-      summaryMap.set(`deal:${deal.cardId}:${deal.playerId}`, {
-        场次: 0,
-        道具卡ID: deal.cardId,
-        玩家ID: deal.playerId,
-        玩家: String(sanitizeCell(p?.name ?? deal.playerId)),
-        出价次数: 0,
-        最高出价: deal.cost,
-        最高价当时可用: deal.cost,
-        最高价占可用比例: "",
-        是否得标: true,
-        _highTs: 0,
-      });
-    }
+    const p = exportData.players.find((x) => x.id === deal.playerId);
+    summaryMap.set(`deal:${key}`, {
+      场次: round,
+      道具卡ID: deal.cardId,
+      玩家ID: deal.playerId,
+      玩家: String(sanitizeCell(p?.name ?? deal.playerId)),
+      出价次数: 0,
+      最高出价: deal.cost,
+      最高价当时可用: deal.cost,
+      最高价占可用比例: "",
+      是否得标: true,
+      _highTs: 0,
+    });
   }
   const summaryRows = Array.from(summaryMap.values()).map(({ _highTs: _, ...rest }) => rest);
   addSheet(wb, "出价摘要", summaryRows.length ? summaryRows : [{ 提示: "无出价" }]);

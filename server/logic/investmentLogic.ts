@@ -2,6 +2,13 @@ import { GameState, Player } from "../state/gameState.js";
 import { appendSessionEvent, InvestmentSubmitSource } from "../state/sessionTelemetry.js";
 import { sanitizeLongContribution } from "./longTermLogic.js";
 
+/** 可用于分配的精力池：非有限或负数视为 0 */
+export function spendableEnergy(player: { energy: number }): number {
+  const e = player.energy;
+  if (typeof e !== "number" || !Number.isFinite(e)) return 0;
+  return Math.max(0, Math.floor(e));
+}
+
 /** 将预填投资裁剪为合法方案（精力上限、长期项目规则等） */
 export function sanitizeInvestments(
   game: GameState,
@@ -9,7 +16,7 @@ export function sanitizeInvestments(
   investments: Record<number, number>
 ): Record<number, number> {
   const sanitized: Record<number, number> = {};
-  let remaining = player.energy;
+  let remaining = spendableEnergy(player);
 
   for (const proj of game.activeProjects) {
     let val = Math.max(0, Math.floor(Number(investments[proj.id] ?? 0)));
@@ -34,30 +41,29 @@ export function applyInvestments(
   const player = game.players.find(p => p.id === playerId);
   if (!player) return false;
 
-  // 1. 校验总精力
+  // 入口强制裁剪，不信任调用方（含 AI / 漏 sanitize 的路径）
+  const sanitized = sanitizeInvestments(game, player, investments ?? {});
+
   let totalSpent = 0;
-  for (const amount of Object.values(investments)) {
+  for (const amount of Object.values(sanitized)) {
+    if (!Number.isSafeInteger(amount) || amount < 0) return false;
     totalSpent += amount;
   }
 
-  if (totalSpent > player.energy) {
-    // 简单的服务端防作弊，如果超了就不接受
-    return false;
-  }
+  const available = spendableEnergy(player);
+  if (totalSpent > available) return false;
 
-  // 2. 扣除精力 & 埋点
-  player.energy -= totalSpent;
-  player.totalEnergyConsumed += totalSpent; // ✅ 埋点：总消耗
+  // 扣除精力：用 available 扣减，保证结果 ≥ 0
+  player.energy = available - totalSpent;
+  player.totalEnergyConsumed += totalSpent;
 
-  // 3. 更新投资
   player.preSubmitInvestmentDraft = player.investmentDraft
     ? { ...player.investmentDraft }
-    : { ...investments };
-  player.investment = investments;
+    : { ...sanitized };
+  player.investment = sanitized;
   player.investmentDraft = undefined;
 
-  // 4. 埋点：分类统计 (Risk/Long)
-  for (const [projIdStr, amount] of Object.entries(investments)) {
+  for (const [projIdStr, amount] of Object.entries(sanitized)) {
       const projId = Number(projIdStr);
       const project = game.activeProjects.find(p => p.id === projId);
       
@@ -72,7 +78,6 @@ export function applyInvestments(
       }
   }
   
-  // 5. 记录日志
   game.logs.push(`📝 ${player.name} 完成了投资决策 (投入 ${totalSpent} 精力)`);
 
   appendSessionEvent(
@@ -82,7 +87,7 @@ export function applyInvestments(
       globalRound: game.globalRound,
       currentEra: game.currentEra,
       roundInEra: game.roundInEra,
-      investments: { ...investments },
+      investments: { ...sanitized },
       totalSpent,
       source,
     },

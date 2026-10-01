@@ -9,6 +9,8 @@ interface Props {
   game: GameState;
   me: Player;
   eraImages?: Record<string, number>;
+  /** 主持公共预览：不展示准备与个人财富 */
+  embed?: boolean;
 }
 
 const ERA_NAMES: Record<number, string> = { 1: "青年", 2: "壮年", 3: "中年", 4: "老年" };
@@ -26,7 +28,7 @@ const ERA_COLORS: Record<string, string> = {
   green: "#10b981", blue: "#3b82f6", red: "#ef4444", orange: "#f97316", yellow: "#a855f7",
 };
 
-export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {} }) => {
+export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {}, embed = false }) => {
   const card = game.currentEraCard;
   const eraColor = card ? (ERA_COLORS[card.themeColor] || "#60a5fa") : "#60a5fa";
   const eraGradient = card ? (ERA_GRADIENTS[card.themeColor] || ERA_GRADIENTS.blue) : ERA_GRADIENTS.blue;
@@ -166,25 +168,31 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {} }) => {
                 color: "#34d399",
               }}
             >
-              ⚡ 精力 {me.energy}
+              ⚡ 本轮精力 {me.energy}
             </div>
-            <div
-              style={{
-                background: "rgba(251,191,36,0.1)",
-                border: "1px solid rgba(251,191,36,0.25)",
-                borderRadius: "9999px",
-                padding: "0.4rem 1rem",
-                fontFamily: "var(--font-mono)",
-                fontWeight: 700,
-                fontSize: uiRem(0.85),
-                color: "#fbbf24",
-              }}
-            >
-              💰 财富 {me.wealth}
-            </div>
+            {!embed && (
+              <div
+                style={{
+                  background: "rgba(251,191,36,0.1)",
+                  border: "1px solid rgba(251,191,36,0.25)",
+                  borderRadius: "9999px",
+                  padding: "0.4rem 1rem",
+                  fontFamily: "var(--font-mono)",
+                  fontWeight: 700,
+                  fontSize: uiRem(0.85),
+                  color: "#fbbf24",
+                }}
+              >
+                💰 财富 {me.wealth}
+              </div>
+            )}
           </div>
 
-          {me.ready ? (
+          {embed ? (
+            <div style={{ color: "var(--color-text-muted)", fontWeight: 600, fontSize: uiRem(0.9) }}>
+              观战预览
+            </div>
+          ) : me.ready ? (
             <div
               className="animate-pulse"
               style={{

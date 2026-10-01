@@ -44,7 +44,8 @@ export const ProjectCard: React.FC<{
 }) => {
   const tc = TYPE_COLORS[project.type] || TYPE_COLORS.short;
   const isEraMatch = eraTheme && project.era === eraTheme && project.type !== "risk";
-  const myLongStatus = me.longTerm[project.id];
+  const myLongStatus =
+    me.longTerm[project.id] ?? me.longTerm[String(project.id) as unknown as number];
   const isAbandoned = myLongStatus?.status === "abandoned";
   const isLongCompleted = myLongStatus?.status === "completed";
   const isDisabled = disabled || isAbandoned || isLongCompleted;
@@ -73,11 +74,11 @@ export const ProjectCard: React.FC<{
   const reserveLongHint = balanceHeights || project.type === "long";
 
   const myCumulativeOnProject =
-    project.type === "long" && needsLongContinueWarn(project, me)
-      ? myLongStatus?.totalInvested ?? project.investorRecords?.[me.id] ?? 0
-      : project.type !== "long"
-        ? project.investorRecords?.[me.id] ?? 0
-        : 0;
+    project.type === "long"
+      ? isAbandoned
+        ? 0
+        : myLongStatus?.totalInvested ?? project.investorRecords?.[me.id] ?? 0
+      : project.investorRecords?.[me.id] ?? 0;
   const showMyCumulative = myCumulativeOnProject > 0;
 
   const markDetailPointer = (e: React.PointerEvent) => {
@@ -317,8 +318,8 @@ export const ProjectCard: React.FC<{
             aria-hidden={!showLongHint}
           >
             {longHintUrgent
-              ? `已参投：本轮须 ≥${LONG_CONTINUE_MIN_ENERGY} 精力，否则 1:1 退回累计投入并退出完成排名`
-              : `⚠️ 参投后每轮须 ≥${LONG_CONTINUE_MIN_ENERGY} 精力；不足则放弃并 1:1 退回累计投入`}
+              ? `已参投：本轮须 ≥${LONG_CONTINUE_MIN_ENERGY} 精力，否则 1:1 结算累计投入并退出完成排名`
+              : `⚠️ 参投后每轮须 ≥${LONG_CONTINUE_MIN_ENERGY} 精力；不足则放弃并 1:1 结算累计投入，退出完成排名`}
           </div>
         )}
 

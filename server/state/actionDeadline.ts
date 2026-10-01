@@ -3,6 +3,22 @@ import { GameState } from "./gameState.js";
 /** 投资阶段操作倒计时（10 分钟） */
 export const ACTION_DEADLINE_MS = 10 * 60 * 1000;
 
+/** 第 1 时代第 1 轮投资倒计时（12 分钟） */
+export const ACTION_DEADLINE_ERA1_R1_MS = 12 * 60 * 1000;
+
+export function getActionDeadlineMs(game: GameState): number {
+  if (game.currentEra === 1 && game.roundInEra === 1) {
+    return ACTION_DEADLINE_ERA1_R1_MS;
+  }
+  return ACTION_DEADLINE_MS;
+}
+
+/** 主持重置日志 / 确认文案用，如 `12:00` */
+export function formatActionDeadlineClock(game: GameState): string {
+  const minutes = getActionDeadlineMs(game) / (60 * 1000);
+  return `${minutes}:00`;
+}
+
 export function clearActionDeadline(game: GameState): void {
   game.investmentEndsAt = undefined;
   game.buffPhaseEndsAt = undefined;
@@ -67,5 +83,5 @@ export function startInvestmentDeadline(game: GameState): void {
     return;
   }
   clearActionDeadline(game);
-  game.investmentEndsAt = Date.now() + ACTION_DEADLINE_MS;
+  game.investmentEndsAt = Date.now() + getActionDeadlineMs(game);
 }

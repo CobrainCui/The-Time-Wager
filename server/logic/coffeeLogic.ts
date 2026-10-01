@@ -2,7 +2,7 @@ import { GameState, Player } from "../state/gameState.js";
 import { appendSessionEvent } from "../state/sessionTelemetry.js";
 import { sanitizeInvestments } from "./investmentLogic.js";
 
-export const COFFEE_WEALTH_COST = 16;
+export const COFFEE_WEALTH_COST = 17;
 export const COFFEE_ENERGY_GAIN = 1;
 
 function draftEnergySum(player: Player): number {
@@ -79,7 +79,7 @@ export function refundCoffee(
   }
 
   player.wealth += COFFEE_WEALTH_COST * count;
-  player.energy -= count * COFFEE_ENERGY_GAIN;
+  player.energy = Math.max(0, player.energy - count * COFFEE_ENERGY_GAIN);
   player.totalEnergyConsumed = Math.max(
     0,
     player.totalEnergyConsumed - count * COFFEE_ENERGY_GAIN

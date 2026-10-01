@@ -22,7 +22,7 @@ interface AdminRoomSummary {
 const AUTH_TIMEOUT_MS = 15_000;
 
 export default function AdminApp() {
-  const { connected, error: connectError, retry: retryConnect } = useSocketConnection();
+  const { connected, everConnected, error: connectError, retry: retryConnect } = useSocketConnection();
   const [authState, setAuthState] = useState<AuthState>("connecting");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authPending, setAuthPending] = useState(false);
@@ -243,6 +243,7 @@ export default function AdminApp() {
   return (
     <ConnectionGate
       connected={connected}
+      everConnected={everConnected}
       error={connectError}
       onRetry={retryConnect}
       variant="admin"
@@ -257,7 +258,14 @@ export default function AdminApp() {
       ) : authState === "login" || authState === "connecting" ? (
         <AdminLogin onSubmit={handleLogin} error={authError} pending={authPending} />
       ) : game ? (
-        <AdminView game={game} onExit={handleExitRoom} />
+        <AdminView
+          game={game}
+          onExit={handleExitRoom}
+          projectImages={projectImages}
+          eraImages={eraImages}
+          buffImages={buffImages}
+          personaImages={personaImages}
+        />
       ) : adminScreen === "sessions" ? (
         <AdminSessionHistory onBack={() => setAdminScreen("rooms")} />
       ) : adminScreen === "images" ? (

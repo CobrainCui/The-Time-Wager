@@ -50,8 +50,12 @@ export interface ActiveProject {
   
   // ✅ 埋点数据：投资记录、收益记录、总产出
   investorRecords: Record<string, number>;
+  /** 短/风险：每位玩家每轮有投入的精力分段（结算全览个人条） */
+  investorRoundSlices?: Record<string, number[]>;
   earningRecords: Record<string, number>;
   totalPayout: number;
+  /** 第四时代第二轮未完成长期梯度是否已发放 */
+  endGradientPaid?: boolean;
 }
 
 export interface AuctionOffer {
@@ -68,6 +72,8 @@ export interface AuctionCompletedDeal {
   cost: number;
   /** 主持确认成交或强买强卖；旧档可能缺省 */
   source?: "hammer" | "force_buy";
+  /** 第几场拍卖成交；旧档可能缺省 */
+  auctionRound?: number;
 }
 
 /** 公开加价记录状态 */
@@ -99,6 +105,14 @@ export interface LotteryOffer {
   offerId: string;
   playerId: string;
   amount: number;
+}
+
+/** 主持发起的财富调整，待玩家确认后才入账 */
+export interface WealthAdjustOffer {
+  offerId: string;
+  playerId: string;
+  /** 正数加钱，负数扣钱 */
+  delta: number;
 }
 
 /** 已确认开奖记录（主持可撤回） */
@@ -198,6 +212,7 @@ export interface Player {
     totalInvested: number; 
     status: "active"|"completed"|"abandoned";
     reward?: number;
+    roundSlices?: number[];
   }>;
 
   riskGains: Record<number, number>;
@@ -254,6 +269,8 @@ export interface SettlementProjectResult {
   isCompleted: boolean;
   /** 本轮被【项目做空】短路结算 */
   shortSold?: boolean;
+  /** 第四时代第二轮未完成长期梯度结算 */
+  endGradient?: boolean;
   playerInvestments: Record<string, number>; 
   playerGains: Record<string, GainBreakdown>;
 }
@@ -323,6 +340,10 @@ export interface GameState {
   pendingLotteryOffers?: LotteryOffer[];
   /** 已确认彩票开奖（上帝视图撤回用） */
   lotteryCompletedDeals?: LotteryCompletedDeal[];
+  /** 主持已发出、等待玩家确认的财富调整（不广播全表） */
+  pendingWealthAdjustments?: WealthAdjustOffer[];
+  /** 换设备认领：等待主持批准的新连接（不广播 socketId） */
+  pendingDeviceClaims?: { playerId: string; socketId: string; requestedAt: number }[];
   /** 进入 TUTORIAL 前的阶段，用于教程结束后判断是否全量 reset */
   tutorialEntryPhase?: Phase;
 
@@ -475,6 +496,8 @@ export function resetGameSession(game: GameState): void {
   game.pendingAuctionOffers = undefined;
   game.pendingLotteryOffers = undefined;
   game.lotteryCompletedDeals = undefined;
+  game.pendingWealthAdjustments = undefined;
+  game.pendingDeviceClaims = undefined;
   game.energyTableSize = undefined;
   game.roomCreatedAt = Date.now();
   game.sessionId = undefined;

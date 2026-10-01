@@ -1,13 +1,18 @@
 import { useLayoutEffect, useRef } from "react";
 
 /**
- * 测量固定底栏实际占用高度（含 bottom 偏移与换行），写入内容区与 documentElement 的
- * --dock-clearance，供 padding-bottom 与固定定位的私信坞使用。
+ * 测量固定底栏实际占用高度（含 bottom 偏移与换行），写入内容区的 --dock-clearance；
+ * 默认同步到 documentElement，供视口级私信坞使用。嵌入观战时勿写 document，避免污染主持页。
  *
  * @param enabled 无底栏时写入较小留白
  * @param observeKey 底栏 DOM/内容切换时传入（如 ready），以便重新测量
+ * @param syncDocumentRoot 是否同步到 <html>（嵌入预览传 false）
  */
-export function useFixedDockClearance(enabled: boolean, observeKey?: string | number | boolean) {
+export function useFixedDockClearance(
+  enabled: boolean,
+  observeKey?: string | number | boolean,
+  syncDocumentRoot = true
+) {
   const contentRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
 
@@ -17,13 +22,13 @@ export function useFixedDockClearance(enabled: boolean, observeKey?: string | nu
 
     const setClearance = (value: string) => {
       content?.style.setProperty("--dock-clearance", value);
-      root.style.setProperty("--dock-clearance", value);
+      if (syncDocumentRoot) root.style.setProperty("--dock-clearance", value);
     };
 
     if (!enabled) {
       setClearance("1.5rem");
       return () => {
-        root.style.removeProperty("--dock-clearance");
+        if (syncDocumentRoot) root.style.removeProperty("--dock-clearance");
       };
     }
 
@@ -49,9 +54,9 @@ export function useFixedDockClearance(enabled: boolean, observeKey?: string | nu
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", apply);
-      root.style.removeProperty("--dock-clearance");
+      if (syncDocumentRoot) root.style.removeProperty("--dock-clearance");
     };
-  }, [enabled, observeKey]);
+  }, [enabled, observeKey, syncDocumentRoot]);
 
   return { contentRef, dockRef };
 }

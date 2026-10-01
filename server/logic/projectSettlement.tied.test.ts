@@ -175,6 +175,38 @@ describe("settleOneProject tied sharing", () => {
     assert.equal(result.playerGains.insured?.total, 100);
   });
 
+  it("risk explode: clawback allows negative wealth when history exceeds balance", () => {
+    const historyGain = 80;
+    const priorWealth = 10;
+    const p = makePlayer("p", {
+      wealth: priorWealth,
+      investment: { 201: 3 },
+      riskGains: { 201: historyGain },
+    });
+    const project: ActiveProject = {
+      id: 201,
+      name: "测试风险",
+      type: "risk",
+      era: "气候",
+      maxEnergy: 10,
+      accumulatedInvested: 8,
+      currentInvested: 0,
+      roundsNoInvestment: 0,
+      investedThisRound: false,
+      investorRecords: { p: 8 },
+      earningRecords: { p: historyGain },
+      totalPayout: historyGain,
+    };
+    const game = { players: [p] } as GameState;
+    const result = settleOneProject(game, project, []);
+
+    assert.equal(result.isExploded, true);
+    assert.equal(p.wealth, priorWealth - historyGain);
+    assert.equal(p.wealth, -70);
+    assert.equal(p.riskGains[201], 0);
+    assert.equal(result.playerGains.p?.base, -historyGain);
+  });
+
   it("short exact complete: tied first share rank and era +30", () => {
     const p1 = makePlayer("p1", { investment: { 1: 10 } });
     const p2 = makePlayer("p2", { investment: { 1: 10 } });
@@ -207,5 +239,32 @@ describe("settleOneProject tied sharing", () => {
     assert.equal(result.playerGains.p1?.era, 15); // floor(30/2)
     assert.equal(result.playerGains.p2?.rank, 37);
     assert.equal(result.playerGains.p2?.era, 15);
+    assert.deepEqual(project.investorRoundSlices?.p1, [10]);
+    assert.deepEqual(project.investorRoundSlices?.p2, [10]);
+  });
+
+  it("short project accumulates investorRoundSlices across rounds", () => {
+    const p = makePlayer("p1", { investment: { 1: 3 } });
+    const project: ActiveProject = {
+      id: 1,
+      name: "测试短期",
+      type: "short",
+      maxEnergy: 20,
+      accumulatedInvested: 5,
+      currentInvested: 0,
+      roundsNoInvestment: 0,
+      investedThisRound: false,
+      investorRecords: { p1: 5 },
+      earningRecords: {},
+      totalPayout: 0,
+      rankRewards: [45, 30, 20],
+      overInvestPenalty: [-35, -20, -15],
+    };
+    const game = { players: [p] } as GameState;
+
+    settleOneProject(game, project, []);
+
+    assert.equal(project.investorRecords.p1, 8);
+    assert.deepEqual(project.investorRoundSlices?.p1, [5, 3]);
   });
 });

@@ -26,7 +26,7 @@ function clampDraftToEnergy(
   projects: ActiveProject[]
 ): Record<number, number> {
   const out: Record<number, number> = {};
-  let remaining = energy;
+  let remaining = Math.max(0, typeof energy === "number" && Number.isFinite(energy) ? Math.floor(energy) : 0);
   for (const proj of projects) {
     let val = Math.max(0, Math.floor(Number(draft[proj.id] ?? 0)));
     val = Math.min(val, remaining);
@@ -48,6 +48,8 @@ interface Props {
   onDraftChange: React.Dispatch<React.SetStateAction<Record<number, number>>>;
   /** 分段顶栏已展示倒计时时隐藏本页内倒计时 */
   hideCountdown?: boolean;
+  /** 主持嵌入观战：底栏 clearance 不写 document */
+  embed?: boolean;
 }
 
 // ——— 顶部状态栏 ———
@@ -65,6 +67,8 @@ const StatusBar: React.FC<{
   onOpenUnsubscribe: () => void;
   actionsDisabled?: boolean;
   buffActionsEnabled?: boolean;
+  /** 主持公共预览：隐藏咖啡与个人财富 */
+  embed?: boolean;
 }> = ({
   me,
   remainingEnergy,
@@ -79,6 +83,7 @@ const StatusBar: React.FC<{
   onOpenUnsubscribe,
   actionsDisabled,
   buffActionsEnabled,
+  embed = false,
 }) => {
   const timerPaused = typeof investmentTimerPausedAt === "number";
   const timeLeft = useActionCountdown(
@@ -99,11 +104,13 @@ const StatusBar: React.FC<{
         {/* 左侧：精力 + 财富 */}
         <div style={{ display: "flex", gap: "1.5rem", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.15rem" }}>
-            <CoffeeRoundIndicators
-              count={coffeePurchases}
-              disabled={!!coffeeLocked}
-              onOpenUnsubscribe={onOpenUnsubscribe}
-            />
+            {!embed && (
+              <CoffeeRoundIndicators
+                count={coffeePurchases}
+                disabled={!!coffeeLocked}
+                onOpenUnsubscribe={onOpenUnsubscribe}
+              />
+            )}
             <span style={{ fontSize: uiRem(1.1) }}>⚡</span>
             <span
               style={{
@@ -115,20 +122,26 @@ const StatusBar: React.FC<{
             >
               {Math.max(0, remainingEnergy)}
             </span>
-            <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}>/ {me.energy}</span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <span style={{ fontSize: uiRem(1.1) }}>💰</span>
-            <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: uiRem(1.2), color: "#fbbf24" }}>
-              {me.wealth}
+            <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}>
+              / {Math.max(0, typeof me.energy === "number" && Number.isFinite(me.energy) ? me.energy : 0)}
             </span>
           </div>
-          <BuffRoundChips
-            me={me}
-            actionsDisabled={!!actionsDisabled || !!coffeeLocked}
-            canAct={!!buffActionsEnabled}
-            compact
-          />
+          {!embed && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <span style={{ fontSize: uiRem(1.1) }}>💰</span>
+                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: uiRem(1.2), color: "#fbbf24" }}>
+                  {me.wealth}
+                </span>
+              </div>
+              <BuffRoundChips
+                me={me}
+                actionsDisabled={!!actionsDisabled || !!coffeeLocked}
+                canAct={!!buffActionsEnabled}
+                compact
+              />
+            </>
+          )}
         </div>
 
         {/* 右侧：倒计时 + 咖啡 */}
@@ -179,22 +192,30 @@ const StatusBar: React.FC<{
               ) : null}
             </div>
           )}
-          <button
-            onClick={onCoffee}
-            disabled={coffeeLoading || me.wealth < COFFEE_WEALTH_COST || coffeeLocked}
-            className="btn btn-sm"
-            style={{
-              background: "rgba(180,83,9,0.2)",
-              border: "1px solid rgba(180,83,9,0.4)",
-              color: me.wealth >= COFFEE_WEALTH_COST ? "#fcd34d" : "var(--color-text-muted)",
-            }}
-            title={`消耗${COFFEE_WEALTH_COST}财富换${COFFEE_ENERGY_GAIN}精力`}
-          >
-            ☕{" "}
-            {coffeeLoading
-              ? "..."
-              : `来杯咖啡（-${COFFEE_WEALTH_COST}💰+${COFFEE_ENERGY_GAIN}⚡）`}
-          </button>
+          {!embed && (
+            <button
+              onClick={onCoffee}
+              disabled={coffeeLoading || me.wealth < COFFEE_WEALTH_COST || coffeeLocked}
+              className="btn btn-sm"
+              style={{
+                background: "rgba(180,83,9,0.2)",
+                border: "1px solid rgba(180,83,9,0.4)",
+                color: me.wealth >= COFFEE_WEALTH_COST ? "#fcd34d" : "var(--color-text-muted)",
+              }}
+              title={
+                coffeeLoading
+                  ? "正在购买…"
+                  : me.wealth < COFFEE_WEALTH_COST
+                    ? `财富不足（需要 ${COFFEE_WEALTH_COST}💰）`
+                    : `消耗${COFFEE_WEALTH_COST}财富换${COFFEE_ENERGY_GAIN}精力`
+              }
+            >
+              ☕{" "}
+              {coffeeLoading
+                ? "..."
+                : `来杯咖啡（-${COFFEE_WEALTH_COST}💰+${COFFEE_ENERGY_GAIN}⚡）`}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -210,8 +231,10 @@ export const Investment: React.FC<Props> = ({
   draft: investments,
   onDraftChange: setInvestments,
   hideCountdown = false,
+  embed = false,
 }) => {
   const [coffeeLoading, setCoffeeLoading] = useState(false);
+  const [coffeeSuccessToast, setCoffeeSuccessToast] = useState<string | null>(null);
   /** 服务端未下发 coffeePurchasesThisRound 时，用资源变化推断杯数 */
   const [inferredCoffeeCups, setInferredCoffeeCups] = useState(0);
   const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
@@ -232,11 +255,15 @@ export const Investment: React.FC<Props> = ({
   const coffeePendingRef = useRef(0);
   const coffeeAttemptSnapRef = useRef<{ energy: number; wealth: number } | null>(null);
   const prevCoffeePurchasesRef = useRef(me.coffeePurchasesThisRound ?? 0);
+  const coffeeRoundSigRef = useRef(
+    `${game.currentEra}-${game.roundInEra}-${game.globalRound}`
+  );
   const prevCoffeeForDraftRef = useRef(me.coffeePurchasesThisRound ?? 0);
   const draftSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSubmittedRef = useRef(false);
   const prevReadyRef = useRef(me.ready);
   const [reopenEditHint, setReopenEditHint] = useState(false);
+  const [submitPending, setSubmitPending] = useState(false);
   const isSubmittedRef = useRef(false);
   const investmentsRef = useRef(investments);
   investmentsRef.current = investments;
@@ -245,17 +272,19 @@ export const Investment: React.FC<Props> = ({
   const currentAllocated = Object.values(investments).reduce((a, b) => a + b, 0);
   const isSubmitted = me.ready && game.phase === "INVESTMENT";
   // 本轮已入账后 energy 已扣；本地预填仍保留分配额，不可再减一次
-  const investmentApplied =
-    me.ready ||
-    (game.readyPlayers ?? []).includes(me.id) ||
-    Object.values(me.investment ?? {}).reduce((a, b) => a + (Number(b) || 0), 0) > 0;
-  const remainingEnergy = investmentApplied
-    ? me.energy
-    : me.energy - currentAllocated;
-  isSubmittedRef.current = isSubmitted;
+  const investmentCommitted =
+    me.ready || (game.readyPlayers ?? []).includes(me.id);
+  const investmentApplied = investmentCommitted || submitPending;
+  const safeEnergy =
+    typeof me.energy === "number" && Number.isFinite(me.energy) ? Math.max(0, me.energy) : 0;
+  // 提交中乐观视为已扣，避免顶栏算出「负剩余 / 0」
+  const remainingEnergy = investmentApplied ? safeEnergy : safeEnergy - currentAllocated;
+  isSubmittedRef.current = isSubmitted || submitPending;
+  const formLocked = investmentCommitted || submitPending;
   const { contentRef: investmentMainRef, dockRef: submitDockRef } = useFixedDockClearance(
-    true,
-    `${isSubmitted}-${me.ready}`
+    !embed,
+    `${isSubmitted}-${me.ready}`,
+    !embed
   );
 
   const flushDraftToServer = () => {
@@ -273,6 +302,7 @@ export const Investment: React.FC<Props> = ({
     prevReadyRef.current = me.ready;
     if (game.phase !== "INVESTMENT" || !wasReady || me.ready) return;
     autoSubmittedRef.current = false;
+    setSubmitPending(false);
     const nextDraft = me.investmentDraft ? { ...me.investmentDraft } : {};
     setInvestments(nextDraft);
     investmentsRef.current = nextDraft;
@@ -281,13 +311,36 @@ export const Investment: React.FC<Props> = ({
   }, [game.phase, me.ready, me.investmentDraft, me.id, setInvestments]);
 
   useEffect(() => {
+    if (investmentCommitted) setSubmitPending(false);
+  }, [investmentCommitted]);
+
+  useEffect(() => {
     if (!reopenEditHint) return;
     const t = window.setTimeout(() => setReopenEditHint(false), 10_000);
     return () => window.clearTimeout(t);
   }, [reopenEditHint]);
 
   useEffect(() => {
+    if (!coffeeSuccessToast) return;
+    const t = window.setTimeout(() => setCoffeeSuccessToast(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [coffeeSuccessToast]);
+
+  const showCoffeePurchaseSuccess = useCallback((cupsAfter: number) => {
+    setCoffeeSuccessToast(
+      `咖啡购买成功（本轮第 ${cupsAfter} 杯） · -${COFFEE_WEALTH_COST}💰 +${COFFEE_ENERGY_GAIN}⚡`
+    );
+  }, []);
+
+  const showCoffeeRefundSuccess = useCallback((refunded: number, cupsRemaining: number) => {
+    setCoffeeSuccessToast(
+      `咖啡退订成功（${refunded} 杯） · +${refunded * COFFEE_WEALTH_COST}💰 −${refunded * COFFEE_ENERGY_GAIN}⚡ · 本轮剩余 ${cupsRemaining} 杯`
+    );
+  }, []);
+
+  useEffect(() => {
     autoSubmittedRef.current = false;
+    setSubmitPending(false);
   }, [game.investmentEndsAt, game.phase, game.globalRound]);
 
   useEffect(() => {
@@ -317,6 +370,7 @@ export const Investment: React.FC<Props> = ({
   };
 
   const commitInvestment = (payload: Record<number, number>) => {
+    setSubmitPending(true);
     socket.emit("syncInvestmentDraft", { investment: payload });
     socket.emit("submitInvestment", { investment: payload });
   };
@@ -360,7 +414,7 @@ export const Investment: React.FC<Props> = ({
     if (abandonWarnings.length > 0) {
       if (
         !window.confirm(
-          `确认提交？注意：你对 ${abandonWarnings.join(", ")} 本轮投入不足 ${LONG_CONTINUE_MIN_ENERGY}，将视为放弃：累计投入按 1:1 退回为财富，并退出该项目完成时的排名与时代加成。`
+          `确认提交？注意：你对 ${abandonWarnings.join(", ")} 本轮投入不足 ${LONG_CONTINUE_MIN_ENERGY}，将视为放弃：累计投入按 1:1 结算为财富，并退出该项目完成时的排名与时代加成。`
         )
       ) {
         return;
@@ -380,7 +434,7 @@ export const Investment: React.FC<Props> = ({
 
   useEffect(() => {
     const end = game.investmentEndsAt;
-    if (!end || isSubmitted) return;
+    if (!end || isSubmitted || submitPending) return;
     if (game.phase !== "INVESTMENT") return;
     if (typeof game.investmentTimerPausedAt === "number") return;
 
@@ -405,50 +459,81 @@ export const Investment: React.FC<Props> = ({
     game.phase,
     game.serverNow,
     isSubmitted,
+    submitPending,
     clockSkewRef,
   ]);
 
+  // 须在杯数变化 effect 之前：新轮清零 coffeePurchases 时不应误报购买/退订 toast
+  useEffect(() => {
+    setInferredCoffeeCups(0);
+    prevCoffeePurchasesRef.current = me.coffeePurchasesThisRound ?? 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅轮次切换时对齐 prev，不随每次退订/购买触发
+  }, [game.globalRound, game.currentEra, game.roundInEra]);
+
   useEffect(() => {
     const cups = me.coffeePurchasesThisRound ?? 0;
+    const roundSig = `${game.currentEra}-${game.roundInEra}-${game.globalRound}`;
+    if (coffeeRoundSigRef.current !== roundSig) {
+      coffeeRoundSigRef.current = roundSig;
+      prevCoffeePurchasesRef.current = cups;
+      return;
+    }
+
     const prevCups = prevCoffeePurchasesRef.current;
+    const inCoffeeWindow = game.phase === "BUFF_USAGE" || game.phase === "INVESTMENT";
 
     if (cups > prevCups) {
       setInferredCoffeeCups(0);
+      const delta = cups - prevCups;
+      if (inCoffeeWindow) {
+        showCoffeePurchaseSuccess(cups);
+      }
+      coffeePendingRef.current = Math.max(0, coffeePendingRef.current - delta);
+      coffeeAttemptSnapRef.current = null;
+      setCoffeeLoading(false);
     } else if (cups < prevCups) {
+      const refunded = prevCups - cups;
+      if (refunded > 0 && inCoffeeWindow) {
+        showCoffeeRefundSuccess(refunded, cups);
+      }
       setInferredCoffeeCups((n) => Math.max(0, Math.min(n, cups)));
     }
 
-    if (cups > prevCups && coffeePendingRef.current > 0) {
-      const delta = Math.min(cups - prevCups, coffeePendingRef.current);
-      coffeePendingRef.current -= delta;
-      if (coffeePendingRef.current <= 0) {
-        coffeeAttemptSnapRef.current = null;
-        setCoffeeLoading(false);
-      }
-    }
-
     const snap = coffeeAttemptSnapRef.current;
-    if (
-      coffeePendingRef.current > 0 &&
-      snap &&
-      me.energy >= snap.energy + COFFEE_ENERGY_GAIN &&
-      me.wealth <= snap.wealth - COFFEE_WEALTH_COST
-    ) {
+    const wealthOk =
+      snap && coffeePendingRef.current > 0 && me.wealth <= snap.wealth - COFFEE_WEALTH_COST;
+    const energyOk = snap && me.energy >= snap.energy + COFFEE_ENERGY_GAIN;
+    if (coffeePendingRef.current > 0 && snap && wealthOk && energyOk) {
+      coffeePendingRef.current = 0;
+      coffeeAttemptSnapRef.current = null;
+      setCoffeeLoading(false);
+      if (cups <= prevCups) {
+        const after = cups + 1;
+        setInferredCoffeeCups((n) => n + 1);
+        showCoffeePurchaseSuccess(after);
+      }
+    } else if (coffeePendingRef.current > 0 && snap && wealthOk && !energyOk) {
       coffeePendingRef.current = 0;
       coffeeAttemptSnapRef.current = null;
       setCoffeeLoading(false);
       if (cups <= prevCups) {
         setInferredCoffeeCups((n) => n + 1);
+        showCoffeePurchaseSuccess(cups + 1);
       }
     }
 
     prevCoffeePurchasesRef.current = cups;
-  }, [me.coffeePurchasesThisRound, me.energy, me.wealth]);
-
-  useEffect(() => {
-    setInferredCoffeeCups(0);
-    prevCoffeePurchasesRef.current = me.coffeePurchasesThisRound ?? 0;
-  }, [game.globalRound, game.currentEra, game.roundInEra]);
+  }, [
+    me.coffeePurchasesThisRound,
+    me.energy,
+    me.wealth,
+    showCoffeePurchaseSuccess,
+    showCoffeeRefundSuccess,
+    game.phase,
+    game.currentEra,
+    game.roundInEra,
+    game.globalRound,
+  ]);
 
   useEffect(() => {
     const curr = me.coffeePurchasesThisRound ?? 0;
@@ -466,13 +551,13 @@ export const Investment: React.FC<Props> = ({
   useEffect(() => {
     if (isSubmitted) return;
     const allocated = Object.values(investments).reduce((a, b) => a + b, 0);
-    if (allocated <= me.energy) return;
-    setInvestments((prev) => clampDraftToEnergy(prev, me.energy, game.activeProjects));
-  }, [me.energy, isSubmitted, game.activeProjects, investments, setInvestments]);
+    if (allocated <= safeEnergy) return;
+    setInvestments((prev) => clampDraftToEnergy(prev, safeEnergy, game.activeProjects));
+  }, [safeEnergy, isSubmitted, game.activeProjects, investments, setInvestments]);
 
   useEffect(() => {
-    if (isSubmitted) setUnsubscribeOpen(false);
-  }, [isSubmitted]);
+    if (formLocked) setUnsubscribeOpen(false);
+  }, [formLocked]);
 
   useEffect(() => {
     if (!coffeeLoading) return;
@@ -491,6 +576,7 @@ export const Investment: React.FC<Props> = ({
       coffeePendingRef.current = 0;
       coffeeAttemptSnapRef.current = null;
       setCoffeeLoading(false);
+      setSubmitPending(false);
     };
     socket.on("error", onError);
     return () => {
@@ -502,7 +588,7 @@ export const Investment: React.FC<Props> = ({
   const effectiveCoffeeCups = Math.max(serverCoffeeCups, inferredCoffeeCups);
 
   const handleCoffee = () => {
-    if (coffeeLoading || me.wealth < COFFEE_WEALTH_COST || isSubmitted) return;
+    if (coffeeLoading || me.wealth < COFFEE_WEALTH_COST || formLocked) return;
     coffeeAttemptSnapRef.current = { energy: me.energy, wealth: me.wealth };
     coffeePendingRef.current += 1;
     setCoffeeLoading(true);
@@ -531,7 +617,7 @@ export const Investment: React.FC<Props> = ({
 
   const showLongAutoAbandonWarn =
     game.phase === "INVESTMENT" &&
-    !isSubmitted &&
+    !formLocked &&
     investSecondsLeft > 0 &&
     investSecondsLeft <= 60 &&
     longAbandonRiskNames.length > 0;
@@ -551,6 +637,11 @@ export const Investment: React.FC<Props> = ({
 
   return (
     <div className="investment-view" style={{ minHeight: "100dvh", background: "#070b14" }}>
+      {coffeeSuccessToast ? (
+        <div className="player-notify-toast" role="status" aria-live="polite">
+          {coffeeSuccessToast}
+        </div>
+      ) : null}
       <CoffeeUnsubscribeModal
         open={unsubscribeOpen}
         maxPurchased={coffeePurchases}
@@ -579,12 +670,18 @@ export const Investment: React.FC<Props> = ({
         serverNow={game.serverNow}
         onCoffee={handleCoffee}
         coffeeLoading={coffeeLoading}
-        coffeeLocked={isSubmitted}
+        coffeeLocked={formLocked}
         coffeePurchases={coffeePurchases}
-        actionsDisabled={isSubmitted || me.ready}
-        buffActionsEnabled={(game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") && !me.ready}
+        actionsDisabled={formLocked || me.ready || embed}
+        buffActionsEnabled={
+          !embed &&
+          (game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") &&
+          !me.ready &&
+          !submitPending
+        }
+        embed={embed}
         onOpenUnsubscribe={() => {
-          if (isSubmitted || coffeePurchases <= 0) return;
+          if (formLocked || coffeePurchases <= 0) return;
           setUnsubscribeOpen(true);
         }}
       />
@@ -600,7 +697,7 @@ export const Investment: React.FC<Props> = ({
           paddingRight: "1rem",
         }}
       >
-        {reopenEditHint && game.phase === "INVESTMENT" && !isSubmitted && (
+        {reopenEditHint && game.phase === "INVESTMENT" && !formLocked && (
           <div
             role="status"
             style={{
@@ -636,7 +733,7 @@ export const Investment: React.FC<Props> = ({
             }}
           >
             倒计时结束将自动提交当前方案：{longAbandonRiskNames.join("、")} 未满 {LONG_CONTINUE_MIN_ENERGY}{" "}
-            精力，将视为放弃（1:1 退回累计投入，退出完成排名）。
+            精力，将视为放弃（1:1 结算累计投入，退出完成排名）。
           </div>
         )}
 
@@ -673,7 +770,7 @@ export const Investment: React.FC<Props> = ({
               project={proj}
               myInvest={investments[proj.id] || 0}
               onChange={handleInputChange}
-              disabled={isSubmitted}
+              disabled={formLocked}
               remainingEnergy={remainingEnergy}
               eraTheme={eraCard?.era}
               me={me}
@@ -700,6 +797,7 @@ export const Investment: React.FC<Props> = ({
       </div>
 
         {/* 提交区域；置于主内容外，避免挤占滚动高度计算 */}
+        {!embed && (
         <div
           ref={submitDockRef}
           className="investment-submit-dock"
@@ -716,7 +814,7 @@ export const Investment: React.FC<Props> = ({
             zIndex: 50,
           }}
         >
-          {isSubmitted ? (
+          {formLocked ? (
             <div
               style={{
                 display: "flex",
@@ -739,13 +837,13 @@ export const Investment: React.FC<Props> = ({
                 }}
               />
               <span style={{ fontWeight: 700, color: "#34d399", fontSize: uiRem(1) }}>
-                已提交，等待其他玩家...
+                {isSubmitted ? "已提交，等待其他玩家..." : "正在提交…"}
               </span>
             </div>
           ) : (
             <button
               onClick={() => handleSubmit(false)}
-              disabled={remainingEnergy < 0}
+              disabled={remainingEnergy < 0 || submitPending}
               className="btn btn-success btn-lg"
               style={{
                 padding: "1rem 4rem",
@@ -758,6 +856,7 @@ export const Investment: React.FC<Props> = ({
             </button>
           )}
         </div>
+        )}
     </div>
   );
 };

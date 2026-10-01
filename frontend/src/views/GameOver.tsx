@@ -44,9 +44,11 @@ interface Props {
   game: GameState;
   me?: Player;
   personaImages?: Record<string, number>;
+  /** 主持嵌入：只展示公开排行，不展示个人人格块 */
+  embed?: boolean;
 }
 
-export const GameOver: React.FC<Props> = ({ game, me, personaImages = {} }) => {
+export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed = false }) => {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<string | null>(null);
   const [pdfFeedback, setPdfFeedback] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -235,7 +237,7 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {} }) => {
           })}
         </div>
 
-        {me && myResult && (
+        {!embed && me && myResult && (
           <div style={{ marginBottom: "2rem" }}>
             <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
               <p style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)", margin: 0 }}>
@@ -315,12 +317,13 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {} }) => {
           </div>
         )}
 
-        {!myResult && me && (
+        {!embed && !myResult && me && (
           <p style={{ textAlign: "center", color: "var(--color-text-muted)", fontSize: uiRem(0.85), marginBottom: "1.5rem" }}>
             人格分析数据尚未就绪，请稍候刷新或联系管理员。
           </p>
         )}
 
+        {!embed && (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.75rem" }}>
           <div style={{ display: "flex", justifyContent: "center", gap: "1rem", flexWrap: "wrap", width: "100%" }}>
 
@@ -358,9 +361,10 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {} }) => {
             </p>
           )}
         </div>
+        )}
       </div>
 
-      {me && myResult && pdfRadarData && pdfLineData && pdfProjectBarData && (
+      {!embed && me && myResult && pdfRadarData && pdfLineData && pdfProjectBarData && (
       <div
         id="pdf-charts-hidden-container"
         aria-hidden="true"

@@ -3,14 +3,14 @@ import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
 
-interface Props { game: GameState; me: Player; }
+interface Props { game: GameState; me: Player; embed?: boolean; }
 
-export const CommunityNaming: React.FC<Props> = ({ game, me }) => {
+export const CommunityNaming: React.FC<Props> = ({ game, me, embed = false }) => {
   const [name, setName] = useState("");
   const namer = game.players
     .filter((p) => p.connected && !p.isAI)
     .sort((a, b) => b.wealth - a.wealth)[0];
-  const canName = namer?.id === me.id;
+  const canName = !embed && namer?.id === me.id;
 
   const handleSubmit = () => {
     if (!name.trim()) return;

@@ -83,7 +83,7 @@ pm2 logs guangyin --lines 30   # 登录时应出现 [admin] authenticate request
 
 `.env` 格式：`ADMIN_TOKEN=密钥`（等号两侧勿加空格）。错误密钥应立刻提示「密钥无效」，不应等到超时。
 
-**投资阶段「来杯咖啡」买了咖啡但左侧不出现 ☕ 退订图标**（财富已 -16、精力已 +1）：多为 **服务端 `dist` 未含 `coffeePurchasesThisRound` 广播字段**。浏览器 DevTools → Network → WebSocket → 最新 `gameUpdate`，在己方 `players[]` 中查看 `coffeePurchasesThisRound` 是否 ≥1。服务器上：
+**投资阶段「来杯咖啡」买了咖啡但左侧不出现 ☕ 退订图标**（财富已 -17、精力已 +1）：多为 **服务端 `dist` 未含 `coffeePurchasesThisRound` 广播字段**。浏览器 DevTools → Network → WebSocket → 最新 `gameUpdate`，在己方 `players[]` 中查看 `coffeePurchasesThisRound` 是否 ≥1。服务器上：
 
 ```bash
 grep coffeePurchasesThisRound /www/wwwroot/guangyinduidu.com/server/dist/network/broadcast.js

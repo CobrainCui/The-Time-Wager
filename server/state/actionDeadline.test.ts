@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  ACTION_DEADLINE_ERA1_R1_MS,
   ACTION_DEADLINE_MS,
+  formatActionDeadlineClock,
+  getActionDeadlineMs,
   getInvestmentRemainingMs,
   pauseInvestmentDeadline,
   resumeInvestmentDeadline,
@@ -9,6 +12,22 @@ import {
 } from "./actionDeadline.js";
 import { handleActionTimeExpired } from "./actionTimeExpiry.js";
 import { createInitialGame } from "./gameState.js";
+
+describe("getActionDeadlineMs", () => {
+  it("era 1 round 1 is 12 minutes", () => {
+    const game = createInitialGame("room", []);
+    assert.equal(getActionDeadlineMs(game), ACTION_DEADLINE_ERA1_R1_MS);
+    assert.equal(formatActionDeadlineClock(game), "12:00");
+  });
+
+  it("other rounds are 10 minutes", () => {
+    const game = createInitialGame("room", []);
+    game.currentEra = 2;
+    game.roundInEra = 1;
+    assert.equal(getActionDeadlineMs(game), ACTION_DEADLINE_MS);
+    assert.equal(formatActionDeadlineClock(game), "10:00");
+  });
+});
 
 describe("investment timer pause/resume/reset", () => {
   it("pause freezes remaining and blocks expiry", () => {
@@ -53,6 +72,17 @@ describe("investment timer pause/resume/reset", () => {
     game.investmentTimerPausedAt = Date.now();
     startInvestmentDeadline(game);
     assert.equal(game.investmentTimerPausedAt, undefined);
+    const remaining = getInvestmentRemainingMs(game);
+    assert.ok(remaining > ACTION_DEADLINE_ERA1_R1_MS - 2000);
+    assert.ok(remaining <= ACTION_DEADLINE_ERA1_R1_MS);
+  });
+
+  it("reset uses 10 minutes when not era 1 round 1", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "INVESTMENT";
+    game.currentEra = 1;
+    game.roundInEra = 2;
+    startInvestmentDeadline(game);
     const remaining = getInvestmentRemainingMs(game);
     assert.ok(remaining > ACTION_DEADLINE_MS - 2000);
     assert.ok(remaining <= ACTION_DEADLINE_MS);

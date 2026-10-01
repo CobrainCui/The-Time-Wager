@@ -87,6 +87,19 @@ describe("investment visibility", () => {
     assert.equal("pendingLotteryOffers" in mine, false);
     assert.equal("lotteryCompletedDeals" in mine, false);
     assert.equal("pendingLotteryOffer" in mine, false);
+    assert.equal("auctionCompletedDeals" in mine, false);
+    assert.equal("auctionBids" in mine, false);
+
+    game.auctionCompletedDeals = [
+      { cardId: "buff_gold", playerId: "them", cost: 25, auctionRound: 1 },
+    ];
+    const withWins = serializeGameForClient(game, {}, "me") as {
+      auctionSessionWins?: { cardId: string; playerId: string }[];
+      auctionCompletedDeals?: unknown;
+    };
+    assert.equal("auctionCompletedDeals" in withWins, false);
+    assert.equal(withWins.auctionSessionWins?.length, 1);
+    assert.equal(withWins.auctionSessionWins?.[0]?.playerId, "them");
 
     game.pendingLotteryOffers = [{ offerId: "lot1", playerId: "me", amount: 7 }];
     const mineLottery = serializeGameForClient(game, {}, "me");
@@ -94,6 +107,16 @@ describe("investment visibility", () => {
     assert.equal((mineLottery as { pendingLotteryOffer?: { amount: number } }).pendingLotteryOffer?.amount, 7);
     assert.equal("pendingLotteryOffers" in mineLottery, false);
     assert.equal("pendingLotteryOffer" in themLottery, false);
+
+    game.pendingWealthAdjustments = [{ offerId: "w1", playerId: "me", delta: 50 }];
+    const mineWealth = serializeGameForClient(game, {}, "me");
+    const themWealth = serializeGameForClient(game, {}, "them");
+    assert.equal(
+      (mineWealth as { pendingWealthAdjustment?: { delta: number } }).pendingWealthAdjustment?.delta,
+      50
+    );
+    assert.equal("pendingWealthAdjustments" in mineWealth, false);
+    assert.equal("pendingWealthAdjustment" in themWealth, false);
 
     const god = serializeGameForClient(game, { isGodView: true }, null);
     const godThem = god.players.find((p) => p.id === "them");
@@ -103,6 +126,7 @@ describe("investment visibility", () => {
     assert.equal(Array.isArray((god as { lotteryCompletedDeals?: unknown }).lotteryCompletedDeals), true);
     assert.equal(Array.isArray((god as { pendingAuctionOffers?: unknown }).pendingAuctionOffers), true);
     assert.equal(Array.isArray((god as { auctionCompletedDeals?: unknown }).auctionCompletedDeals), true);
+    assert.equal(Array.isArray((god as { pendingWealthAdjustments?: unknown }).pendingWealthAdjustments), true);
   });
 });
 

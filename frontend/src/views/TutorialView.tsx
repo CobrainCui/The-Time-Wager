@@ -17,6 +17,11 @@ export const TutorialView: React.FC<Props> = ({ game, me }) => {
     preloadTutorialProjectCovers();
   }, []);
 
+  useEffect(() => {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+  }, [step]);
+
   return (
     <div
       className={`tutorial-view-shell${fitViewport ? " tutorial-view-shell--fit" : ""}`}

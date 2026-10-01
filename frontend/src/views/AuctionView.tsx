@@ -20,6 +20,8 @@ interface Props {
   game: GameState;
   me: Player;
   buffImages?: Record<string, number>;
+  /** 主持公共预览：只展示牌面与出价记录，隐藏个人出价 */
+  embed?: boolean;
 }
 
 function formatBidTime(ts: number): string {
@@ -34,7 +36,7 @@ function formatBidTime(ts: number): string {
   }
 }
 
-export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {} }) => {
+export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed = false }) => {
   const distributed = new Set(game.auctionDistributedCardIds || []);
   const focusId = game.auctionFocusCardId;
   const hasForceBuy = me.inventory.includes("buff_force_buy");
@@ -50,9 +52,9 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {} }) => {
     playerPendingTransferOutWealth(game, me.id)
   );
 
-  const startingBid = game.auctionStartingBid ?? 1;
+  const startingBid = game.auctionStartingBid ?? 5;
   const currentBid = game.auctionCurrentBid ?? 0;
-  const minNext = game.auctionMinimumNextBid ?? 1;
+  const minNext = game.auctionMinimumNextBid ?? 5;
   const highBidderId = game.auctionHighBidderId ?? null;
   const highBidderName = game.auctionHighBidderName ?? null;
   const history = game.auctionBidHistory ?? [];
@@ -240,7 +242,7 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {} }) => {
                   {focusDef?.desc || "—"}
                 </div>
               </div>
-              {hasForceBuy && (
+              {!embed && hasForceBuy && (
                 <button
                   type="button"
                   className="btn btn-purple btn-sm"
@@ -312,33 +314,39 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {} }) => {
                   color: "var(--color-text-secondary)",
                 }}
               >
-                <span>
-                  我的可用财富{" "}
-                  <strong style={{ color: "#86efac", fontFamily: "var(--font-mono)" }}>
-                    {availableShown}
-                  </strong>
-                  {holdShown && (
-                    <span style={{ color: "var(--color-text-muted)" }}> · {holdShown}</span>
-                  )}
-                </span>
-                <span
-                  style={{
-                    fontWeight: 700,
-                    color:
-                      myStatus === "leading"
-                        ? "#86efac"
+                {!embed && (
+                  <>
+                    <span>
+                      我的可用财富{" "}
+                      <strong style={{ color: "#86efac", fontFamily: "var(--font-mono)" }}>
+                        {availableShown}
+                      </strong>
+                      {holdShown && (
+                        <span style={{ color: "var(--color-text-muted)" }}> · {holdShown}</span>
+                      )}
+                    </span>
+                    <span
+                      style={{
+                        fontWeight: 700,
+                        color:
+                          myStatus === "leading"
+                            ? "#86efac"
+                            : myStatus === "outbid"
+                              ? "#fca5a5"
+                              : "var(--color-text-muted)",
+                      }}
+                    >
+                      {myStatus === "leading"
+                        ? "你暂时领先"
                         : myStatus === "outbid"
-                          ? "#fca5a5"
-                          : "var(--color-text-muted)",
-                  }}
-                >
-                  {myStatus === "leading"
-                    ? "你暂时领先"
-                    : myStatus === "outbid"
-                      ? "有人出得比你高"
-                      : "你还没出过价"}
+                          ? "有人出得比你高"
+                          : "你还没出过价"}
+                    </span>
+                  </>
+                )}
+                <span style={{ color: "var(--color-text-muted)" }}>
+                  每次至少多加 {Math.max(1, minNext - currentBid)}
                 </span>
-                <span style={{ color: "var(--color-text-muted)" }}>每次至少多加 1</span>
               </div>
 
               <div>
@@ -412,6 +420,7 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {} }) => {
                 </div>
               </div>
 
+              {!embed && (
               <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                 {iAmLeading ? (
                   <div
@@ -443,20 +452,20 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {} }) => {
                         className="btn btn-ghost btn-sm"
                         onClick={() => {
                           const base = amountText === "" ? minNext : Math.max(amount, minNext);
-                          setAmountText(String(base + 1));
+                          setAmountText(String(base + 5));
                         }}
                       >
-                        再加 1
+                        再加 5
                       </button>
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
                         onClick={() => {
                           const base = amountText === "" ? minNext : Math.max(amount, minNext);
-                          setAmountText(String(base + 5));
+                          setAmountText(String(base + 10));
                         }}
                       >
-                        再加 5
+                        再加 10
                       </button>
                     </div>
                     <div style={{ display: "flex", gap: "0.5rem", alignItems: "stretch" }}>
@@ -502,6 +511,23 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {} }) => {
                   </>
                 )}
               </div>
+              )}
+              {embed && (
+                <div
+                  style={{
+                    marginTop: "auto",
+                    padding: "0.75rem 1rem",
+                    borderRadius: "0.75rem",
+                    background: "rgba(255,255,255,0.04)",
+                    color: "var(--color-text-muted)",
+                    fontWeight: 600,
+                    fontSize: uiRem(0.85),
+                    textAlign: "center",
+                  }}
+                >
+                  观战预览 · 仅展示出价记录
+                </div>
+              )}
             </div>
           </div>
         )}

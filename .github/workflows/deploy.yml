@@ -76,9 +76,23 @@ jobs:
           grep -q investmentTimerPausedAt /www/wwwroot/guangyinduidu.com/server/dist/network/broadcast.js
           grep -q adminInvestmentTimer /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
           grep -q adminInvestmentTimer /www/wwwroot/admin.guangyinduidu.com/assets/admin-*.js
-          # 管理子域入口必须指向最新 admin.html（含新 hash 资源）
+
+          # 财富调整（给钱/扣钱）：前后端需同版本，避免旧 admin 包缺入口
+          grep -q adminAdjustWealth /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
+          grep -q pendingWealthAdjustments /www/wwwroot/guangyinduidu.com/server/dist/network/broadcast.js
+          grep -q adminAdjustWealth /www/wwwroot/admin.guangyinduidu.com/assets/admin-*.js
+
+          # 主持补发/收回手牌：前后端需同版本
+          grep -q adminAdjustPlayerCard /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
+          grep -q adminAdjustPlayerCard /www/wwwroot/admin.guangyinduidu.com/assets/admin-*.js
+          grep -q '补发' /www/wwwroot/admin.guangyinduidu.com/assets/admin-*.js
+
+          # 管理子域入口必须指向最新 admin.html（含新 hash 资源）；禁缓存避免旧入口指到过期 hash
           test -f /www/wwwroot/admin.guangyinduidu.com/index.html
           grep -q 'admin-' /www/wwwroot/admin.guangyinduidu.com/index.html
+          grep -q 'no-store' /www/wwwroot/admin.guangyinduidu.com/index.html || grep -qi 'Cache-Control' /www/wwwroot/admin.guangyinduidu.com/index.html
+          # 若面板 Nginx 对 html 开了长缓存，部署后立刻刷新 mtime，降低命中旧入口概率
+          touch /www/wwwroot/admin.guangyinduidu.com/index.html /www/wwwroot/admin.guangyinduidu.com/admin.html 2>/dev/null || true
           
           # 清理压缩包
           rm -f /root/dist_upload.zip

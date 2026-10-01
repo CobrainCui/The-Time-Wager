@@ -37,7 +37,7 @@ export const BUFF_CARD_DEFS: Record<string, { name: string; desc: string; icon: 
   },
   buff_lighter: {
     name: "打火机",
-    desc: "烧毁任意一张被玩家持有且尚未结算的道具卡（含自己）。被烧的卡不再生效。",
+    desc: "指定其他玩家后，从其本局拍卖得到的道具中选一张烧毁（不显示在手牌或已发动）；被烧的卡不再生效。",
     icon: "🔥",
     color: "#f97316",
   },
@@ -54,15 +54,19 @@ export const AUCTION_CARDS_BY_ROUND: Record<number, { id: string; name: string }
     { id: "buff_insurance", name: "保险" },
     { id: "buff_gold", name: "点石成金" },
     { id: "buff_slack", name: "摸鱼传染" },
+    { id: "buff_work_rest", name: "劳逸结合" },
   ],
   2: [
     { id: "buff_force_buy", name: "强买强卖" },
+    { id: "buff_slack", name: "摸鱼传染" },
     { id: "buff_work_rest", name: "劳逸结合" },
     { id: "buff_short", name: "项目做空" },
   ],
   3: [
     { id: "buff_lighter", name: "打火机" },
     { id: "buff_lottery", name: "彩票" },
+    { id: "buff_slack", name: "摸鱼传染" },
+    { id: "buff_work_rest", name: "劳逸结合" },
   ],
 };
 
@@ -73,4 +77,29 @@ export function getAuctionRound(currentEra: number): number {
 export function getAuctionCardsForEra(currentEra: number) {
   const round = getAuctionRound(currentEra);
   return AUCTION_CARDS_BY_ROUND[round] || AUCTION_CARDS_BY_ROUND[1];
+}
+
+export type AuctionCompletedDealView = {
+  cardId: string;
+  playerId: string;
+  cost: number;
+  auctionRound?: number;
+  source?: "hammer" | "force_buy";
+};
+
+/** 当前拍卖场次下的成交记录（同牌跨场不混淆） */
+export function findAuctionDealForSession(
+  deals: AuctionCompletedDealView[] | undefined,
+  cardId: string,
+  currentEra: number,
+  distributedIds: readonly string[]
+): AuctionCompletedDealView | undefined {
+  const round = getAuctionRound(currentEra);
+  const list = deals ?? [];
+  const forRound = list.find((d) => d.cardId === cardId && d.auctionRound === round);
+  if (forRound) return forRound;
+  if (distributedIds.includes(cardId)) {
+    return list.find((d) => d.cardId === cardId && d.auctionRound == null);
+  }
+  return undefined;
 }

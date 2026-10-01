@@ -69,7 +69,9 @@ function communityLongProjectProgress(
 ): number {
   let communityProgress = 0;
   game.players.forEach((p) => {
-    communityProgress += p.longTerm[projectId]?.totalInvested || 0;
+    const lt = p.longTerm[projectId];
+    if (!lt || lt.status === "abandoned") return;
+    communityProgress += lt.totalInvested || 0;
   });
   if (maxEnergy <= 0) return 0;
   return Math.min(100, (communityProgress / maxEnergy) * 100);

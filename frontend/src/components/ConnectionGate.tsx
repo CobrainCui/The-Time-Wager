@@ -3,6 +3,8 @@ import { uiRem } from "../utils/typography";
 
 interface Props {
   connected: boolean;
+  /** 曾经连上过：短断线时继续渲染子树，避免卸载 Admin/玩家状态 */
+  everConnected?: boolean;
   error: string | null;
   onRetry: () => void;
   /** admin 子域提示更具体 */
@@ -12,13 +14,39 @@ interface Props {
 
 export const ConnectionGate: React.FC<Props> = ({
   connected,
+  everConnected = false,
   error,
   onRetry,
   variant = "player",
   children,
 }) => {
-  if (connected) {
-    return <>{children}</>;
+  // 已连上，或曾经连上且尚未判定致命失败：保持子树挂载
+  if (connected || (everConnected && !error)) {
+    if (connected) return <>{children}</>;
+    return (
+      <>
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            padding: "0.45rem 1rem",
+            textAlign: "center",
+            fontSize: uiRem(0.85),
+            fontWeight: 600,
+            color: "#fbbf24",
+            background: "rgba(42, 34, 16, 0.95)",
+            borderBottom: "1px solid rgba(251,191,36,0.35)",
+          }}
+        >
+          正在重新连接…
+        </div>
+        {children}
+      </>
+    );
   }
 
   return (

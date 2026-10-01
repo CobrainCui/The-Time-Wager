@@ -10,7 +10,11 @@ import { ensureProjectsDrawnForEra, stripExpiredRiskProjects, updateEraCard } fr
 import { AI_BOT_ENABLED } from "../config/features.js";
 import { beginAuctionSession } from "../logic/auctionCards.js";
 import { ensureSessionStarted, recordPhaseChange } from "./sessionTelemetry.js";
-import { clearActionDeadline, startInvestmentDeadline } from "./actionDeadline.js";
+import {
+  clearActionDeadline,
+  getActionDeadlineMs,
+  startInvestmentDeadline,
+} from "./actionDeadline.js";
 import { applyRoundEnergy } from "../logic/energySchedule.js";
 import { syncActiveLongTermRecords } from "../logic/longTermLogic.js";
 
@@ -26,10 +30,11 @@ export function tryAdvancePhase(game: GameState) {
       syncActiveLongTermRecords(game);
       game.phase = "INVESTMENT";
       startInvestmentDeadline(game);
+      const deadlineMin = getActionDeadlineMs(game) / (60 * 1000);
       game.logs.push(
         game.currentEra === 1
-          ? "⏱️ 10 分钟倒计时开始（投资阶段）"
-          : "⏱️ 10 分钟倒计时开始（投资与道具）"
+          ? `⏱️ ${deadlineMin} 分钟倒计时开始（投资阶段）`
+          : `⏱️ ${deadlineMin} 分钟倒计时开始（投资与道具）`
       );
 
       resetAllReady(game);
@@ -43,7 +48,8 @@ export function tryAdvancePhase(game: GameState) {
           syncActiveLongTermRecords(game);
           game.phase = "INVESTMENT";
           startInvestmentDeadline(game);
-          game.logs.push("⏱️ 10 分钟倒计时开始（投资与道具）");
+          const deadlineMin = getActionDeadlineMs(game) / (60 * 1000);
+          game.logs.push(`⏱️ ${deadlineMin} 分钟倒计时开始（投资与道具）`);
           resetAllReady(game);
       }
   }
@@ -121,9 +127,8 @@ function advanceRound(game: GameState) {
     game.roundInEra = 1;
     game.currentEra += 1;
     
-    // 超过 Era 4 -> 游戏结束
+    // 超过 Era 4 -> 社区命名（未完成长期已在第四时代第二轮 settlePhase 发完）
     if (game.currentEra > 4) {
-      settleEndGame(game);
       game.phase = "COMMUNITY_NAMING";
       return;
     }
@@ -149,33 +154,4 @@ function advanceRound(game: GameState) {
   });
 
   applyRoundEnergy(game);
-}
-
-function settleEndGame(game: GameState) {
-    game.logs.push("🏁 游戏结束！正在结算未完成的长期项目...");
-    
-    game.activeProjects.forEach(proj => {
-        if (proj.type !== 'long') return;
-        
-        let totalProgress = 0;
-        game.players.forEach(p => {
-            totalProgress += (p.longTerm[proj.id]?.totalInvested || 0);
-        });
-        
-        let ratio = 1;
-        if (totalProgress >= (proj.maxEnergy * 2 / 3)) {
-            ratio = 10;
-        } else if (totalProgress >= (proj.maxEnergy / 3)) {
-            ratio = 5;
-        }
-        
-        game.players.forEach(p => {
-            const myInvest = p.longTerm[proj.id]?.totalInvested || 0;
-            if (myInvest > 0) {
-                const gain = myInvest * ratio;
-                p.wealth += gain;
-                game.logs.push(`📜 ${p.name} 结算长期项目「${proj.name}」(进度${totalProgress}/${proj.maxEnergy}, 比例1:${ratio}), 获得 ${gain}`);
-            }
-        });
-    });
 }

@@ -177,48 +177,40 @@ export function useBuffCard(
     if (target.id === player.id) return { success: false, msg: "打火机不能烧毁自己的卡" };
     const burnId = typeof params.burnCardId === "string" ? params.burnCardId : "";
     if (!burnId) return { success: false, msg: "未指定要烧毁的卡" };
+    const cardMeta = buffCards.find((c) => c.id === burnId);
+    if (!cardMeta || RETIRED_CARD_IDS.has(burnId) || burnId === LIGHTER_CARD_ID) {
+      return { success: false, msg: "未知或不可烧毁的卡" };
+    }
 
+    // 忽略客户端 burnFromInventory：先拆已发动，否则拆手牌；两边都没有也消耗打火机
     let burned = false;
-    let burnFromInventory: boolean | undefined;
-    if (params.burnFromInventory === true) {
-      const invIdx = target.inventory.indexOf(burnId);
-      if (invIdx !== -1) {
-        target.inventory.splice(invIdx, 1);
-        burned = true;
-        burnFromInventory = true;
-      }
-    } else if (params.burnFromInventory === false) {
-      const abIdx = target.activeBuffs.findIndex((b) => b.cardId === burnId);
-      if (abIdx !== -1) {
-        target.activeBuffs.splice(abIdx, 1);
-        burned = true;
-        burnFromInventory = false;
-      }
+    let burnSource: "inventory" | "active" | undefined;
+    const abIdx = target.activeBuffs.findIndex((b) => b.cardId === burnId);
+    if (abIdx !== -1) {
+      target.activeBuffs.splice(abIdx, 1);
+      burned = true;
+      burnSource = "active";
     } else {
       const invIdx = target.inventory.indexOf(burnId);
       if (invIdx !== -1) {
         target.inventory.splice(invIdx, 1);
         burned = true;
-        burnFromInventory = true;
-      } else {
-        const abIdx = target.activeBuffs.findIndex((b) => b.cardId === burnId);
-        if (abIdx !== -1) {
-          target.activeBuffs.splice(abIdx, 1);
-          burned = true;
-          burnFromInventory = false;
-        }
+        burnSource = "inventory";
       }
     }
-    if (!burned) return { success: false, msg: "目标没有这张可烧毁的卡" };
 
     effect.burnCardId = burnId;
-    effect.burnFromInventory = burnFromInventory === true;
-    effect.burnSource = burnFromInventory === true ? "inventory" : "active";
+    effect.burnHit = burned;
+    if (burnSource) {
+      effect.burnSource = burnSource;
+      effect.burnFromInventory = burnSource === "inventory";
+    }
 
-    const burnedName = buffCards.find((c) => c.id === burnId)?.name || burnId;
-    game.logs.push(`🔥 ${player.name} 用【打火机】烧毁了 ${target.name} 的【${burnedName}】`);
-    usedText = `烧毁 ${target.name} 的【${burnedName}】`;
-    if (target.id !== player.id) {
+    const burnedName = cardMeta.name;
+    usedText = `对${target.name}使用打火机，指定【${burnedName}】`;
+    // 公开日志与持有者文案同形，避免 gameUpdate 泄露是否命中
+    game.logs.push(`🔥 ${player.name} 对 ${target.name} 使用【打火机】，指定【${burnedName}】`);
+    if (burned) {
       hitNote = {
         cardId,
         role: "hit",

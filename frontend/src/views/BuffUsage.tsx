@@ -33,7 +33,6 @@ export const BuffUsage: React.FC<Props> = ({
   const [targetPlayer, setTargetPlayer] = useState("");
   const [targetProject, setTargetProject] = useState<number | undefined>(undefined);
   const [burnCardId, setBurnCardId] = useState("");
-  const [burnFromInventory, setBurnFromInventory] = useState(true);
 
   const actionsEnabled = canUseBuffs(game, me, readOnly);
   const actionsLocked = !actionsEnabled;
@@ -54,42 +53,19 @@ export const BuffUsage: React.FC<Props> = ({
     [game.players, targetPlayer]
   );
   const burnOptions = useMemo(() => {
-    type BurnOpt = {
-      id: string;
-      label: string;
-      fromInventory: boolean;
-      ownerId: string;
-    };
-    const owners =
-      burnTarget && burnTarget.id !== me.id
-        ? [burnTarget]
-        : game.players.filter((p) => p.id !== me.id);
-    const opts: BurnOpt[] = [];
-    for (const owner of owners) {
-      const showOwner = !(burnTarget && burnTarget.id !== me.id);
-      for (const id of owner.inventory || []) {
-        opts.push({
-          id,
-          ownerId: owner.id,
-          fromInventory: true,
-          label: showOwner
-            ? `${owner.name} · 手牌·${BUFF_DEFS[id]?.name || id}`
-            : `手牌·${BUFF_DEFS[id]?.name || id}`,
-        });
-      }
-      for (const b of owner.activeBuffs || []) {
-        opts.push({
-          id: b.cardId,
-          ownerId: owner.id,
-          fromInventory: false,
-          label: showOwner
-            ? `${owner.name} · 已发动·${BUFF_DEFS[b.cardId]?.name || b.cardId}`
-            : `已发动·${BUFF_DEFS[b.cardId]?.name || b.cardId}`,
-        });
-      }
-    }
-    return opts;
-  }, [burnTarget, game.players, me.id]);
+    if (!burnTarget || burnTarget.id === me.id) return [];
+    return (burnTarget.burnableCardIds ?? []).map((id) => ({
+      id,
+      ownerId: burnTarget.id,
+      label: BUFF_DEFS[id]?.name || id,
+    }));
+  }, [burnTarget, me.id]);
+
+  const lighterBurnBlocked =
+    selectedCard === "buff_lighter" &&
+    !!burnTarget &&
+    burnTarget.id !== me.id &&
+    burnOptions.length === 0;
 
   const handleUse = () => {
     if (actionsLocked) return;
@@ -119,13 +95,11 @@ export const BuffUsage: React.FC<Props> = ({
       targetPlayerId: targetPlayer || undefined,
       targetProjectId: targetProject,
       burnCardId: burnCardId || undefined,
-      burnFromInventory,
     });
     setSelectedCard(null);
     setTargetPlayer("");
     setTargetProject(undefined);
     setBurnCardId("");
-    setBurnFromInventory(true);
   };
 
   const selectedDef = selectedCard ? BUFF_DEFS[selectedCard] : null;
@@ -332,6 +306,39 @@ export const BuffUsage: React.FC<Props> = ({
                     </div>
                   )}
 
+                  {selectedCard === "buff_lighter" && targetPlayer && (
+                    <div>
+                      <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
+                        目标卡牌
+                      </label>
+                      {lighterBurnBlocked ? (
+                        <p
+                          style={{
+                            fontSize: uiRem(0.85),
+                            color: "var(--color-text-secondary)",
+                            margin: 0,
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          该玩家没有拍卖得到的道具
+                        </p>
+                      ) : (
+                        <select
+                          className="input"
+                          value={burnCardId || ""}
+                          onChange={(e) => setBurnCardId(e.target.value)}
+                        >
+                          <option value="">-- 选择卡牌 --</option>
+                          {burnOptions.map((o) => (
+                            <option key={o.id} value={o.id}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+
                   {selectedCard === "buff_short" && (
                     <div>
                       <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>目标项目</label>
@@ -348,50 +355,23 @@ export const BuffUsage: React.FC<Props> = ({
                     </div>
                   )}
 
-                  {selectedCard === "buff_lighter" && (
-                    <div>
-                      <label style={{ display: "block", fontSize: uiRem(0.7), fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-muted)", marginBottom: "0.5rem" }}>
-                        目标卡牌
-                      </label>
-                      <select
-                        className="input"
-                        value={
-                          burnCardId
-                            ? `${burnFromInventory ? "inv" : "act"}:${targetPlayer}:${burnCardId}`
-                            : ""
-                        }
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (!v) {
-                            setBurnCardId("");
-                            return;
-                          }
-                          const [src, ownerId, id] = v.split(":");
-                          setBurnFromInventory(src === "inv");
-                          setBurnCardId(id);
-                          setTargetPlayer(ownerId);
-                        }}
-                      >
-                        <option value="">-- 选择卡牌 --</option>
-                        {burnOptions.map((o, i) => (
-                          <option
-                            key={`${o.ownerId}-${o.fromInventory ? "inv" : "act"}-${o.id}-${i}`}
-                            value={`${o.fromInventory ? "inv" : "act"}:${o.ownerId}:${o.id}`}
-                          >
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
                   {selectedCard === "buff_work_rest" && (
                     <div style={{ fontSize: uiRem(0.825), color: "var(--color-text-secondary)", lineHeight: 1.6, background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "0.625rem", padding: "0.75rem" }}>
                       被使用【摸鱼传染】后获得 8 精力。单独使用无效。
                     </div>
                   )}
 
-                  <button onClick={handleUse} className="btn btn-purple btn-full" style={{ background: selectedDef ? `linear-gradient(135deg, ${selectedDef.color}, ${selectedDef.color}bb)` : undefined }}>
+                  <button
+                    onClick={handleUse}
+                    disabled={lighterBurnBlocked}
+                    className="btn btn-purple btn-full"
+                    style={{
+                      background: selectedDef
+                        ? `linear-gradient(135deg, ${selectedDef.color}, ${selectedDef.color}bb)`
+                        : undefined,
+                      opacity: lighterBurnBlocked ? 0.45 : 1,
+                    }}
+                  >
                     ✨ 立即发动
                   </button>
                   <button onClick={() => setSelectedCard(null)} className="btn btn-ghost btn-full">

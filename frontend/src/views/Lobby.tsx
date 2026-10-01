@@ -20,9 +20,11 @@ export const Lobby: React.FC<Props> = ({ game }) => {
   useEffect(() => {
     const clearJoining = () => setIsJoining(false);
     socket.on("playerJoined", clearJoining);
+    socket.on("deviceClaimPending", clearJoining);
     socket.on("error", clearJoining);
     return () => {
       socket.off("playerJoined", clearJoining);
+      socket.off("deviceClaimPending", clearJoining);
       socket.off("error", clearJoining);
     };
   }, []);

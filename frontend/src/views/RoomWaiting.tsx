@@ -5,9 +5,11 @@ import { GameState, Player } from "../types";
 interface Props {
   game: GameState;
   me: Player;
+  /** 主持公共预览：不高亮座位 */
+  embed?: boolean;
 }
 
-export const RoomWaiting: React.FC<Props> = ({ game, me }) => {
+export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
   const online = game.players.filter((p) => p.connected);
 
   return (
@@ -73,7 +75,9 @@ export const RoomWaiting: React.FC<Props> = ({ game, me }) => {
               在线玩家 ({online.length})
             </div>
             <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              {online.map((p) => (
+              {online.map((p) => {
+                const isMe = !embed && p.id === me.id;
+                return (
                 <li
                   key={p.id}
                   style={{
@@ -82,19 +86,20 @@ export const RoomWaiting: React.FC<Props> = ({ game, me }) => {
                     justifyContent: "space-between",
                     padding: "0.5rem 0.75rem",
                     borderRadius: "0.5rem",
-                    background: p.id === me.id ? "rgba(59,130,246,0.12)" : "rgba(255,255,255,0.03)",
-                    border: `1px solid ${p.id === me.id ? "rgba(59,130,246,0.25)" : "var(--color-border)"}`,
+                    background: isMe ? "rgba(59,130,246,0.12)" : "rgba(255,255,255,0.03)",
+                    border: `1px solid ${isMe ? "rgba(59,130,246,0.25)" : "var(--color-border)"}`,
                   }}
                 >
-                  <span style={{ fontWeight: p.id === me.id ? 700 : 500, color: "white" }}>
+                  <span style={{ fontWeight: isMe ? 700 : 500, color: "white" }}>
                     {p.name}
-                    {p.id === me.id && (
+                    {isMe && (
                       <span style={{ marginLeft: "0.35rem", fontSize: uiRem(0.75), color: "#93c5fd" }}>(我)</span>
                     )}
                   </span>
                   <span style={{ width: "0.5rem", height: "0.5rem", borderRadius: "50%", background: "#34d399" }} aria-hidden />
                 </li>
-              ))}
+              );
+              })}
               {online.length === 0 && (
                 <li style={{ textAlign: "center", color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}>暂无在线玩家</li>
               )}

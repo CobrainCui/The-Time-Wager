@@ -12,9 +12,21 @@ import {
 } from "../state/gameState.js";
 import { togglePlayerReady, forceSubmitPendingInvestments, adminUnlockPlayer, resetAllReady } from "../state/gameActions.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
-import { clearActionDeadline, startInvestmentDeadline, pauseInvestmentDeadline, resumeInvestmentDeadline, getInvestmentRemainingMs } from "../state/actionDeadline.js";
+import {
+  clearActionDeadline,
+  formatActionDeadlineClock,
+  startInvestmentDeadline,
+  pauseInvestmentDeadline,
+  resumeInvestmentDeadline,
+  getInvestmentRemainingMs,
+} from "../state/actionDeadline.js";
 import { applyInvestments, sanitizeInvestments } from "../logic/investmentLogic.js"; 
-import { purchaseCoffee, refundCoffee } from "../logic/coffeeLogic.js";
+import {
+  COFFEE_ENERGY_GAIN,
+  COFFEE_WEALTH_COST,
+  purchaseCoffee,
+  refundCoffee,
+} from "../logic/coffeeLogic.js";
 import { broadcastUpdate, serializeGameForClient } from "./broadcast.js"; 
 import { AI_BOT_ENABLED } from "../config/features.js";
 import { TUTORIAL_MAX_STEP } from "../config/tutorial.js";
@@ -49,6 +61,19 @@ import {
   proposeLotterySettle,
   revokeLotteryGrant,
 } from "../logic/lotterySettle.js";
+import {
+  claimWealthAdjustResponse,
+  proposeWealthAdjust,
+  revokeWealthAdjustOffer,
+} from "../logic/wealthAdjust.js";
+import { adminAdjustPlayerCard } from "../logic/adminPlayerCard.js";
+import {
+  findDeviceClaimByPlayer,
+  removeDeviceClaimByPlayer,
+  removeDeviceClaimBySocket,
+  takeDeviceClaimForPlayer,
+  upsertDeviceClaim,
+} from "../logic/deviceClaim.js";
 import { pruneSettledTransactions, pendingCountFrom, MAX_PENDING_PER_SENDER } from "../util/pruneTransactions.js";
 import { resolvePendingTransfer } from "../logic/transferResolve.js";
 import { allow } from "../util/rateLimit.js";
@@ -142,6 +167,50 @@ function reconnectTokenMatches(expected: string, provided: unknown): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function clearPendingDeviceClaimOnSocket(
+  io: Server,
+  socket: Socket,
+  game: GameState | undefined
+): boolean {
+  const pending = socket.data.pendingDeviceClaim as
+    | { roomId: string; playerId: string }
+    | undefined;
+  delete socket.data.pendingDeviceClaim;
+  if (!pending) return false;
+  const g = game ?? rooms[pending.roomId];
+  if (!g) return false;
+  return removeDeviceClaimBySocket(g, socket.id);
+}
+
+function emitPlayerJoinSideEffects(socket: Socket, game: GameState, player: Player) {
+  socket.emit("playerJoined", { playerId: player.id, reconnectToken: player.reconnectToken });
+  const pendingLottery = findPendingLotteryOffer(game, player.id);
+  if (pendingLottery) {
+    socket.emit("lotterySettleRequest", {
+      offerId: pendingLottery.offerId,
+      amount: pendingLottery.amount,
+    });
+  }
+}
+
+function bindPlayerSocket(
+  io: Server,
+  game: GameState,
+  player: Player,
+  socket: Socket,
+  options?: { rejoining?: boolean }
+) {
+  const rejoining = options?.rejoining ?? !player.connected;
+  if (!player.reconnectToken) player.reconnectToken = issueReconnectToken();
+  player.socketId = socket.id;
+  player.connected = true;
+  if (game.phase === "ROOM_WAITING") {
+    player.ready = false;
+    game.readyPlayers.delete(player.id);
+  }
+  if (rejoining) syncEnergyAfterRosterChange(game, player);
+}
+
 function detachKickedPlayerSocket(io: Server, roomId: string, socketId: string | undefined) {
   if (!socketId) return;
   const kickedSocket = io.sockets.sockets.get(socketId);
@@ -199,7 +268,33 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       }
       if (player.reconnectToken) {
         if (!reconnectTokenMatches(player.reconnectToken, reconnectToken)) {
-          socket.emit("error", "该昵称已被占用，如需恢复身份请联系主持人");
+          if (!existingGame) {
+            socket.emit("error", "房间不存在或已解散");
+            return;
+          }
+          const replaced = upsertDeviceClaim(existingGame, player.id, socket.id);
+          if (replaced && replaced.socketId !== socket.id) {
+            const superseded = io.sockets.sockets.get(replaced.socketId);
+            if (superseded) {
+              clearPendingDeviceClaimOnSocket(io, superseded, existingGame);
+              superseded.emit("deviceClaimSuperseded", {
+                message: "已有更新的认领请求，请重新加入",
+              });
+            }
+          }
+          socket.data.pendingDeviceClaim = { roomId, playerId: player.id };
+          socket.emit("deviceClaimPending", {
+            roomId,
+            playerId: player.id,
+            playerName: player.name,
+          });
+          appendSessionEvent(
+            existingGame,
+            "presence",
+            presencePayload(existingGame, "device_claim_pending", player.id),
+            player.id
+          );
+          broadcastUpdate(io, existingGame);
           return;
         }
         if (player.connected && player.socketId && player.socketId !== socket.id) {
@@ -242,18 +337,11 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
 
     if (player) {
       const rejoining = !player.connected;
-      if (!player.reconnectToken) player.reconnectToken = issueReconnectToken();
-      player.socketId = socket.id;
-      player.connected = true;
-      if (game.phase === "ROOM_WAITING") {
-        player.ready = false;
-        game.readyPlayers.delete(player.id);
-      }
-      if (rejoining) syncEnergyAfterRosterChange(game, player);
+      bindPlayerSocket(io, game, player, socket, { rejoining });
       appendSessionEvent(
         game,
         "presence",
-        presencePayload(game, "rejoin", player.id),
+        presencePayload(game, rejoining ? "rejoin" : "reconnect", player.id),
         player.id
       );
     } else {
@@ -294,19 +382,8 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       );
     }
 
-    socket.emit("playerJoined", { playerId: player.id, reconnectToken: player.reconnectToken });
+    emitPlayerJoinSideEffects(socket, game, player);
     broadcastUpdate(io, game);
-    const pendingLottery = findPendingLotteryOffer(game, player.id);
-    if (pendingLottery) {
-      socket.emit("lotterySettleRequest", {
-        offerId: pendingLottery.offerId,
-        amount: pendingLottery.amount,
-      });
-    }
-    if (game.phase === "AUCTION") {
-      // 公开加价流程：不再重发旧的「确认支付」弹窗
-    }
-
     broadcastRoomList(io);
   });
 
@@ -519,6 +596,17 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     }
   });
 
+  socket.on("cancelDeviceClaim", () => {
+    const pending = socket.data.pendingDeviceClaim as { roomId: string } | undefined;
+    if (!pending) return;
+    const game = rooms[pending.roomId];
+    if (game && removeDeviceClaimBySocket(game, socket.id)) {
+      broadcastUpdate(io, game);
+    }
+    delete socket.data.pendingDeviceClaim;
+    socket.emit("deviceClaimCancelled");
+  });
+
   socket.on("adminReleasePlayerClaim", ({ roomId, targetPlayerId }) => {
     if (!socket.data.isSuperAdmin) return;
     const game = rooms[roomId];
@@ -528,28 +616,47 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       socket.emit("error", "找不到该玩家");
       return;
     }
-    if (player.connected) {
-      socket.emit("error", "玩家在线，无需重新认领");
+    const claim = findDeviceClaimByPlayer(game, targetPlayerId);
+    if (!claim) {
+      socket.emit("error", "没有待认领的新设备");
+      return;
+    }
+    const waitSocket = io.sockets.sockets.get(claim.socketId);
+    if (!waitSocket) {
+      removeDeviceClaimByPlayer(game, targetPlayerId);
+      broadcastUpdate(io, game);
+      socket.emit("error", "待认领连接已断开，请让玩家重新加入");
       return;
     }
 
-    const previous = detachClaimedPlayer(socket);
-    if (previous && previous.roomId !== game.roomId) {
-      broadcastUpdate(io, previous);
+    if (player.socketId && player.socketId !== claim.socketId) {
+      const oldSocket = io.sockets.sockets.get(player.socketId);
+      if (oldSocket) {
+        oldSocket.leave(roomId);
+        delete oldSocket.data.gameRoomId;
+        oldSocket.emit("sessionReplaced", { message: "你的身份已在其他设备登录" });
+      }
     }
 
-    // 主持直接接管离线座位，无需再回大厅用同昵称进入
-    player.reconnectToken = undefined;
-    player.socketId = socket.id;
-    player.connected = true;
-    if (game.phase === "ROOM_WAITING") {
-      player.ready = false;
-      game.readyPlayers.delete(player.id);
-    }
-    socket.data.gameRoomId = game.roomId;
-    syncEnergyAfterRosterChange(game, player);
-    game.logs.push(`🔑 主持认领并进入玩家 ${player.name}`);
+    const rejoining = !player.connected;
+    leaveAllGameRooms(waitSocket);
+    waitSocket.join(roomId);
+    waitSocket.data.gameRoomId = roomId;
+    delete waitSocket.data.pendingDeviceClaim;
+    player.reconnectToken = issueReconnectToken();
+    bindPlayerSocket(io, game, player, waitSocket, { rejoining });
+    takeDeviceClaimForPlayer(game, targetPlayerId, claim.socketId);
+
+    appendSessionEvent(
+      game,
+      "presence",
+      presencePayload(game, "rejoin", player.id),
+      player.id
+    );
+    game.logs.push(`🔑 主持已允许 ${player.name} 用新设备进入`);
+    emitPlayerJoinSideEffects(waitSocket, game, player);
     broadcastUpdate(io, game);
+    broadcastRoomList(io);
   });
 
   socket.on("adminUnlockPlayer", ({ roomId, targetPlayerId }) => {
@@ -617,7 +724,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       });
     } else if (action === "reset") {
       startInvestmentDeadline(game);
-      game.logs.push("🔄 主持人重置了投资倒计时（10:00）");
+      game.logs.push(
+        `🔄 主持人重置了投资倒计时（${formatActionDeadlineClock(game)}）`
+      );
       appendSessionEvent(game, "investment_timer", {
         action: "reset",
         remainingMs: getInvestmentRemainingMs(game),
@@ -1041,6 +1150,127 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       broadcastUpdate(io, game);
   });
 
+  socket.on("adminAdjustWealth", ({ roomId, targetPlayerId, delta }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game) return;
+    const proposed = proposeWealthAdjust(game, targetPlayerId, delta);
+    if (!proposed.ok) {
+      socket.emit("error", proposed.message);
+      return;
+    }
+    const { offer, replaced, player } = proposed;
+    if (replaced && player.socketId) {
+      io.to(player.socketId).emit("wealthAdjustCancelled", { offerId: replaced.offerId });
+    }
+    const signed = offer.delta > 0 ? `+${offer.delta}` : String(offer.delta);
+    game.logs.push(`💰 上帝向 ${player.name} 发起财富调整确认：${signed}`);
+    appendSessionEvent(game, "admin_wealth_offered", {
+      targetPlayerId: player.id,
+      delta: offer.delta,
+      offerId: offer.offerId,
+    });
+    broadcastUpdate(io, game);
+  });
+
+  socket.on("playerRespondWealthAdjust", (data) => {
+    const roomId = getRoomId(socket);
+    if (!roomId || !rooms[roomId]) return;
+    const game = rooms[roomId];
+    const player = game.players.find((p) => p.socketId === socket.id);
+    if (!player) return;
+
+    const accept = data?.accept === true;
+    const claimed = claimWealthAdjustResponse(game, player.id, data?.offerId, accept);
+    if (!claimed.ok) {
+      socket.emit("error", claimed.message);
+      return;
+    }
+    const signed = claimed.delta > 0 ? `+${claimed.delta}` : String(claimed.delta);
+    if (accept) {
+      game.logs.push(
+        `💰 ${player.name} 确认财富调整 ${signed}（当前 ${claimed.wealthAfter}）`
+      );
+      appendSessionEvent(
+        game,
+        "admin_wealth_adjust",
+        {
+          playerId: player.id,
+          delta: claimed.delta,
+          wealthAfter: claimed.wealthAfter,
+          accepted: true,
+        },
+        player.id
+      );
+    } else {
+      game.logs.push(`🚫 ${player.name} 拒绝了财富调整 ${signed}`);
+      appendSessionEvent(
+        game,
+        "admin_wealth_offer_cancelled",
+        { playerId: player.id, delta: claimed.delta, declined: true },
+        player.id
+      );
+    }
+    broadcastUpdate(io, game);
+  });
+
+  socket.on("adminRevokeWealthAdjust", ({ roomId, targetPlayerId }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game) return;
+    const result = revokeWealthAdjustOffer(game, targetPlayerId);
+    if (!result.ok) {
+      socket.emit("error", result.message);
+      return;
+    }
+    const target = game.players.find((p) => p.id === result.playerId);
+    if (target?.socketId) {
+      io.to(target.socketId).emit("wealthAdjustCancelled", { offerId: result.offerId });
+    }
+    game.logs.push(
+      `↩️ 上帝撤回了 ${target?.name ?? result.playerId} 的财富调整待确认`
+    );
+    appendSessionEvent(game, "admin_wealth_offer_cancelled", {
+      playerId: result.playerId,
+      offerId: result.offerId,
+      delta: result.delta,
+    });
+    broadcastUpdate(io, game);
+  });
+
+  socket.on("adminAdjustPlayerCard", ({ roomId, targetPlayerId, cardId, action, inventoryIndex }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId];
+    if (!game) return;
+    const result = adminAdjustPlayerCard(
+      game,
+      targetPlayerId,
+      cardId,
+      action,
+      inventoryIndex
+    );
+    if (!result.ok) {
+      socket.emit("error", result.message);
+      return;
+    }
+    const { player, cardName, action: act, cardId: resolvedCardId } = result;
+    if (act === "add") {
+      game.logs.push(
+        `🎴 上帝补发「${cardName}」给 ${player.name}（未经过拍卖，不扣财富）`
+      );
+    } else {
+      game.logs.push(
+        `🎴 上帝从 ${player.name} 手牌收回「${cardName}」（拍卖记录不变）`
+      );
+    }
+    appendSessionEvent(game, "admin_card_adjust", {
+      targetPlayerId: player.id,
+      cardId: resolvedCardId,
+      action: act,
+    });
+    broadcastUpdate(io, game);
+  });
+
   // === AI 与自动调优 ===
   socket.on("adminAddAI", ({ roomId, persona }) => {
       if (!AI_BOT_ENABLED) {
@@ -1279,6 +1509,11 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       return;
     }
     broadcastUpdate(io, game);
+    const cups = player.coffeePurchasesThisRound ?? 1;
+    socket.emit("playerNotify", {
+      type: "coffee",
+      message: `咖啡购买成功（本轮第 ${cups} 杯） · -${COFFEE_WEALTH_COST}💰 +${COFFEE_ENERGY_GAIN}⚡`,
+    });
   });
 
   socket.on("cancelCoffee", ({ count }: { count?: number }) => {
@@ -1295,12 +1530,18 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       socket.emit("error", "已提交投资，无法退订咖啡");
       return;
     }
-    const result = refundCoffee(game, player, Number(count));
+    const n = Math.floor(Number(count));
+    const result = refundCoffee(game, player, n);
     if (!result.ok) {
       socket.emit("error", result.message);
       return;
     }
     broadcastUpdate(io, game);
+    const remaining = player.coffeePurchasesThisRound ?? 0;
+    socket.emit("playerNotify", {
+      type: "coffee",
+      message: `咖啡退订成功（${n} 杯） · +${n * COFFEE_WEALTH_COST}💰 −${n * COFFEE_ENERGY_GAIN}⚡ · 本轮剩余 ${remaining} 杯`,
+    });
   });
 
   socket.on("useBuffCard", (data) => {
@@ -1436,6 +1677,12 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
   });
 
   socket.on("disconnect", () => {
+    for (const game of Object.values(rooms)) {
+      if (removeDeviceClaimBySocket(game, socket.id)) {
+        delete socket.data.pendingDeviceClaim;
+        broadcastUpdate(io, game);
+      }
+    }
     const boundRoom = socket.data.gameRoomId as string | undefined;
     if (boundRoom && rooms[boundRoom]) {
       const game = rooms[boundRoom];

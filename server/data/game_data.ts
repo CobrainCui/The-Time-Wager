@@ -56,11 +56,11 @@ export interface BuffCard {
 export const buffCards: BuffCard[] = [
   { id: 'buff_insurance', name: '保险', type: 'special', description: '本轮参与的风险项目投爆则赔付100；点石成金可作用于保险赔付', auctionRound: 1 },
   { id: 'buff_gold', name: '点石成金', type: 'gain', description: '本轮项目基础回报、正的排名与时代加成，以及保险赔付与彩票入账按1.5倍向下取整；惩罚不放大', auctionRound: 1 },
-  { id: 'buff_slack', name: '摸鱼传染', type: 'interfere', description: '指定在局玩家（含自己）精力-8（不低于0）；对方发动劳逸结合则对方获得8精力', auctionRound: 1 },
+  { id: 'buff_slack', name: '摸鱼传染', type: 'interfere', description: '指定在局玩家（含自己）精力-8（不低于0）；对方发动劳逸结合则对方获得8精力；每场拍卖各一张', auctionRound: 1 },
   { id: 'buff_force_buy', name: '强买强卖', type: 'special', description: '仅能在拍卖阶段使用一次，免费将当前正在拍卖的道具卡入手', auctionRound: 2 },
-  { id: 'buff_work_rest', name: '劳逸结合', type: 'special', description: '被使用摸鱼传染后获得8精力；单独使用无效', auctionRound: 2 },
+  { id: 'buff_work_rest', name: '劳逸结合', type: 'special', description: '被使用摸鱼传染后获得8精力；单独使用无效；每场拍卖各一张', auctionRound: 2 },
   { id: 'buff_short', name: '项目做空', type: 'special', description: '指定本轮可投入项目；结算时已积累精力清零（含长期累计），已入账财富不追回，本轮不再发放回报', auctionRound: 2 },
-  { id: 'buff_lighter', name: '打火机', type: 'special', description: '烧毁任意一张被玩家持有且尚未结算的道具卡（含自己）；被烧的卡不再生效', auctionRound: 3 },
+  { id: 'buff_lighter', name: '打火机', type: 'special', description: '指定其他玩家后，从其本局拍卖得到的道具中选一张烧毁（不显示在手牌或已发动）；被烧的卡不再生效', auctionRound: 3 },
   { id: 'buff_lottery', name: '彩票', type: 'special', description: '实体骰子定奖，由主持人输入金额；若你本轮打出了点石成金，入账按1.5倍向下取整', auctionRound: 3 },
 ];
 

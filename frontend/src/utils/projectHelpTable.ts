@@ -15,6 +15,7 @@ export type ProjectHelpStatusId =
   | "abandoned"
   | "committed_long"
   | "investable"
+  | "next_round"
   | "unpaid_long"
   | "in_progress"
   | "participated"
@@ -48,13 +49,17 @@ const STATUS_META: Record<
   withdrawn: { chip: "🗑️ 已撤场", tooltip: "连续 2 轮无人投资，项目离场" },
   abandoned: {
     chip: "🚫 已放弃",
-    tooltip: "已 1:1 退回累计投入，并退出该项目完成时的排名与时代加成",
+    tooltip: "已 1:1 结算累计投入，并退出该项目完成时的排名与时代加成",
   },
   committed_long: {
     chip: "📌 已参投",
-    tooltip: "参投后每轮须投入≥3⚡，否则放弃：1:1 退回累计投入并退出完成排名",
+    tooltip: "参投后每轮须投入≥3⚡，否则放弃：1:1 结算累计投入并退出完成排名",
   },
   investable: { chip: "✅ 可投", tooltip: "当前阶段可对本项目分配精力" },
+  next_round: {
+    chip: "⏭ 下轮可投",
+    tooltip: "本页暂不可分配精力，下一轮投资阶段仍可投",
+  },
   unpaid_long: { chip: "🔒 已锁定", tooltip: "本轮投资已提交，等待结算" },
   in_progress: { chip: "⏳ 进行中", tooltip: "项目仍在牌桌，暂不可投或未跟投" },
   participated: { chip: "🙋 已参与", tooltip: "你曾参与，当前无更高优先级状态" },
@@ -85,11 +90,23 @@ function isLongTypeAtProject(game: GameState, projectId: number): boolean {
   return PROJECT_CATALOG_BY_ID[projectId]?.type === "long";
 }
 
+function offTableShortOrRiskBurst(proj: ActiveProject | undefined): boolean {
+  if (!proj || proj.type === "long") return false;
+  const total = proj.accumulatedInvested ?? 0;
+  const max = proj.maxEnergy;
+  return total > max;
+}
+
 function isOffTableExploded(game: GameState, projectId: number): boolean {
+  const off =
+    findCompleted(game, projectId) ?? findUncompleted(game, projectId);
+  if (off) {
+    if (off.type === "long") return false;
+    return offTableShortOrRiskBurst(off);
+  }
   if (isLongTypeAtProject(game, projectId)) return false;
   const r = lastResult(game, projectId);
-  if (r?.isExploded) return true;
-  return false;
+  return r?.isExploded === true;
 }
 
 /** 长期项目已离场完成：满额 vs 超填（依据最近结算或 completedProjects 累计） */
@@ -122,11 +139,13 @@ export function settlementHidesInvestedRatio(result: SettlementProjectResult): b
   return result.isExploded && result.type !== "long";
 }
 
-/** 结算页长期完成态文案（满额 / 超填） */
+/** 结算页长期完成态文案（满额 / 超填 / 梯度收官） */
 export function longSettlementStatusLabel(
   result: SettlementProjectResult
 ): { text: string; color: string } | null {
-  if (result.type !== "long" || !result.isCompleted) return null;
+  if (result.type !== "long") return null;
+  if (result.endGradient) return { text: "梯度结算", color: "#a78bfa" };
+  if (!result.isCompleted) return null;
   if (result.isExploded) return { text: "超额完成", color: LONG_COMPLETE_CHIP_COLOR };
   return { text: "恰好完成", color: LONG_COMPLETE_CHIP_COLOR };
 }
@@ -166,6 +185,37 @@ export function isFreshWithdrawnProject(game: GameState, projectId: number): boo
 export function canInvestNow(game: GameState, me: Player, project: ActiveProject): boolean {
   if (!game.activeProjects.some((p) => p.id === project.id)) return false;
   if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") return false;
+  if (game.phase === "INVESTMENT" && me.ready) return false;
+
+  if (project.type === "long") {
+    const lt = me.longTerm[project.id];
+    if (lt?.status === "abandoned" || lt?.status === "completed") return false;
+  }
+  return true;
+}
+
+/** 之后是否还会进入可分配精力的投资阶段（第4时代第2轮结算后不再有） */
+export function hasFutureInvestmentRound(game: GameState): boolean {
+  if (game.phase === "GAME_OVER" || game.phase === "COMMUNITY_NAMING") return false;
+  // 本轮结算结束后会进社区命名/终局，牌面项目不应再标「下轮可投」
+  if (game.phase === "SETTLEMENT" && game.currentEra >= 4 && game.roundInEra >= 2) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * ？栏「可投项目」归属：牌面上且之后投资阶段仍能投。
+ * 结算/拍卖/时代介绍等阶段本页不能投，但仍归可投表；投资阶段已提交或终局结算则进不可再投。
+ */
+export function isHelpInvestableCandidate(
+  game: GameState,
+  me: Player,
+  project: ActiveProject
+): boolean {
+  if (!game.activeProjects.some((p) => p.id === project.id)) return false;
+  if (!hasFutureInvestmentRound(game)) return false;
+  // 本轮已提交锁定：本轮不可再改，进「不可再投」
   if (game.phase === "INVESTMENT" && me.ready) return false;
 
   if (project.type === "long") {
@@ -235,20 +285,33 @@ export function resolveProjectStatus(game: GameState, me: Player, projectId: num
     if (r?.isCompleted) return meta("completed");
   }
 
+  // 投资阶段已提交：所有牌面项目统一「已锁定」（含短/风险，不只长期）
+  if (onTable && game.phase === "INVESTMENT" && me.ready) {
+    return meta("unpaid_long");
+  }
+
   if (
     type === "long" &&
     onTable &&
     me.longTerm[projectId]?.status === "active" &&
     (onTable.accumulatedInvested ?? 0) < onTable.maxEnergy
   ) {
-    if (!canInvestNow(game, me, onTable)) {
-      return meta("unpaid_long");
+    if (canInvestNow(game, me, onTable)) {
+      return meta("committed_long");
     }
+    if (isHelpInvestableCandidate(game, me, onTable)) {
+      return meta("next_round");
+    }
+    // 终局结算等：不再有下轮投资，仍提示已参投义务已结束于本局
     return meta("committed_long");
   }
 
   if (onTable && canInvestNow(game, me, onTable)) {
     return meta("investable");
+  }
+
+  if (onTable && isHelpInvestableCandidate(game, me, onTable)) {
+    return meta("next_round");
   }
 
   if (onTable) return meta("in_progress");
@@ -288,15 +351,15 @@ export function collectAppearedProjectIds(game: GameState): number[] {
 
 const CATALOG_TYPE_ORDER: Record<string, number> = { short: 0, long: 1, risk: 2 };
 
-/** ？栏「不可再投项目」：本局已出卡，且当前玩家已不可再投（离场/放弃/已提交锁定等） */
+/** ？栏「不可再投项目」：本局已出卡，且当前玩家已不可再投（离场/放弃/本轮已提交锁定等） */
 export function buildAppearedCatalogEntries(game: GameState, me: Player): ProjectCatalogEntry[] {
   const rows: ProjectCatalogEntry[] = [];
   for (const id of collectAppearedProjectIds(game)) {
     const entry = PROJECT_CATALOG_BY_ID[id];
     if (!entry) continue;
     const active = findActive(game, id);
-    // 仍在牌面且玩家还能投 → 只留在「可投项目」，不进「不可再投项目」
-    if (active && canInvestNow(game, me, active)) continue;
+    // 仍在牌面且下一轮还能投 → 只留在「可投项目」（含结算页）
+    if (active && isHelpInvestableCandidate(game, me, active)) continue;
     rows.push(entry);
   }
   rows.sort((a, b) => {
@@ -336,7 +399,7 @@ function rowForProject(game: GameState, me: Player, projectId: number): ProjectH
   };
 }
 
-/** ？栏「可投项目」：仅当前玩家仍可投入的项目（含已参投长期须续投）；不可再投的进「不可再投项目」 */
+/** ？栏「可投项目」：牌面上且下一轮仍可投（含结算页「下轮可投」）；真正离场/放弃/已锁定进「不可再投」 */
 export function buildProjectHelpRows(game: GameState, me: Player): ProjectHelpRow[] {
   const ids = collectProjectIds(game);
   if (ids.length === 0) return [];
@@ -351,7 +414,7 @@ export function buildProjectHelpRows(game: GameState, me: Player): ProjectHelpRo
   return ids
     .map((id) => {
       const active = findActive(game, id);
-      if (!active || !canInvestNow(game, me, active)) return null;
+      if (!active || !isHelpInvestableCandidate(game, me, active)) return null;
       return rowForProject(game, me, id);
     })
     .filter((r): r is ProjectHelpRow => r != null)

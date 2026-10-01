@@ -1,11 +1,13 @@
 import { uiRem } from "../utils/typography";
-import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { GameState, Player } from "../types";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GameState, Player, Transaction } from "../types";
+import { formatBubbleText } from "../components/playerChat/chatMessageUtils";
 import type { GeneratePdfResult } from "../utils/pdfGenerator";
 import { AdminPdfCaptureJob, freezeGameForPdfExport } from "../admin/adminPdfSnapshot";
 import { socket } from "../socket";
 import { adminApiUrl, adminAuthHeaders } from "../admin/adminFetch";
 import {
+  findAuctionDealForSession,
   getAuctionCardsForEra,
   getAuctionRound,
   BUFF_CARD_DEFS,
@@ -16,7 +18,9 @@ import { isAiPlayer } from "../utils/isAiPlayer";
 import { useActionCountdown } from "../hooks/useActionCountdown";
 import { useServerClockSkewRef } from "../hooks/useServerClockSkewRef";
 import { getRemainingMs, getRemainingSeconds } from "../utils/actionCountdown";
+import { formatInvestmentDeadlineClock } from "../utils/investmentDeadline";
 import { playerAvailableWealth } from "../utils/availableWealth";
+import GameRoom from "../GameRoom";
 
 const AdminPlayerPdfCapture = lazy(() =>
   import("../admin/AdminPlayerPdfCapture").then((m) => ({ default: m.AdminPlayerPdfCapture }))
@@ -29,6 +33,10 @@ const CARD_NAME_MAP: Record<string, string> = Object.fromEntries(
 interface Props {
   game: GameState;
   onExit?: () => void;
+  projectImages?: Record<number, number>;
+  eraImages?: Record<string, number>;
+  buffImages?: Record<string, number>;
+  personaImages?: Record<string, number>;
 }
 
 const PHASE_NAMES: Record<string, string> = {
@@ -38,7 +46,47 @@ const PHASE_NAMES: Record<string, string> = {
   AUCTION: "拍卖会", GAME_OVER: "游戏结束", COMMUNITY_NAMING: "社区命名",
 };
 
-export const AdminView: React.FC<Props> = ({ game, onExit }) => {
+const TX_STATUS_LABEL: Record<Transaction["status"], string> = {
+  pending: "待确认",
+  accepted: "已接受",
+  rejected: "已拒绝",
+};
+
+function formatAdminTxTime(ts: number): string {
+  try {
+    return new Date(ts).toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function adminTxBubbleText(tx: Transaction): string {
+  return formatBubbleText({
+    id: tx.id,
+    txId: tx.id,
+    peerId: tx.toId,
+    direction: "out",
+    amount: tx.amount,
+    note: tx.note || "",
+    status: tx.status,
+    timestamp: tx.timestamp,
+  });
+}
+
+export const AdminView: React.FC<Props> = ({
+  game,
+  onExit,
+  projectImages = {},
+  eraImages = {},
+  buffImages = {},
+  personaImages = {},
+}) => {
   const timerPausedAt = game.investmentTimerPausedAt;
   const timerPaused = typeof timerPausedAt === "number";
   const showAdminTimer = game.phase === "INVESTMENT" && !!game.investmentEndsAt;
@@ -59,6 +107,11 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfBatchProgress, setPdfBatchProgress] = useState<string | null>(null);
   const [pdfFeedback, setPdfFeedback] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [cardAdjustUi, setCardAdjustUi] = useState<{
+    playerId: string;
+    playerName: string;
+  } | null>(null);
+  const [cardAdjustPick, setCardAdjustPick] = useState<string | null>(null);
   const pdfExportResolverRef = useRef<((result: GeneratePdfResult) => void) | null>(null);
   const gameRef = useRef(game);
   gameRef.current = game;
@@ -66,6 +119,19 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
   const humanPlayers = [...game.players]
     .filter((p) => !isAiPlayer(p))
     .sort((a, b) => b.wealth - a.wealth);
+
+  const adminTransactionsNewestFirst = useMemo(
+    () =>
+      [...(game.transactions ?? [])].sort(
+        (a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id)
+      ),
+    [game.transactions]
+  );
+
+  const pendingDeviceClaimPlayerIds = useMemo(
+    () => new Set((game.pendingDeviceClaims ?? []).map((c) => c.playerId)),
+    [game.pendingDeviceClaims]
+  );
 
   /** 与 endsAt/serverNow/pausedAt 直接计算，不依赖 countdown hook 首帧 0 */
   const unlockRemainingSeconds =
@@ -191,7 +257,12 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
       alert("仅本场拍卖环节可撤回");
       return;
     }
-    const deal = (game.auctionCompletedDeals ?? []).find((d) => d.cardId === cardId);
+    const deal = findAuctionDealForSession(
+      game.auctionCompletedDeals,
+      cardId,
+      game.currentEra,
+      game.auctionDistributedCardIds ?? []
+    );
     const message =
       mode === "pending"
         ? `撤回「${displayName}」的待确认报价？\n玩家将不再看到该确认弹窗，可重新发放。`
@@ -239,6 +310,99 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
     if (!window.confirm(message)) return;
     emit("adminRevokeLottery", { targetPlayerId: playerId });
   };
+
+  const handleAdjustWealth = (playerId: string, playerName: string, currentWealth: number) => {
+    const raw = prompt("调整金额（正数加钱，负数扣钱）:", "10");
+    if (raw === null) return;
+    const delta = Number(String(raw).trim());
+    if (!Number.isSafeInteger(delta) || delta === 0) {
+      alert("调整金额须为非零整数");
+      return;
+    }
+    if (!Number.isSafeInteger(currentWealth + delta)) {
+      alert("调整后财富超出范围");
+      return;
+    }
+    const signed = delta > 0 ? `+${delta}` : String(delta);
+    if (
+      !window.confirm(
+        `向 ${playerName} 发送财富调整确认：${currentWealth} ${signed} → ${currentWealth + delta}？\n玩家确认后才会入账。`
+      )
+    ) {
+      return;
+    }
+    emit("adminAdjustWealth", { targetPlayerId: playerId, delta });
+  };
+
+  const handleRevokeWealthAdjust = (playerId: string, playerName: string) => {
+    if (
+      !window.confirm(
+        `撤回 ${playerName} 的财富调整待确认？\n玩家将不再看到该确认弹窗，可重新发起。`
+      )
+    ) {
+      return;
+    }
+    emit("adminRevokeWealthAdjust", { targetPlayerId: playerId });
+  };
+
+  const closeCardAdjustModal = () => {
+    setCardAdjustUi(null);
+    setCardAdjustPick(null);
+  };
+
+  const openCardAddModal = (playerId: string, playerName: string) => {
+    setCardAdjustUi({ playerId, playerName });
+    setCardAdjustPick(null);
+  };
+
+  const handleRemoveCardAt = (
+    playerId: string,
+    playerName: string,
+    inventoryIndex: number,
+    cardId: string
+  ) => {
+    const live = gameRef.current.players.find((p) => p.id === playerId);
+    const liveId = live?.inventory?.[inventoryIndex];
+    if (!liveId) {
+      alert("手牌已变化，请重试");
+      return;
+    }
+    if (liveId !== cardId) {
+      alert("手牌已变化，请重试");
+      return;
+    }
+    const cardName = CARD_NAME_MAP[liveId] || liveId;
+    const message = `从 ${playerName} 收回「${cardName}」？\n只收回这一张未使用手牌，不退款、不重新上拍。`;
+    if (!window.confirm(message)) return;
+    emit("adminAdjustPlayerCard", {
+      targetPlayerId: playerId,
+      cardId: liveId,
+      action: "remove",
+      inventoryIndex,
+    });
+  };
+
+  const confirmCardAdjust = () => {
+    if (!cardAdjustUi || !cardAdjustPick) return;
+    const cardName = CARD_NAME_MAP[cardAdjustPick] || cardAdjustPick;
+    const message = `补发「${cardName}」给 ${cardAdjustUi.playerName}？\n补发到手牌，不扣财富，拍卖池不变。`;
+    if (!window.confirm(message)) return;
+    emit("adminAdjustPlayerCard", {
+      targetPlayerId: cardAdjustUi.playerId,
+      cardId: cardAdjustPick,
+      action: "add",
+    });
+    closeCardAdjustModal();
+  };
+
+  useEffect(() => {
+    if (!cardAdjustUi) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeCardAdjustModal();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [cardAdjustUi]);
 
   const downloadBlob = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -319,7 +483,17 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
   const currentAuctionCards = getAuctionCardsForEra(game.currentEra);
   const distributedSet = new Set(game.auctionDistributedCardIds || []);
   const auctionDealByCardId = new Map(
-    (game.auctionCompletedDeals ?? []).map((d) => [d.cardId, d] as const)
+    currentAuctionCards
+      .map((card) => {
+        const deal = findAuctionDealForSession(
+          game.auctionCompletedDeals,
+          card.id,
+          game.currentEra,
+          [...distributedSet]
+        );
+        return deal ? ([card.id, deal] as const) : null;
+      })
+      .filter((e): e is [string, NonNullable<typeof e>[1]] => e != null)
   );
   const playerNameById = new Map(game.players.map((p) => [p.id, p.name] as const));
   const focusId = game.auctionFocusCardId;
@@ -432,7 +606,11 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
                   type="button"
                   className="btn btn-ghost btn-sm"
                   onClick={() => {
-                    if (confirm("重置投资倒计时为 10:00？")) {
+                    if (
+                      confirm(
+                        `重置投资倒计时为 ${formatInvestmentDeadlineClock(game)}？`
+                      )
+                    ) {
                       emit("adminInvestmentTimer", { action: "reset" });
                     }
                   }}
@@ -759,7 +937,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
                   <span>
                     至少要出到{" "}
                     <strong style={{ fontFamily: "var(--font-mono)" }}>
-                      {game.auctionMinimumNextBid ?? 1}
+                      {game.auctionMinimumNextBid ?? 5}
                     </strong>
                   </span>
                   {highBidderPlayer && currentBid > 0 && (
@@ -1047,11 +1225,35 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: uiRem(0.8) }}>
                 <thead>
                   <tr style={{ background: "rgba(255,255,255,0.02)", color: "var(--color-text-muted)" }}>
-                    {["#", "昵称", "状态", "社交", "人格", "手牌", "已用", "⚡", "💰", "操作"].map((h, i) => (
-                      <th key={i} style={{ padding: "0.75rem 0.875rem", fontWeight: 700, fontSize: uiRem(0.7), textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", whiteSpace: "nowrap" }}>
-                        {h}
-                      </th>
-                    ))}
+                    {["#", "昵称", "状态", "社交", "人格", "手牌", "已用", "⚡", "💰", "操作"].map((h, i) => {
+                      const isActions = h === "操作";
+                      return (
+                        <th
+                          key={i}
+                          style={{
+                            padding: "0.75rem 0.875rem",
+                            fontWeight: 700,
+                            fontSize: uiRem(0.7),
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                            textAlign: "left",
+                            whiteSpace: "nowrap",
+                            ...(isActions
+                              ? {
+                                  position: "sticky",
+                                  right: 0,
+                                  zIndex: 2,
+                                  // 与表格卡片底色一致，避免横滑时操作列发黑/透底
+                                  background: "var(--color-bg-card)",
+                                  boxShadow: "-6px 0 10px rgba(0,0,0,0.35)",
+                                }
+                              : null),
+                          }}
+                        >
+                          {h}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -1060,6 +1262,7 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
                     const hasGold = p.activeBuffs?.some((b) => b.cardId === "buff_gold");
                     const pendingLottery = (game.pendingLotteryOffers ?? []).find((o) => o.playerId === p.id);
                     const completedLottery = (game.lotteryCompletedDeals ?? []).find((d) => d.playerId === p.id);
+                    const pendingWealth = (game.pendingWealthAdjustments ?? []).find((o) => o.playerId === p.id);
                     const pendingAmountLabel =
                       pendingLottery && hasGold && pendingLottery.amount > 0
                         ? `（${pendingLottery.amount}）×1.5`
@@ -1117,14 +1320,63 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
                             <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.75) }}>尚未分析</span>
                           )}
                         </td>
-                        <td style={{ padding: "0.875rem" }}>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
-                            {(p.inventory || []).map((cid, i) => (
-                              <span key={i} style={{ background: "rgba(168,85,247,0.2)", border: "1px solid rgba(168,85,247,0.4)", borderRadius: "0.25rem", padding: "0.15rem 0.5rem", color: "#d8b4fe", fontSize: uiRem(0.7), whiteSpace: "nowrap" }}>
-                                {CARD_NAME_MAP[cid] || cid}
-                              </span>
-                            ))}
-                            {(!p.inventory || p.inventory.length === 0) && <span style={{ color: "var(--color-text-muted)" }}>—</span>}
+                        <td style={{ padding: "0.875rem", minWidth: "9rem" }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", alignItems: "center" }}>
+                              {(p.inventory || []).map((cid, invIdx) => (
+                                <span
+                                  key={`${cid}-${invIdx}`}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "0.25rem",
+                                    background: "rgba(168,85,247,0.2)",
+                                    border: "1px solid rgba(168,85,247,0.4)",
+                                    borderRadius: "0.25rem",
+                                    padding: "0.1rem 0.35rem 0.1rem 0.5rem",
+                                    color: "#d8b4fe",
+                                    fontSize: uiRem(0.7),
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {CARD_NAME_MAP[cid] || cid}
+                                  <button
+                                    type="button"
+                                    className="admin-inline-btn"
+                                    title="收回这一张手牌（不退款）"
+                                    onClick={() => handleRemoveCardAt(p.id, p.name, invIdx, cid)}
+                                    style={{
+                                      padding: "0.05rem 0.35rem",
+                                      fontSize: uiRem(0.62),
+                                      lineHeight: 1.2,
+                                      background: "rgba(148,163,184,0.15)",
+                                      border: "1px solid rgba(148,163,184,0.35)",
+                                      color: "#cbd5e1",
+                                    }}
+                                  >
+                                    收回
+                                  </button>
+                                </span>
+                              ))}
+                              {(!p.inventory || p.inventory.length === 0) && (
+                                <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.75) }}>无手牌</span>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              className="admin-inline-btn"
+                              title="补发道具到手牌（不经过拍卖，不扣财富）"
+                              onClick={() => openCardAddModal(p.id, p.name)}
+                              style={{
+                                alignSelf: "flex-start",
+                                background: "rgba(168,85,247,0.18)",
+                                border: "1px solid rgba(168,85,247,0.5)",
+                                color: "#d8b4fe",
+                                fontWeight: 700,
+                              }}
+                            >
+                              补发
+                            </button>
                           </div>
                         </td>
                         <td style={{ padding: "0.875rem" }}>
@@ -1139,20 +1391,39 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
                         </td>
                         <td style={{ padding: "0.875rem", fontFamily: "var(--font-mono)", fontWeight: 700, color: "#34d399" }}>{p.energy}</td>
                         <td style={{ padding: "0.875rem", fontFamily: "var(--font-mono)", fontWeight: 700, color: "#fbbf24" }}>{p.wealth}</td>
-                        <td style={{ padding: "0.875rem" }}>
-                          <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
-                            {!p.connected && (
+                        <td
+                          style={{
+                            padding: "0.875rem",
+                            position: "sticky",
+                            right: 0,
+                            zIndex: 1,
+                            background: "var(--color-bg-card)",
+                            boxShadow: "-6px 0 10px rgba(0,0,0,0.35)",
+                          }}
+                        >
+                          <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", minWidth: "11rem" }}>
+                            {pendingDeviceClaimPlayerIds.has(p.id) && (
                               <button
                                 type="button"
-                                className="admin-inline-btn"
-                                title="主持接管该离线座位，直接进入房间"
+                                className="admin-inline-btn animate-pulse"
+                                title="新设备正在等待认领，批准后该玩家将同步当前进度进入"
                                 onClick={() => {
-                                  if (confirm(`认领离线玩家 ${p.name}？将直接以该身份进入房间。`)) {
+                                  if (
+                                    confirm(
+                                      `允许 ${p.name} 用新设备进入并同步当前进度？\n原设备连接将被替换。`
+                                    )
+                                  ) {
                                     emit("adminReleasePlayerClaim", { targetPlayerId: p.id });
                                   }
                                 }}
-                                style={{ background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.35)", color: "#93c5fd" }}
-                              >认领</button>
+                                style={{
+                                  background: "rgba(59,130,246,0.2)",
+                                  border: "1px solid rgba(59,130,246,0.45)",
+                                  color: "#93c5fd",
+                                }}
+                              >
+                                认领
+                              </button>
                             )}
                             <button
                               type="button"
@@ -1217,6 +1488,39 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
                                 onClick={() => handleRevokeLottery(p.id, p.name, "pending")}
                                 style={{ background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.35)", color: "#fca5a5" }}
                               >撤回待确认</button>
+                            )}
+                            <button
+                              type="button"
+                              className="admin-inline-btn"
+                              title={
+                                pendingWealth
+                                  ? `重新发送财富调整（当前待确认 ${pendingWealth.delta > 0 ? `+${pendingWealth.delta}` : pendingWealth.delta}）`
+                                  : "给钱 / 扣钱（需玩家确认）"
+                              }
+                              onClick={() => handleAdjustWealth(p.id, p.name, p.wealth)}
+                              style={{
+                                background: pendingWealth
+                                  ? "rgba(251,191,36,0.28)"
+                                  : "rgba(251,191,36,0.18)",
+                                border: "1px solid rgba(251,191,36,0.5)",
+                                color: "#fbbf24",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {pendingWealth
+                                ? `给钱/扣钱（${pendingWealth.delta > 0 ? `+${pendingWealth.delta}` : pendingWealth.delta}）`
+                                : "给钱/扣钱"}
+                            </button>
+                            {pendingWealth && (
+                              <button
+                                type="button"
+                                className="admin-inline-btn"
+                                title={`撤回财富调整待确认（${pendingWealth.delta > 0 ? `+${pendingWealth.delta}` : pendingWealth.delta}）`}
+                                onClick={() => handleRevokeWealthAdjust(p.id, p.name)}
+                                style={{ background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.35)", color: "#fca5a5" }}
+                              >
+                                撤回财富
+                              </button>
                             )}
                             {completedLottery && (
                               <button
@@ -1291,8 +1595,223 @@ export const AdminView: React.FC<Props> = ({ game, onExit }) => {
               ))}
             </div>
           </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: "1.5rem",
+            background: "var(--color-bg-card)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "1.25rem",
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            height: "320px",
+          }}
+        >
+          <div
+            style={{
+              padding: "1rem 1.25rem",
+              borderBottom: "1px solid var(--color-border)",
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "0.75rem",
+              flexWrap: "wrap",
+            }}
+          >
+            <h2 style={{ fontWeight: 700, fontSize: uiRem(1), margin: 0 }}>💬 私信与转账（只读）</h2>
+            <span style={{ fontSize: uiRem(0.75), color: "var(--color-text-muted)" }}>
+              共 {adminTransactionsNewestFirst.length} 条
+            </span>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "0.875rem" }}>
+            {adminTransactionsNewestFirst.length === 0 ? (
+              <div
+                style={{
+                  textAlign: "center",
+                  color: "var(--color-text-muted)",
+                  fontSize: uiRem(0.85),
+                  padding: "2rem 1rem",
+                }}
+              >
+                暂无私信/转账
+              </div>
+            ) : (
+              adminTransactionsNewestFirst.map((tx) => {
+                const isDm = tx.amount === 0;
+                return (
+                  <div
+                    key={tx.id}
+                    style={{
+                      borderLeft: `2px solid ${isDm ? "rgba(96,165,250,0.45)" : "rgba(251,191,36,0.45)"}`,
+                      paddingLeft: "0.75rem",
+                      paddingTop: "0.5rem",
+                      paddingBottom: "0.5rem",
+                      marginBottom: "0.5rem",
+                      fontSize: uiRem(0.75),
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "0.35rem 0.75rem",
+                        alignItems: "center",
+                        marginBottom: "0.25rem",
+                      }}
+                    >
+                      <span style={{ color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+                        {formatAdminTxTime(tx.timestamp)}
+                      </span>
+                      <span style={{ fontWeight: 700, color: "white" }}>
+                        {tx.fromName} → {tx.toName}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: uiRem(0.65),
+                          fontWeight: 700,
+                          padding: "0.1rem 0.45rem",
+                          borderRadius: "9999px",
+                          background: isDm ? "rgba(59,130,246,0.15)" : "rgba(251,191,36,0.12)",
+                          border: `1px solid ${isDm ? "rgba(59,130,246,0.35)" : "rgba(251,191,36,0.35)"}`,
+                          color: isDm ? "#93c5fd" : "#fcd34d",
+                        }}
+                      >
+                        {isDm ? "私信" : `转账 ${tx.amount}`}
+                      </span>
+                      <span style={{ color: "var(--color-text-muted)" }}>{TX_STATUS_LABEL[tx.status]}</span>
+                    </div>
+                    <div style={{ color: "var(--color-text-secondary)", wordBreak: "break-word" }}>
+                      {adminTxBubbleText(tx)}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
+
+        <div
+          style={{
+            marginTop: "1.5rem",
+            background: "var(--color-bg-card)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "1rem",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "0.75rem",
+              flexWrap: "wrap",
+              padding: "0.85rem 1.25rem",
+              borderBottom: "1px solid var(--color-border)",
+            }}
+          >
+            <h2 style={{ fontWeight: 700, fontSize: uiRem(1), margin: 0 }}>📱 玩家界面</h2>
+            <span style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>
+              公共预览（不可操作）
+            </span>
+          </div>
+          <div
+            style={{
+              maxHeight: "70vh",
+              overflow: "auto",
+              background: "#070b14",
+              // 让内部 position:fixed 底栏/遮罩相对本容器定位，避免盖住主持台
+              transform: "translateZ(0)",
+            }}
+          >
+            <div style={{ pointerEvents: "none" }}>
+              <GameRoom
+                game={game}
+                embed
+                projectImages={projectImages}
+                eraImages={eraImages}
+                buffImages={buffImages}
+                personaImages={personaImages}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {cardAdjustUi && (
+        <div
+          className="modal-overlay"
+          role="presentation"
+          onClick={closeCardAdjustModal}
+          style={{ zIndex: 200 }}
+        >
+          <div
+            className="modal-box animate-bounce-in"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-card-adjust-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "28rem", width: "calc(100% - 2rem)" }}
+          >
+            <h3 id="admin-card-adjust-title" style={{ fontWeight: 800, marginBottom: "0.5rem" }}>
+              补发道具 · {cardAdjustUi.playerName}
+            </h3>
+            <p style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85), marginBottom: "1rem" }}>
+              补发到手牌，不扣财富，拍卖池与成交记录不变。
+            </p>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.4rem",
+                maxHeight: "16rem",
+                overflowY: "auto",
+                marginBottom: "1rem",
+              }}
+            >
+              {Object.entries(BUFF_CARD_DEFS).map(([cardId, def]) => {
+                const selected = cardAdjustPick === cardId;
+                return (
+                  <button
+                    key={cardId}
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setCardAdjustPick(cardId)}
+                    style={{
+                      justifyContent: "flex-start",
+                      textAlign: "left",
+                      border: selected
+                        ? "1px solid rgba(168,85,247,0.55)"
+                        : "1px solid var(--color-border)",
+                      background: selected ? "rgba(168,85,247,0.12)" : undefined,
+                    }}
+                  >
+                    {def.name}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: "0.75rem" }}>
+              <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={closeCardAdjustModal}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                disabled={!cardAdjustPick}
+                onClick={confirmCardAdjust}
+              >
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Suspense fallback={null}>
         <AdminPlayerPdfCapture job={pdfJob} onComplete={handlePdfCaptureComplete} />

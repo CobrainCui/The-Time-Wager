@@ -49,7 +49,7 @@ export const HELP_PROJECT_RULE_SECTIONS: HelpRuleSection[] = [
     title: "基础收益",
     lines: [
       { icon: "🟦", text: "短期：当轮投、当轮结，×10/⚡" },
-      { icon: "🟩", text: "长期：完成后个人累计 ×15/⚡（满额或超填均可）；终局未完成按全场进度梯度（不足 1/3→1:1，达 1/3→1:5，达 2/3→1:10）；参投后每轮至少 3⚡，否则 1:1 退回累计并退出完成排名" },
+      { icon: "🟩", text: "长期：完成后个人累计 ×15/⚡（满额或超填均可）；第四时代第二轮未完成按全场进度梯度（不足 1/3→1:1，达 1/3→1:5，达 2/3→1:10）；参投后每轮至少 3⚡，否则 1:1 结算累计并退出完成排名" },
       { icon: "🟥", text: "风险：当轮结算；超上限投爆，追回历史收益" },
     ],
   },
@@ -92,7 +92,10 @@ export const HELP_FLOW_SECTIONS: HelpRuleSection[] = [
   {
     title: "讨论与投资",
     lines: [
-      { icon: "⏱", text: "全员进入后开始约 10 分钟倒计时，在时限内分配精力并提交" },
+      {
+        icon: "⏱",
+        text: "全员进入后开始倒计时（第 1 时代第 1 轮 12 分钟，其余轮约 10 分钟），在时限内分配精力并提交",
+      },
       { icon: "☕", text: `来杯咖啡：${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力；已提交后若想再改，需联系主持人解锁` },
     ],
   },
@@ -118,10 +121,14 @@ export const HELP_MISC: HelpLineDef[] = [
   { icon: "💬", text: "私信：不填金额留言" },
 ];
 
+const EVERY_AUCTION_BUFF_IDS = new Set(["buff_slack", "buff_work_rest"]);
+
 const cardIdToAuctionRound: Record<string, number> = {};
 for (const [round, cards] of Object.entries(AUCTION_CARDS_BY_ROUND)) {
   for (const c of cards) {
-    cardIdToAuctionRound[c.id] = Number(round);
+    if (!EVERY_AUCTION_BUFF_IDS.has(c.id)) {
+      cardIdToAuctionRound[c.id] = Number(round);
+    }
   }
 }
 
@@ -131,6 +138,8 @@ export interface BuffHelpEntry {
   name: string;
   desc: string;
   auctionRound: number;
+  /** 三场拍卖各出现一次 */
+  everyAuction?: boolean;
   color: string;
 }
 
@@ -141,6 +150,7 @@ export function buildBuffHelpEntries(): BuffHelpEntry[] {
     name: def.name,
     desc: def.desc,
     color: def.color,
+    everyAuction: EVERY_AUCTION_BUFF_IDS.has(cardId),
     auctionRound: cardIdToAuctionRound[cardId] ?? 0,
   }));
 }

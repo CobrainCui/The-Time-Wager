@@ -27,6 +27,28 @@ export type NormalizedPersonaScores = {
   resourceConversion: number;
 };
 
+/** 原始分达到此值时雷达画满 100；对齐真实对局「二十多分已算突出」 */
+export const PERSONA_RADAR_RAW_CEILING = 40;
+
+export function scalePersonaScoreForRadar(
+  raw: number,
+  dimension?: keyof NormalizedPersonaScores
+): number {
+  const v = Math.max(0, Number.isFinite(raw) ? raw : 0);
+  /** 主持档已是 0–100 离散分，不再按 40 天花板压缩 */
+  if (dimension === "socialConnection") {
+    return Math.min(100, v);
+  }
+  return Math.min(100, (v / PERSONA_RADAR_RAW_CEILING) * 100);
+}
+
+export function scalePersonaBarFillWidth(
+  dimension: keyof NormalizedPersonaScores,
+  raw: number
+): number {
+  return scalePersonaScoreForRadar(raw, dimension);
+}
+
 export function normalizePersonaScores(
   scores: PersonaAnalysis["scores"] | undefined
 ): NormalizedPersonaScores {
@@ -48,22 +70,22 @@ export function normalizePersonaScores(
 
 export function personaRadarValues(scores: NormalizedPersonaScores): number[] {
   return [
-    scores.longTermism,
-    scores.shortTermism,
-    scores.riskTaking,
-    scores.ruleIntervention,
-    scores.socialConnection,
-    scores.resourceConversion,
+    scalePersonaScoreForRadar(scores.longTermism, "longTermism"),
+    scalePersonaScoreForRadar(scores.shortTermism, "shortTermism"),
+    scalePersonaScoreForRadar(scores.riskTaking, "riskTaking"),
+    scalePersonaScoreForRadar(scores.ruleIntervention, "ruleIntervention"),
+    scalePersonaScoreForRadar(scores.socialConnection, "socialConnection"),
+    scalePersonaScoreForRadar(scores.resourceConversion, "resourceConversion"),
   ];
 }
 
 export function personaPdfRadarValues(scores: NormalizedPersonaScores): number[] {
   return [
-    scores.longTermism,
-    scores.riskTaking,
-    scores.ruleIntervention,
-    scores.socialConnection,
-    scores.resourceConversion,
+    scalePersonaScoreForRadar(scores.longTermism, "longTermism"),
+    scalePersonaScoreForRadar(scores.riskTaking, "riskTaking"),
+    scalePersonaScoreForRadar(scores.ruleIntervention, "ruleIntervention"),
+    scalePersonaScoreForRadar(scores.socialConnection, "socialConnection"),
+    scalePersonaScoreForRadar(scores.resourceConversion, "resourceConversion"),
   ];
 }
 

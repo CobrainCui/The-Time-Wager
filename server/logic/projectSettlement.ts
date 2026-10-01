@@ -82,6 +82,11 @@ export function settlePhase(game: GameState) {
 
   game.activeProjects = remainingProjects;
 
+  // 第四时代第二轮：未完成长期按全场进度梯度结算，写入本轮结算单
+  if (game.currentEra === 4 && game.roundInEra === 2) {
+    settleUnfinishedLongGradient(game, snapshot, logs);
+  }
+
   game.lastSettlement = {
     round: game.globalRound,
     results: snapshot
@@ -92,6 +97,101 @@ export function settlePhase(game: GameState) {
   game.players.forEach(p => {
       p.wealthHistory.push(p.wealth);
   });
+}
+
+/**
+ * 第四时代第二轮结算：仍未完成的长期项目按全场累计进度发梯度奖（1:1 / 1:5 / 1:10），
+ * 计入本轮 snapshot.playerGains，并移入 uncompletedProjects。不含点石成金放大。
+ * 含本轮仍在牌面的长期，以及中途撤场（连续空投）已进 uncompleted 的长期。
+ */
+function settleUnfinishedLongGradient(
+  game: GameState,
+  snapshot: SettlementProjectResult[],
+  logs: string[]
+) {
+  logs.push("📜 第四时代第二轮：结算未完成的长期项目（进度梯度）...");
+
+  const candidates = new Map<number, ActiveProject>();
+  for (const p of game.activeProjects) {
+    if (p.type === "long") candidates.set(p.id, p);
+  }
+  for (const p of game.uncompletedProjects) {
+    if (p.type === "long" && !p.endGradientPaid) candidates.set(p.id, p);
+  }
+
+  const paidIds = new Set<number>();
+
+  for (const proj of candidates.values()) {
+    let totalProgress = 0;
+    for (const p of game.players) {
+      const lt = p.longTerm[proj.id];
+      if (!lt || lt.status === "abandoned") continue;
+      totalProgress += lt.totalInvested || 0;
+    }
+
+    let ratio = 1;
+    if (totalProgress >= (proj.maxEnergy * 2) / 3) {
+      ratio = 10;
+    } else if (totalProgress >= proj.maxEnergy / 3) {
+      ratio = 5;
+    }
+
+    let result = snapshot.find((r) => r.projectId === proj.id);
+    if (!result) {
+      result = {
+        projectId: proj.id,
+        name: proj.name,
+        type: proj.type,
+        maxEnergy: proj.maxEnergy,
+        totalInvested: totalProgress,
+        isExploded: false,
+        isCompleted: false,
+        endGradient: true,
+        playerInvestments: {},
+        playerGains: {},
+      };
+      snapshot.push(result);
+    } else {
+      result.endGradient = true;
+    }
+
+    for (const p of game.players) {
+      const lt = p.longTerm[proj.id];
+      if (!lt || lt.status === "abandoned") continue;
+      const myInvest = lt.totalInvested || 0;
+      if (myInvest <= 0) continue;
+
+      const gain = myInvest * ratio;
+      p.wealth += gain;
+
+      // 梯度行的「投入」用个人累计，与结算基数一致
+      result.playerInvestments[p.id] = myInvest;
+
+      const g = result.playerGains[p.id] || zeroGain();
+      g.base += gain;
+      g.total += gain;
+      result.playerGains[p.id] = g;
+
+      if (!proj.earningRecords) proj.earningRecords = {};
+      proj.totalPayout = (proj.totalPayout || 0) + gain;
+      proj.earningRecords[p.id] = (proj.earningRecords[p.id] || 0) + gain;
+
+      logs.push(
+        `📜 ${p.name} 结算长期项目「${proj.name}」(进度${totalProgress}/${proj.maxEnergy}, 比例1:${ratio}), 获得 ${gain}`
+      );
+    }
+
+    proj.endGradientPaid = true;
+    paidIds.add(proj.id);
+  }
+
+  game.activeProjects = game.activeProjects.filter((p) => !paidIds.has(p.id));
+  for (const id of paidIds) {
+    const proj = candidates.get(id)!;
+    if (!game.uncompletedProjects.some((p) => p.id === id)) {
+      game.uncompletedProjects.push(proj);
+    }
+  }
 }
 
 export function settleOneProject(
@@ -133,6 +233,7 @@ export function settleOneProject(
       if (p.riskGains?.[project.id]) p.riskGains[project.id] = 0;
     }
     project.investorRecords = {};
+    project.investorRoundSlices = {};
     project.accumulatedInvested = 0;
     project.currentInvested = 0;
     project.earningRecords = {};
@@ -155,18 +256,47 @@ export function settleOneProject(
           if (!shouldTreatAsAbandon(record, currentAmount)) return;
 
           const totalRefund = refundOnAbandon(record!, currentAmount);
+          // 牌桌进度只含历史；本轮 currentAmount 尚未写入 accumulated / investorRecords
+          const historicalOnBoard = record!.totalInvested;
 
           p.wealth += totalRefund;
+          let abandonSlices = [...(record!.roundSlices ?? [])];
+          if (currentAmount > 0) abandonSlices.push(currentAmount);
+          let abandonSliceSum = abandonSlices.reduce((s, x) => s + x, 0);
+          if (abandonSliceSum !== totalRefund) {
+            if (!record!.roundSlices?.length) {
+              abandonSlices =
+                currentAmount > 0
+                  ? [historicalOnBoard, currentAmount]
+                  : [totalRefund];
+            } else if (abandonSliceSum < totalRefund) {
+              abandonSlices.push(totalRefund - abandonSliceSum);
+            } else {
+              let excess = abandonSliceSum - totalRefund;
+              const trimmed = [...abandonSlices];
+              trimmed[trimmed.length - 1] = Math.max(0, trimmed[trimmed.length - 1]! - excess);
+              abandonSlices = trimmed.filter((x) => x > 0);
+            }
+          }
           record!.status = "abandoned";
+          record!.totalInvested = 0;
+          record!.roundSlices = abandonSlices;
 
           p.investedLongEnergy = Math.max(0, p.investedLongEnergy - totalRefund);
+
+          delete project.investorRecords[p.id];
+          project.accumulatedInvested = Math.max(
+            0,
+            (project.accumulatedInvested || 0) - historicalOnBoard
+          );
 
           project.totalPayout += totalRefund;
           project.earningRecords[p.id] = (project.earningRecords[p.id] || 0) + totalRefund;
 
-          logs.push(`🚫 ${p.name} 对「${project.name}」追加投资不足3，判定放弃。退回 ${totalRefund}，退出排名。`);
+          logs.push(`🚫 ${p.name} 对「${project.name}」追加投资不足3，判定放弃。结算 ${totalRefund}，退出排名。`);
 
-          result.playerInvestments[p.id] = currentAmount;
+          // 结算单「投入」记 1:1 结算的累计（含本轮），避免显示 0 投入却结算 N
+          result.playerInvestments[p.id] = totalRefund;
           result.playerGains[p.id] = { total: totalRefund, base: totalRefund, rank: 0, era: 0 };
 
           if (p.investment) p.investment[project.id] = 0;
@@ -194,8 +324,17 @@ export function settleOneProject(
       if (!result.playerGains[i.player.id]) result.playerGains[i.player.id] = zeroGain();
       
       const pid = i.player.id;
-      // ✅ 核心：更新历史累计投入
-      project.investorRecords[pid] = (project.investorRecords[pid] || 0) + i.amount;
+      const amount = i.amount;
+      const prior = project.investorRecords[pid] || 0;
+      project.investorRecords[pid] = prior + amount;
+      if (project.type === "short" || project.type === "risk") {
+        if (!project.investorRoundSlices) project.investorRoundSlices = {};
+        if (!project.investorRoundSlices[pid]?.length && prior > 0) {
+          project.investorRoundSlices[pid] = [prior];
+        }
+        if (!project.investorRoundSlices[pid]) project.investorRoundSlices[pid] = [];
+        project.investorRoundSlices[pid].push(amount);
+      }
   });
 
   applyLongTermRoundInvestments(project, currentRoundInvestors);
@@ -261,6 +400,7 @@ export function settleOneProject(
 
         const historyGain = p.riskGains?.[project.id] || 0;
         if (historyGain > 0) {
+          // 全额追回；财富不够也扣成负数，不得截断到 0
           p.wealth -= historyGain;
           p.riskGains[project.id] = 0;
           logs.push(`  💸 ${p.name} 被追回历史收益 -${historyGain}`);

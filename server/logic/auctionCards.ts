@@ -2,18 +2,19 @@ import { randomUUID } from "node:crypto";
 import {
   AuctionBidRecord,
   AuctionBidStatus,
+  AuctionCompletedDeal,
   AuctionOffer,
   GameState,
 } from "../state/gameState.js";
 
 export const AUCTION_CARD_IDS_BY_ROUND: Record<number, string[]> = {
-  1: ["buff_insurance", "buff_gold", "buff_slack"],
-  2: ["buff_force_buy", "buff_work_rest", "buff_short"],
-  3: ["buff_lighter", "buff_lottery"],
+  1: ["buff_insurance", "buff_gold", "buff_slack", "buff_work_rest"],
+  2: ["buff_force_buy", "buff_slack", "buff_work_rest", "buff_short"],
+  3: ["buff_lighter", "buff_lottery", "buff_slack", "buff_work_rest"],
 };
 
-export const AUCTION_STARTING_BID = 1;
-export const AUCTION_BID_INCREMENT = 1;
+export const AUCTION_STARTING_BID = 5;
+export const AUCTION_BID_INCREMENT = 5;
 
 export function getAuctionRound(game: GameState): number {
   return Math.max(1, Math.min(game.currentEra - 1, 3));
@@ -24,6 +25,20 @@ export function getAuctionCardIdsForGame(game: GameState): string[] {
   return AUCTION_CARD_IDS_BY_ROUND[round] || AUCTION_CARD_IDS_BY_ROUND[1];
 }
 
+export function findCompletedDealForSession(
+  game: GameState,
+  cardId: string
+): AuctionCompletedDeal | undefined {
+  const round = getAuctionRound(game);
+  const deals = game.auctionCompletedDeals ?? [];
+  const forRound = deals.find((d) => d.cardId === cardId && d.auctionRound === round);
+  if (forRound) return forRound;
+  if ((game.auctionDistributedCardIds ?? []).includes(cardId)) {
+    return deals.find((d) => d.cardId === cardId && d.auctionRound == null);
+  }
+  return undefined;
+}
+
 export function recordAuctionCompletedDeal(
   game: GameState,
   cardId: string,
@@ -31,9 +46,12 @@ export function recordAuctionCompletedDeal(
   cost: number,
   source: "hammer" | "force_buy" = "hammer"
 ): void {
+  const round = getAuctionRound(game);
   if (!game.auctionCompletedDeals) game.auctionCompletedDeals = [];
-  game.auctionCompletedDeals = game.auctionCompletedDeals.filter((d) => d.cardId !== cardId);
-  game.auctionCompletedDeals.push({ cardId, playerId, cost, source });
+  game.auctionCompletedDeals = game.auctionCompletedDeals.filter(
+    (d) => !(d.cardId === cardId && d.auctionRound === round)
+  );
+  game.auctionCompletedDeals.push({ cardId, playerId, cost, source, auctionRound: round });
 }
 
 export function unmarkAuctionCardDistributed(game: GameState, cardId: string): void {
@@ -470,10 +488,15 @@ export function publicSoldLots(game: GameState): {
   playerName: string;
   cost: number;
 }[] {
+  const round = getAuctionRound(game);
   const pool = new Set(getAuctionCardIdsForGame(game));
   const distributed = new Set(game.auctionDistributedCardIds ?? []);
   return (game.auctionCompletedDeals ?? [])
-    .filter((d) => pool.has(d.cardId) && distributed.has(d.cardId))
+    .filter((d) => {
+      if (!pool.has(d.cardId) || !distributed.has(d.cardId)) return false;
+      if (d.auctionRound != null) return d.auctionRound === round;
+      return true;
+    })
     .map((d) => ({
       cardId: d.cardId,
       playerId: d.playerId,
@@ -481,6 +504,31 @@ export function publicSoldLots(game: GameState): {
       cost: d.cost,
     }))
     .reverse();
+}
+
+/** 本局全部拍卖成交记录（玩家公开情报；以 auctionCompletedDeals 为准，跨拍卖场保留） */
+export function publicSessionAuctionWins(game: GameState): {
+  cardId: string;
+  playerId: string;
+  playerName: string;
+  cost: number;
+  auctionRound?: number;
+}[] {
+  // 成交记录跨拍卖场保留；distributed 仅表示当前场池内已拍出，新场 begin 会清空
+  const sorted = [...(game.auctionCompletedDeals ?? [])].sort((a, b) => {
+    const roundDelta = (a.auctionRound ?? 0) - (b.auctionRound ?? 0);
+    if (roundDelta !== 0) return roundDelta;
+    const cardDelta = a.cardId.localeCompare(b.cardId);
+    if (cardDelta !== 0) return cardDelta;
+    return a.playerId.localeCompare(b.playerId);
+  });
+  return sorted.map((d) => ({
+    cardId: d.cardId,
+    playerId: d.playerId,
+    playerName: game.players.find((p) => p.id === d.playerId)?.name ?? d.playerId,
+    cost: d.cost,
+    auctionRound: d.auctionRound,
+  }));
 }
 
 export function buildAuctionLotPublicView(game: GameState) {
@@ -627,8 +675,14 @@ export type RevokeAuctionGrantResult =
   | { ok: false; message: string };
 
 function clearAuctionGrantMarkers(game: GameState, cardId: string): void {
+  const round = getAuctionRound(game);
+  const wasDistributed = (game.auctionDistributedCardIds ?? []).includes(cardId);
   unmarkAuctionCardDistributed(game, cardId);
-  game.auctionCompletedDeals = (game.auctionCompletedDeals ?? []).filter((d) => d.cardId !== cardId);
+  game.auctionCompletedDeals = (game.auctionCompletedDeals ?? []).filter((d) => {
+    if (d.cardId !== cardId) return true;
+    if (d.auctionRound != null) return d.auctionRound !== round;
+    return !wasDistributed;
+  });
   game.pendingAuctionOffers = (game.pendingAuctionOffers ?? []).filter((o) => o.cardId !== cardId);
 }
 
@@ -661,7 +715,7 @@ function revokeCompletedAuctionGrant(
     return { ok: false, message: "该道具没有待确认或已成交记录" };
   }
 
-  const deal = (game.auctionCompletedDeals ?? []).find((d) => d.cardId === cardId);
+  const deal = findCompletedDealForSession(game, cardId);
   const cost = deal?.cost ?? 0;
   const dealPlayer = deal ? game.players.find((p) => p.id === deal.playerId) : undefined;
   const holder =

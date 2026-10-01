@@ -41,8 +41,12 @@ export interface ActiveProject {
   era?: string;
 
   investorRecords: Record<string, number>;
+  /** 短/风险：每轮有投入的分段（结算全览个人条） */
+  investorRoundSlices?: Record<string, number[]>;
   earningRecords: Record<string, number>;
   totalPayout: number;
+  /** 第四时代第二轮未完成长期梯度是否已发放 */
+  endGradientPaid?: boolean;
 }
 
 export interface BuffCard {
@@ -65,6 +69,8 @@ export interface LongTermProgress {
   totalInvested: number;
   status: "active" | "completed" | "abandoned";
   reward?: number;
+  /** 每轮投入精力（结算全览个人条分段） */
+  roundSlices?: number[];
 }
 
 export interface PersonaAnalysis {
@@ -136,6 +142,8 @@ export interface Player {
 
   /** 本轮已购咖啡杯数（服务端权威） */
   coffeePurchasesThisRound?: number;
+  /** 持打火机时可见：该玩家本局拍卖所得卡 id（不含打火机） */
+  burnableCardIds?: string[];
 
   totalEnergyConsumed: number; 
   wealthHistory: number[];     
@@ -194,6 +202,8 @@ export interface SettlementProjectResult {
   isCompleted: boolean;
   /** 本轮被【项目做空】短路结算 */
   shortSold?: boolean;
+  /** 第四时代第二轮未完成长期梯度结算 */
+  endGradient?: boolean;
   playerInvestments: Record<string, number>; 
   playerGains: Record<string, GainBreakdown>;
 }
@@ -252,8 +262,14 @@ export interface GameState {
   /** 本场拍卖已用过强买强卖的玩家 */
   forceBuyUsedPlayerIds?: string[];
   /** 本场拍卖成交明细（主持撤销发放用） */
-  auctionCompletedDeals?: { cardId: string; playerId: string; cost: number }[];
-  /** 起拍价（固定为 1） */
+  auctionCompletedDeals?: {
+    cardId: string;
+    playerId: string;
+    cost: number;
+    auctionRound?: number;
+    source?: "hammer" | "force_buy";
+  }[];
+  /** 起拍价（固定为 5） */
   auctionStartingBid?: number;
   /** 现在最高价 */
   auctionCurrentBid?: number;
@@ -265,6 +281,14 @@ export interface GameState {
   auctionMinimumNextBid?: number;
   /** 本场已成交（玩家可见：卡、得主、成交价；不含出价时的财富比例） */
   auctionSoldLots?: { cardId: string; playerId: string; playerName: string; cost: number }[];
+  /** 本局已发放的全部拍卖成交（公开情报，不含是否已使用） */
+  auctionSessionWins?: {
+    cardId: string;
+    playerId: string;
+    playerName: string;
+    cost: number;
+    auctionRound?: number;
+  }[];
   auctionBidHistory?: {
     bidId: string;
     playerId: string;
@@ -300,4 +324,10 @@ export interface GameState {
   pendingLotteryOffer?: { offerId: string; playerId: string; amount: number };
   /** 仅管理端：已确认彩票开奖 */
   lotteryCompletedDeals?: { playerId: string; amount: number }[];
+  /** 仅管理端：待玩家确认的财富调整 */
+  pendingWealthAdjustments?: { offerId: string; playerId: string; delta: number }[];
+  /** 仅本人：待确认的财富调整 */
+  pendingWealthAdjustment?: { offerId: string; playerId: string; delta: number };
+  /** 仅管理端：待认领的新设备 */
+  pendingDeviceClaims?: { playerId: string; requestedAt: number }[];
 }

@@ -55,23 +55,19 @@ function calculateShortTermism(player: Player): number {
   return Math.min(100, ratio * 100 * AnalysisWeights.w_short_ratio);
 }
 
-function calculateRiskTaking(player: Player, totalRiskEnergy: number): number {
-  if (totalRiskEnergy === 0) return 0;
-  const ratio = player.investedRiskEnergy / totalRiskEnergy;
+function calculateRiskTaking(player: Player): number {
+  if (player.totalEnergyConsumed <= 0) return 0;
+  const ratio = player.investedRiskEnergy / player.totalEnergyConsumed;
   let score = ratio * 100 * AnalysisWeights.w_risk_ratio;
   const hasLottery = player.usedCards.includes("buff_lottery");
   if (hasLottery) score += AnalysisWeights.w_lottery_buff;
   const hasShort = player.usedCards.includes("buff_short");
   if (hasShort) score += AnalysisWeights.w_short_buff;
 
-  const energyRatio =
-    player.totalEnergyConsumed > 0
-      ? player.investedRiskEnergy / player.totalEnergyConsumed
-      : 0;
   const hasInsurance = player.usedCards.includes("buff_insurance");
   if (
     !hasInsurance &&
-    energyRatio >= AnalysisWeights.naked_risk_energy_ratio_min
+    ratio >= AnalysisWeights.naked_risk_energy_ratio_min
   ) {
     score += AnalysisWeights.naked_risk_bonus;
   }
@@ -149,7 +145,7 @@ export function computePersonaDimensions(
   return {
     longTermism: calculateLongTermism(player),
     shortTermism: calculateShortTermism(player),
-    riskTaking: calculateRiskTaking(player, game.totalRiskEnergyAvailable),
+    riskTaking: calculateRiskTaking(player),
     ruleIntervention: calculateRuleIntervention(player),
     socialConnection: calculateSocialConnection(player),
     resourceConversion: calculateResourceConversion(player, game),
@@ -243,15 +239,11 @@ function calculateMbtiPersona(player: Player, game: GameState): MbtiPersona {
   const shortRatio = shortEnergy / totalEnergy;
   const longShortScore = (longRatio - shortRatio) * 100;
 
-  const riskConservScore =
-    game.totalRiskEnergyAvailable > 0
-      ? Math.min(
-          100,
-          (player.investedRiskEnergy / game.totalRiskEnergyAvailable) *
-            100 *
-            AnalysisWeights.w_risk_ratio
-        )
-      : 0;
+  const riskEnergyRatio = player.investedRiskEnergy / totalEnergy;
+  const riskConservScore = Math.min(
+    100,
+    riskEnergyRatio * 100 * AnalysisWeights.w_risk_ratio
+  );
 
   const disruptFollowScore = Math.min(
     100,

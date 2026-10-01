@@ -6,6 +6,8 @@ export type LongTermRecord = {
   totalInvested: number;
   status: "active" | "completed" | "abandoned";
   reward?: number;
+  /** 每轮投入精力，用于结算全览个人条分段 */
+  roundSlices?: number[];
 };
 
 /** 已有 active 记录时，本轮投入 <3（含 0）视为放弃 */
@@ -53,9 +55,14 @@ export function syncLongTermRecordsFromHistory(project: ActiveProject, players: 
     if (prior <= 0) continue;
     const record = p.longTerm[project.id];
     if (!record) {
-      p.longTerm[project.id] = { totalInvested: prior, status: "active" };
+      p.longTerm[project.id] = {
+        totalInvested: prior,
+        status: "active",
+        roundSlices: [prior],
+      };
     } else if (record.status === "active" && record.totalInvested < prior) {
       record.totalInvested = prior;
+      if (!record.roundSlices?.length) record.roundSlices = [prior];
     }
   }
 }
@@ -81,11 +88,16 @@ export function applyLongTermRoundInvestments(
     if (amount <= 0) continue;
     let record = player.longTerm[project.id];
     if (!record) {
-      record = { totalInvested: 0, status: "active" };
+      record = { totalInvested: 0, status: "active", roundSlices: [] };
       player.longTerm[project.id] = record;
     }
     if (record.status === "active") {
+      if (!record.roundSlices?.length && record.totalInvested > 0) {
+        record.roundSlices = [record.totalInvested];
+      }
       record.totalInvested += amount;
+      if (!record.roundSlices) record.roundSlices = [];
+      record.roundSlices.push(amount);
     }
   }
 }

@@ -25,6 +25,10 @@ export type SessionEventType =
   | "lottery_settled"
   | "lottery_offer_cancelled"
   | "lottery_revoked"
+  | "admin_wealth_offered"
+  | "admin_wealth_adjust"
+  | "admin_wealth_offer_cancelled"
+  | "admin_card_adjust"
   | "social_rated"
   | "settlement_round"
   | "community_named";

@@ -12,6 +12,7 @@ import {
   HELP_MISC,
   buildBuffHelpEntries,
 } from "../config/playerHelpReference";
+import { BUFF_CARD_DEFS } from "../config/buffCards";
 import {
   CatalogProjectType,
   formatRankList,
@@ -227,10 +228,38 @@ export const PlayerGameHelp: React.FC<Props> = ({
   const buffEntries = useMemo(
     () =>
       buildBuffHelpEntries().sort(
-        (a, b) => a.auctionRound - b.auctionRound || a.name.localeCompare(b.name, "zh")
+        (a, b) =>
+          (a.everyAuction ? 99 : a.auctionRound) - (b.everyAuction ? 99 : b.auctionRound) ||
+          a.name.localeCompare(b.name, "zh")
       ),
     []
   );
+
+  const auctionWinsByPlayer = useMemo(() => {
+    const wins = game.auctionSessionWins ?? [];
+    if (wins.length === 0) return [];
+    const seatOrder = new Map(game.players.map((p, i) => [p.id, i]));
+    const byPlayer = new Map<string, { playerName: string; cardNames: string[] }>();
+    for (const w of wins) {
+      const cardLabel = BUFF_CARD_DEFS[w.cardId]?.name ?? w.cardId;
+      const playerName =
+        game.players.find((p) => p.id === w.playerId)?.name ?? w.playerName ?? w.playerId;
+      const existing = byPlayer.get(w.playerId);
+      if (existing) {
+        existing.playerName = playerName;
+        existing.cardNames.push(cardLabel);
+      } else {
+        byPlayer.set(w.playerId, { playerName, cardNames: [cardLabel] });
+      }
+    }
+    return [...byPlayer.entries()]
+      .sort(([idA], [idB]) => {
+        const oa = seatOrder.get(idA) ?? game.players.length;
+        const ob = seatOrder.get(idB) ?? game.players.length;
+        return oa - ob || idA.localeCompare(idB);
+      })
+      .map(([playerId, { playerName, cardNames }]) => ({ playerId, playerName, cardNames }));
+  }, [game.auctionSessionWins, game.players]);
 
   useEffect(() => {
     if (!open || isDesktopLayout) return;
@@ -470,6 +499,51 @@ export const PlayerGameHelp: React.FC<Props> = ({
     if (tabId === "buffs") {
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
+          {auctionWinsByPlayer.length > 0 && (
+            <div
+              role="region"
+              aria-label="拍卖所得"
+              style={{
+                padding: "0.65rem 0.75rem",
+                borderRadius: "0.75rem",
+                border: "1px solid rgba(251,191,36,0.25)",
+                background: "rgba(251,191,36,0.06)",
+              }}
+            >
+              <div style={{ fontWeight: 800, color: "#fbbf24", fontSize: uiRem(0.9), marginBottom: "0.2rem" }}>
+                拍卖所得
+              </div>
+              <p
+                style={{
+                  margin: "0 0 0.5rem",
+                  fontSize: uiRem(0.72),
+                  color: "var(--color-text-muted)",
+                  lineHeight: 1.4,
+                }}
+              >
+                仅统计拍得，不含是否已使用
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                {auctionWinsByPlayer.map((row) => {
+                  const isMe = row.playerId === me.id;
+                  return (
+                    <div
+                      key={row.playerId}
+                      style={{
+                        fontSize: uiRem(0.82),
+                        lineHeight: 1.45,
+                        color: isMe ? "#fbbf24" : "var(--color-text-secondary)",
+                      }}
+                    >
+                      <span style={{ fontWeight: isMe ? 800 : 700 }}>{row.playerName}</span>
+                      <span style={{ color: "var(--color-text-muted)" }}> · </span>
+                      <span>{row.cardNames.join("、")}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {buffEntries.map((b) => (
             <div
               key={b.cardId}
@@ -504,7 +578,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
                     borderRadius: "9999px",
                   }}
                 >
-                  第{b.auctionRound}场
+                  {b.everyAuction ? "每场" : `第${b.auctionRound}场`}
                 </span>
               </div>
               <p

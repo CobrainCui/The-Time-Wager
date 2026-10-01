@@ -126,10 +126,10 @@ function longProject(
 
 describe("classifyFateSketch (分层判定)", () => {
   const base: PersonaDimensionScores = {
-    longTermism: 40,
-    shortTermism: 40,
+    longTermism: 20,
+    shortTermism: 20,
     riskTaking: 30,
-    ruleIntervention: 25,
+    ruleIntervention: 10,
     socialConnection: 60,
     resourceConversion: 35,
   };
@@ -152,7 +152,7 @@ describe("classifyFateSketch (分层判定)", () => {
     assert.equal(
       classifyFateSketch({
         ...base,
-        longTermism: 40,
+        longTermism: 20,
         riskTaking: 55,
         ruleIntervention: 50,
         resourceConversion: 30,
@@ -165,9 +165,9 @@ describe("classifyFateSketch (分层判定)", () => {
     assert.equal(
       classifyFateSketch({
         ...base,
-        longTermism: 35,
+        longTermism: 20,
         shortTermism: 60,
-        riskTaking: 40,
+        riskTaking: 20,
         ruleIntervention: 45,
       }),
       "瞬刻炼金士"
@@ -178,8 +178,8 @@ describe("classifyFateSketch (分层判定)", () => {
     assert.equal(
       classifyFateSketch({
         ...base,
-        longTermism: 45,
-        riskTaking: 25,
+        longTermism: 24,
+        riskTaking: 20,
         ruleIntervention: 20,
         resourceConversion: 55,
       }),
@@ -187,15 +187,41 @@ describe("classifyFateSketch (分层判定)", () => {
     );
   });
 
+  it("罗盘风险带上沿 + 高 ROI 低干预 → 罗盘（不被涌机抢）", () => {
+    assert.equal(
+      classifyFateSketch({
+        ...base,
+        longTermism: 24,
+        riskTaking: 20,
+        ruleIntervention: 20,
+        resourceConversion: 55,
+      }),
+      "罗盘精算师"
+    );
+  });
+
+  it("风险刚过罗盘上限 + 高干预 → 涌机触发者", () => {
+    assert.equal(
+      classifyFateSketch({
+        ...base,
+        longTermism: 20,
+        riskTaking: 24,
+        ruleIntervention: 40,
+        resourceConversion: 20,
+      }),
+      "涌机触发者"
+    );
+  });
+
   it("四不像 → 随机诗人", () => {
     assert.equal(
       classifyFateSketch({
         ...base,
-        longTermism: 50,
-        shortTermism: 30,
-        riskTaking: 45,
-        ruleIntervention: 30,
-        resourceConversion: 30,
+        longTermism: 38,
+        shortTermism: 25,
+        riskTaking: 6,
+        ruleIntervention: 0,
+        resourceConversion: 0,
       }),
       "随机诗人"
     );
@@ -222,34 +248,34 @@ describe("computePersonaDimensions + analyzeGamePersona 合成场景", () => {
 
   it("罗盘精算师：低风险、少道具、高超额 ROI", () => {
     const p = makePlayer("compass", {
-      investedShortEnergy: 70,
-      investedLongEnergy: 15,
-      investedRiskEnergy: 15,
+      investedShortEnergy: 45,
+      investedLongEnergy: 50,
+      investedRiskEnergy: 5,
       totalEnergyConsumed: 100,
-      wealthHistory: [10, 30, 50, 70, 90, 110],
+      wealthHistory: [50, 50, 50, 50, 50, 50],
       usedCards: [],
     });
     const game = makeGame(
       p,
-      [shortProject(1, "compass", 70, 2200)],
+      [shortProject(1, "compass", 45, 2200)],
       600
     );
     analyzeGamePersona(game);
     assert.equal(p.analysisResult?.primaryPersona, "罗盘精算师");
   });
 
-  it("涌机触发者：高风险投入 + 攻击型道具", () => {
+  it("涌机触发者：高风险精力占比 + 攻击型道具", () => {
     const p = makePlayer("trigger", {
-      investedRiskEnergy: 280,
-      investedShortEnergy: 40,
-      investedLongEnergy: 20,
+      investedRiskEnergy: 60,
+      investedShortEnergy: 38,
+      investedLongEnergy: 2,
       totalEnergyConsumed: 100,
       usedCards: ["buff_lottery", "buff_short", "buff_slack"],
-      wealthHistory: [0, 20, 80, 200, 300, 400],
+      wealthHistory: [10, 10, 10, 10, 10, 10],
     });
     const game = makeGame(
       p,
-      [shortProject(1, "trigger", 40, 800)],
+      [shortProject(1, "trigger", 35, 800)],
       400
     );
     analyzeGamePersona(game);
@@ -283,18 +309,14 @@ describe("computePersonaDimensions + analyzeGamePersona 合成场景", () => {
 
   it("随机诗人：各维中庸", () => {
     const p = makePlayer("poet", {
-      investedShortEnergy: 35,
-      investedLongEnergy: 35,
-      investedRiskEnergy: 30,
-      totalEnergyConsumed: 100,
-      wealthHistory: [20, 25, 30, 35, 40, 45],
-      usedCards: ["buff_gold"],
+      investedShortEnergy: 32,
+      investedLongEnergy: 31,
+      investedRiskEnergy: 7,
+      totalEnergyConsumed: 70,
+      wealthHistory: [0, 100, 140],
+      usedCards: [],
     });
-    const game = makeGame(
-      p,
-      [shortProject(1, "poet", 35, 400)],
-      600
-    );
+    const game = makeGame(p, [], 600);
     const scores = computePersonaDimensions(p, game);
     assert.equal(classifyFateSketch(scores), "随机诗人");
   });

@@ -7,6 +7,7 @@ import {
   recordAuctionCompletedDeal,
   revokeAuctionGrant,
   beginAuctionSession,
+  publicSessionAuctionWins,
 } from "./auctionCards.js";
 import { useForceBuyCard, FORCE_BUY_CARD_ID } from "./buffLogic.js";
 import { createInitialGame, Player } from "../state/gameState.js";
@@ -189,5 +190,61 @@ describe("revokeAuctionGrant", () => {
     assert.equal(reuse.success, true);
     assert.ok(p.inventory.includes("buff_work_rest"));
     assert.ok(!p.inventory.includes(FORCE_BUY_CARD_ID));
+  });
+
+  it("keeps slack deals per auction round; revoke only current session copy", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "AUCTION";
+    game.currentEra = 2;
+    const p = player("p1", { wealth: 90, inventory: ["buff_slack"] });
+    game.players = [p];
+    markAuctionCardDistributed(game, "buff_slack");
+    recordAuctionCompletedDeal(game, "buff_slack", "p1", 10);
+    assert.equal(game.auctionCompletedDeals?.length, 1);
+    assert.equal(game.auctionCompletedDeals?.[0]?.auctionRound, 1);
+
+    beginAuctionSession(game);
+    game.currentEra = 3;
+    const p2 = player("p2", { wealth: 80, inventory: ["buff_slack", "buff_slack"] });
+    game.players = [p, p2];
+    markAuctionCardDistributed(game, "buff_slack");
+    recordAuctionCompletedDeal(game, "buff_slack", "p2", 15);
+    assert.equal(game.auctionCompletedDeals?.length, 2);
+
+    const revoked = revokeAuctionGrant(game, "buff_slack");
+    assert.equal(revoked.ok, true);
+    if (!revoked.ok || revoked.kind !== "completed") throw new Error("expected completed revoke");
+    assert.equal(game.auctionCompletedDeals?.length, 1);
+    assert.equal(game.auctionCompletedDeals?.[0]?.auctionRound, 1);
+    assert.equal(game.auctionCompletedDeals?.[0]?.playerId, "p1");
+    assert.deepEqual(p2.inventory, ["buff_slack"]);
+    assert.equal(p2.wealth, 95);
+    assert.deepEqual(p.inventory, ["buff_slack"]);
+  });
+});
+
+describe("publicSessionAuctionWins", () => {
+  it("lists all completed deals across auction rounds; revoke shrinks list", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "AUCTION";
+    game.currentEra = 3;
+    game.players = [player("p1"), player("p2", { wealth: 70, inventory: ["buff_short"] })];
+    game.auctionCompletedDeals = [
+      { cardId: "buff_gold", playerId: "p1", cost: 20, auctionRound: 1 },
+      { cardId: "buff_short", playerId: "p2", cost: 30, auctionRound: 2 },
+    ];
+    markAuctionCardDistributed(game, "buff_short");
+
+    let wins = publicSessionAuctionWins(game);
+    assert.equal(wins.length, 2);
+    assert.equal(wins[0].cardId, "buff_gold");
+    assert.equal(wins[1].cardId, "buff_short");
+
+    const revoked = revokeAuctionGrant(game, "buff_short");
+    assert.equal(revoked.ok, true);
+    wins = publicSessionAuctionWins(game);
+    assert.equal(wins.length, 1);
+    assert.equal(wins[0].playerId, "p1");
+    assert.equal(wins[0].cardId, "buff_gold");
   });
 });

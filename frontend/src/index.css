@@ -1992,11 +1992,13 @@ h1, h2, h3, h4, h5, h6 {
 
 .tutorial-view-shell {
   padding: 2rem clamp(1rem, 3vw, 2rem);
+  padding-bottom: max(2rem, env(safe-area-inset-bottom, 0px));
   display: flex;
   justify-content: center;
   align-items: flex-start;
   box-sizing: border-box;
-  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: visible;
 }
 
 .tutorial-view-card {
@@ -2007,13 +2009,9 @@ h1, h2, h3, h4, h5, h6 {
   min-height: 0;
 }
 
-/* 玩家教程 — 桌面单视口 */
+/* 玩家教程 — 桌面紧凑版式（整页滚动） */
 @media (min-width: 1024px) {
   .tutorial-view-shell--fit {
-    height: 100%;
-    max-height: 100dvh;
-    min-height: 0;
-    overflow: hidden;
     padding: clamp(0.5rem, 1.5vh, 1rem) clamp(0.75rem, 2vw, 1.25rem);
     align-items: safe center;
   }
@@ -2029,24 +2027,16 @@ h1, h2, h3, h4, h5, h6 {
     max-width: min(96vw, 1280px);
     min-width: 0;
     height: auto;
-    max-height: 100%;
     flex: 0 1 auto;
   }
 
   .tutorial-slide-panel--fit {
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: 100%;
     width: 100%;
-    overflow: hidden;
   }
 
   .tutorial-slide-panel--fit .tutorial-slide-panel__body {
     display: flex;
     flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
     padding: clamp(0.65rem, 1.5vh, 1rem) clamp(0.85rem, 2vw, 1.25rem);
     box-sizing: border-box;
     width: 100%;
@@ -2058,22 +2048,6 @@ h1, h2, h3, h4, h5, h6 {
 
   .tutorial-slide-panel--fit .tutorial-slide-panel__copy {
     flex-shrink: 0;
-    max-height: min(24vh, 12.5rem);
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-gutter: stable;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(96, 165, 250, 0.45) transparent;
-  }
-
-  .tutorial-slide-panel--fit .tutorial-slide-panel__copy::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .tutorial-slide-panel--fit .tutorial-slide-panel__copy::-webkit-scrollbar-thumb {
-    background: rgba(96, 165, 250, 0.35);
-    border-radius: 999px;
   }
 
   .tutorial-slide-panel--fit.tutorial-slide-panel--no-demo:not(.tutorial-slide-panel--intro) .tutorial-slide-panel__body {
@@ -2081,11 +2055,6 @@ h1, h2, h3, h4, h5, h6 {
     max-width: min(92vw, 34rem);
     min-width: min(88vw, 16rem);
     margin-inline: auto;
-  }
-
-  .tutorial-slide-panel--fit.tutorial-slide-panel--no-demo .tutorial-slide-panel__copy {
-    max-height: none;
-    overflow: visible;
   }
 
   .tutorial-slide-panel--fit.tutorial-slide-panel--finale.tutorial-slide-panel--no-demo .tutorial-slide-panel__body {
@@ -2188,9 +2157,6 @@ h1, h2, h3, h4, h5, h6 {
   }
 
   .tutorial-slide-panel--fit .tutorial-slide-panel__demo {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
     display: flex;
     flex-direction: column;
     margin-top: 0.35rem;
@@ -2198,37 +2164,18 @@ h1, h2, h3, h4, h5, h6 {
   }
 
   .tutorial-slide-panel--fit .tutorial-slide-panel__demo .tutorial-demo-shell {
-    flex: 1 1 auto;
-    min-height: 0;
     display: flex;
     flex-direction: column;
     margin-top: 0 !important;
-    overflow: hidden;
   }
 
   .tutorial-slide-panel--fit .tutorial-slide-panel__demo .tutorial-demo-shell__body {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
     display: flex;
     flex-direction: column;
   }
 
   .tutorial-slide-panel--fit .tutorial-slide-panel__demo-inner {
-    flex: 1 1 auto;
-    min-height: 0;
     overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(96, 165, 250, 0.35) transparent;
-  }
-
-  .tutorial-slide-panel--fit[data-demo-key="projectTypes"] .tutorial-slide-panel__demo-inner,
-  .tutorial-slide-panel--fit[data-demo-key="projectTypes"] .tutorial-demo-shell__body {
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    touch-action: pan-y;
   }
 
   .tutorial-slide-panel--fit .tutorial-slide-panel__footer {
@@ -2265,25 +2212,19 @@ h1, h2, h3, h4, h5, h6 {
     padding: 0.65rem 0.75rem !important;
   }
 
-  .tutorial-slide-panel--fit .tutorial-transfer-demo__lead {
-    display: none;
+  .tutorial-slide-panel--fit .tutorial-chat-demo__dock {
+    max-height: none;
+    overflow-y: visible;
   }
 
   .tutorial-slide-panel--fit .tutorial-transfer-demo .player-chat-panel {
-    max-height: min(26vh, 240px);
+    max-height: none;
     min-height: 9.5rem;
   }
 
-  /* 双框展开：坞不限高，只由下半 demo-inner 滚动，避免坞内再套一层滚不动 */
   .tutorial-slide-panel--fit[data-demo-key="transferAndMessage"] .tutorial-chat-demo__dock {
-    max-height: none;
     min-height: 10.75rem;
-    overflow: visible;
     justify-content: flex-start;
-  }
-
-  .tutorial-slide-panel--fit[data-demo-key="transferAndMessage"] .tutorial-slide-panel__demo-inner {
-    scroll-padding-bottom: 0.75rem;
   }
 
   .tutorial-slide-panel--fit[data-demo-key="transferAndMessage"] .tutorial-transfer-demo {
