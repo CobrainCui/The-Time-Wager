@@ -10,6 +10,11 @@ import {
 } from "../utils/projectHelpTable";
 import { BuffRoundChips } from "../components/BuffRoundChips";
 import { useFixedDockClearance } from "../hooks/useFixedDockClearance";
+import {
+  formatPersonalBarCaption,
+  normalizePersonalSlices,
+  repairPersonalRoundSlices,
+} from "../utils/settlementPersonalBar";
 
 interface Props {
   game: GameState;
@@ -108,22 +113,6 @@ function settlementTableInvestEnergy(
   return personalCumulativeEnergy(result, player, game);
 }
 
-function repairPersonalRoundSlices(slices: number[], total: number, thisRound: number): number[] {
-  const positive = slices.filter((x) => x > 0);
-  const sum = positive.reduce((s, x) => s + x, 0);
-  if (total <= 0) return [];
-  if (positive.length === 0) {
-    if (thisRound > 0 && total > thisRound) return [total - thisRound, thisRound];
-    return [total];
-  }
-  if (sum === total) return positive;
-  if (sum < total) return [...positive, total - sum];
-  const excess = sum - total;
-  const trimmed = [...positive];
-  trimmed[trimmed.length - 1] = Math.max(0, trimmed[trimmed.length - 1]! - excess);
-  return trimmed.filter((x) => x > 0);
-}
-
 /** 个人条分段：长期 roundSlices；短/风险 investorRoundSlices */
 function personalRoundSlices(
   result: SettlementProjectResult,
@@ -191,15 +180,10 @@ const GlobalCard: React.FC<{
   }
 
   const personalEnergy = personalCumulativeEnergy(result, me, game);
-  let personalSlices =
-    personalEnergy <= 0
-      ? []
-      : (() => {
-          const repaired = personalRoundSlices(result, me, game);
-          if (repaired.length === 0) return [personalEnergy];
-          const sum = repaired.reduce((s, x) => s + x, 0);
-          return sum === personalEnergy ? repaired : repairPersonalRoundSlices(repaired, personalEnergy, 0);
-        })();
+  const personalSlices = normalizePersonalSlices(
+    personalEnergy <= 0 ? [] : personalRoundSlices(result, me, game),
+    personalEnergy
+  );
   const personalPct = result.maxEnergy > 0
     ? Math.min((personalEnergy / result.maxEnergy) * 100, 100)
     : 0;
@@ -244,7 +228,7 @@ const GlobalCard: React.FC<{
         <span>
           {result.shortSold
             ? "清零"
-            : settlementHidesInvestedRatio(result)
+            : hideCapRatio
             ? "—"
             : `全场 ${result.totalInvested} / ${result.maxEnergy}`}
         </span>
@@ -274,16 +258,32 @@ const GlobalCard: React.FC<{
           ))}
         </div>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: uiRem(0.75), color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
-        <span>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: "0.5rem",
+          fontSize: uiRem(0.75),
+          color: "var(--color-text-muted)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        <span style={{ minWidth: 0, flex: "1 1 auto", lineHeight: 1.45 }}>
           {result.shortSold
             ? "清零"
-            : hideCapRatio
-            ? `${personalLabel} ${personalEnergy}`
-            : `${personalLabel} ${personalEnergy}/${result.maxEnergy}`}
+            : formatPersonalBarCaption(
+                personalLabel,
+                personalSlices,
+                personalEnergy,
+                result.maxEnergy,
+                hideCapRatio
+              )}
         </span>
         {boardSharePct !== null && (
-          <span style={{ color: "var(--color-text-muted)", opacity: 0.85 }}>占全场 {boardSharePct}%</span>
+          <span style={{ color: "var(--color-text-muted)", opacity: 0.85, flexShrink: 0 }}>
+            占全场 {boardSharePct}%
+          </span>
         )}
       </div>
     </div>

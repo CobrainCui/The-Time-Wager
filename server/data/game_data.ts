@@ -60,7 +60,7 @@ export const buffCards: BuffCard[] = [
   { id: 'buff_force_buy', name: '强买强卖', type: 'special', description: '仅能在拍卖阶段使用一次，免费将当前正在拍卖的道具卡入手', auctionRound: 2 },
   { id: 'buff_work_rest', name: '劳逸结合', type: 'special', description: '被使用摸鱼传染后获得8精力；单独使用无效；每场拍卖各一张', auctionRound: 2 },
   { id: 'buff_short', name: '项目做空', type: 'special', description: '指定本轮可投入项目；结算时已积累精力清零（含长期累计），已入账财富不追回，本轮不再发放回报', auctionRound: 2 },
-  { id: 'buff_lighter', name: '打火机', type: 'special', description: '指定其他玩家后，从其本局拍卖得到的道具中选一张烧毁（不显示在手牌或已发动）；被烧的卡不再生效', auctionRound: 3 },
+  { id: 'buff_lighter', name: '打火机', type: 'special', description: '投资阶段指定其他玩家，从其本局拍卖所得且仍在手牌的道具中选一张烧毁；须早于对方发动该卡或锁定投资；是否命中不公开', auctionRound: 3 },
   { id: 'buff_lottery', name: '彩票', type: 'special', description: '实体骰子定奖，由主持人输入金额；若你本轮打出了点石成金，入账按1.5倍向下取整', auctionRound: 3 },
 ];
 

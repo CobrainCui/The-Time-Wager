@@ -334,12 +334,13 @@ describe("buffLogic new roster effects", () => {
     if (!second.success) assert.match(second.msg, /已使用过/);
   });
 
-  it("lighter removes a card from activeBuffs", () => {
+  it("lighter burns from inventory when target has not activated", () => {
     const game = createInitialGame("r", []);
     game.phase = "BUFF_USAGE";
     const a = player("a", { inventory: [LIGHTER_CARD_ID] });
     const b = player("b", {
-      activeBuffs: [{ cardId: "buff_insurance" }, { cardId: WORK_REST_CARD_ID }],
+      inventory: ["buff_insurance"],
+      activeBuffs: [{ cardId: WORK_REST_CARD_ID }],
     });
     game.players = [a, b];
     const res = useBuffCard(game, "a", LIGHTER_CARD_ID, {
@@ -348,7 +349,7 @@ describe("buffLogic new roster effects", () => {
     });
     assert.equal(res.success, true);
     assert.equal(res.msg, "对b使用打火机，指定【保险】");
-    assert.equal(b.activeBuffs.some((x) => x.cardId === "buff_insurance"), false);
+    assert.deepEqual(b.inventory, []);
     assert.equal(b.activeBuffs.some((x) => x.cardId === WORK_REST_CARD_ID), true);
     assert.equal(a.inventory.includes(LIGHTER_CARD_ID), false);
     assert.equal(res.notifyTargetId, "b");
@@ -356,25 +357,40 @@ describe("buffLogic new roster effects", () => {
     assert.equal(/烧毁了|未命中/.test(game.logs.join("\n")), false);
   });
 
-  it("lighter prefers active over inventory and hides zone from holder", () => {
+  it("lighter misses when target already activated card (only in activeBuffs)", () => {
     const game = createInitialGame("r", []);
     game.phase = "BUFF_USAGE";
     const a = player("a", { inventory: [LIGHTER_CARD_ID] });
     const b = player("b", {
-      inventory: ["buff_insurance"],
+      inventory: [],
       activeBuffs: [{ cardId: "buff_insurance" }],
     });
     game.players = [a, b];
     const res = useBuffCard(game, "a", LIGHTER_CARD_ID, {
       targetPlayerId: "b",
       burnCardId: "buff_insurance",
-      burnFromInventory: true, // 客户端分区被忽略
     });
     assert.equal(res.success, true);
     assert.equal(res.msg, "对b使用打火机，指定【保险】");
-    assert.equal(b.activeBuffs.some((x) => x.cardId === "buff_insurance"), false);
+    assert.equal(b.activeBuffs.some((x) => x.cardId === "buff_insurance"), true);
+    assert.equal(res.notifyTargetId, undefined);
+    assert.equal(a.inventory.includes(LIGHTER_CARD_ID), false);
+  });
+
+  it("lighter misses when target locked investment but still holds card", () => {
+    const game = createInitialGame("r", []);
+    game.phase = "INVESTMENT";
+    const a = player("a", { inventory: [LIGHTER_CARD_ID] });
+    const b = player("b", { inventory: ["buff_insurance"], activeBuffs: [], ready: true });
+    game.players = [a, b];
+    const res = useBuffCard(game, "a", LIGHTER_CARD_ID, {
+      targetPlayerId: "b",
+      burnCardId: "buff_insurance",
+    });
+    assert.equal(res.success, true);
     assert.deepEqual(b.inventory, ["buff_insurance"]);
-    assert.equal((a.buffRoundNotes ?? []).some((n) => /手牌|已发动|烧毁/.test(n.text)), false);
+    assert.equal(res.notifyTargetId, undefined);
+    assert.equal(a.inventory.includes(LIGHTER_CARD_ID), false);
   });
 
   it("lighter miss still consumes card with same holder message and no target notify", () => {
@@ -469,8 +485,8 @@ describe("buffLogic new roster effects", () => {
     };
     const heldView = forViewer.players.find((p) => p.id === "held")!;
     const activeView = forViewer.players.find((p) => p.id === "active")!;
-    assert.deepEqual(heldView.burnableCardIds, ["buff_insurance", "buff_slack"]);
-    assert.deepEqual(activeView.burnableCardIds, ["buff_gold"]);
+    assert.deepEqual(heldView.burnableCardIds, ["buff_insurance"]);
+    assert.deepEqual(activeView.burnableCardIds, []);
     assert.equal(heldView.inventory, undefined);
     assert.equal(heldView.activeBuffs, undefined);
     assert.equal(heldView.usedCards, undefined);

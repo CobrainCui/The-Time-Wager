@@ -4,25 +4,10 @@ import { GameState, Transaction } from "../state/gameState.js";
 import { getPublicCommunityLeaderboard } from "../state/communityLeaderboard.js";
 import { peekNextRoundEnergy } from "../logic/energySchedule.js";
 import { buildAuctionLotPublicView, publicSessionAuctionWins } from "../logic/auctionCards.js";
-import { LIGHTER_CARD_ID } from "../logic/buffLogic.js";
+import { LIGHTER_CARD_ID, listLighterBurnTargets } from "../logic/buffLogic.js";
 import { pendingDeviceClaimsForGodView } from "../logic/deviceClaim.js";
 
 const HIDDEN_INVESTMENT_PHASES = new Set<GameState["phase"]>(["INVESTMENT", "BUFF_USAGE"]);
-
-/** 本局拍卖所得（成交记录），供持打火机的玩家选烧目标 */
-function burnableAuctionCardIdsForPlayer(game: GameState, targetPlayerId: string): string[] {
-  const deals = game.auctionCompletedDeals ?? [];
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const d of deals) {
-    if (d.playerId !== targetPlayerId) continue;
-    if (d.cardId === LIGHTER_CARD_ID) continue;
-    if (seen.has(d.cardId)) continue;
-    seen.add(d.cardId);
-    ids.push(d.cardId);
-  }
-  return ids;
-}
 
 export function transactionsForViewer(
   transactions: Transaction[],
@@ -129,7 +114,7 @@ export function serializeGameForClient(
         investment: hideInvestments ? {} : p.investment,
         coffeePurchasesThisRound: p.coffeePurchasesThisRound ?? 0,
         ...(viewerHasLighter && p.id !== viewerPlayerId
-          ? { burnableCardIds: burnableAuctionCardIdsForPlayer(game, p.id) }
+          ? { burnableCardIds: listLighterBurnTargets(game, p.id) }
           : {}),
       };
     }),

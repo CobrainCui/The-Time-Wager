@@ -19,6 +19,24 @@ export const GOLD_CARD_ID = "buff_gold";
 
 const RETIRED_CARD_IDS = new Set(["buff_spirit", "buff_rebound"]);
 
+/** 持打火机时可见：目标未锁定且该拍卖卡仍在手牌 */
+export function listLighterBurnTargets(game: GameState, targetPlayerId: string): string[] {
+  const target = game.players.find((p) => p.id === targetPlayerId);
+  if (!target || target.ready) return [];
+  const deals = game.auctionCompletedDeals ?? [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const d of deals) {
+    if (d.playerId !== targetPlayerId) continue;
+    if (d.cardId === LIGHTER_CARD_ID) continue;
+    if (seen.has(d.cardId)) continue;
+    if (!target.inventory.includes(d.cardId)) continue;
+    seen.add(d.cardId);
+    ids.push(d.cardId);
+  }
+  return ids;
+}
+
 function pushNote(player: Player, note: BuffRoundNote): void {
   if (!player.buffRoundNotes) player.buffRoundNotes = [];
   player.buffRoundNotes.push(note);
@@ -182,28 +200,22 @@ export function useBuffCard(
       return { success: false, msg: "未知或不可烧毁的卡" };
     }
 
-    // 忽略客户端 burnFromInventory：先拆已发动，否则拆手牌；两边都没有也消耗打火机
+    // 拼手速：仅烧手牌；已发动（在 activeBuffs）或已锁定投资则无效，仍消耗打火机
     let burned = false;
-    let burnSource: "inventory" | "active" | undefined;
-    const abIdx = target.activeBuffs.findIndex((b) => b.cardId === burnId);
-    if (abIdx !== -1) {
-      target.activeBuffs.splice(abIdx, 1);
+    const invIdx = target.inventory.indexOf(burnId);
+    if (invIdx !== -1 && !target.ready) {
+      target.inventory.splice(invIdx, 1);
       burned = true;
-      burnSource = "active";
-    } else {
-      const invIdx = target.inventory.indexOf(burnId);
-      if (invIdx !== -1) {
-        target.inventory.splice(invIdx, 1);
-        burned = true;
-        burnSource = "inventory";
-      }
+      effect.burnFromInventory = true;
     }
 
     effect.burnCardId = burnId;
     effect.burnHit = burned;
-    if (burnSource) {
-      effect.burnSource = burnSource;
-      effect.burnFromInventory = burnSource === "inventory";
+    if (
+      !burned &&
+      (target.ready || target.activeBuffs.some((b) => b.cardId === burnId))
+    ) {
+      effect.burnRaceLost = true;
     }
 
     const burnedName = cardMeta.name;

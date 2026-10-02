@@ -37,7 +37,7 @@ export const BUFF_CARD_DEFS: Record<string, { name: string; desc: string; icon: 
   },
   buff_lighter: {
     name: "打火机",
-    desc: "指定其他玩家后，从其本局拍卖得到的道具中选一张烧毁（不显示在手牌或已发动）；被烧的卡不再生效。",
+    desc: "投资阶段指定其他玩家，从其本局拍卖所得且仍在手牌的道具中选一张烧毁。须早于对方发动该卡或锁定投资；是否命中不公开。",
     icon: "🔥",
     color: "#f97316",
   },

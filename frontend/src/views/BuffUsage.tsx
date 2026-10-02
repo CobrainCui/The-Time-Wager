@@ -320,7 +320,7 @@ export const BuffUsage: React.FC<Props> = ({
                             lineHeight: 1.5,
                           }}
                         >
-                          该玩家没有拍卖得到的道具
+                          对方已锁定投资或当前无可烧的拍卖道具
                         </p>
                       ) : (
                         <select
