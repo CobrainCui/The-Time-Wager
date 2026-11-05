@@ -1,7 +1,7 @@
 import { uiRem } from "../utils/typography";
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GameState, Player, Transaction } from "../types";
-import { formatBubbleText } from "../components/playerChat/chatMessageUtils";
+import { AdminPrivateChatPanel } from "../components/admin/AdminPrivateChatPanel";
 import type { GeneratePdfResult } from "../utils/pdfGenerator";
 import { AdminPdfCaptureJob, freezeGameForPdfExport } from "../admin/adminPdfSnapshot";
 import { socket } from "../socket";
@@ -14,13 +14,26 @@ import {
 } from "../config/buffCards";
 import { FATE_SKETCH_PERSONA_COLORS } from "../config/personaConfig";
 import { AdminTutorialHostSection } from "../components/admin/AdminTutorialHostSection";
-import { isAiPlayer } from "../utils/isAiPlayer";
+import { GavelIcon } from "../components/icons/GavelIcon";
+import { isAiPlayer, aiDifficultyLabel } from "../utils/isAiPlayer";
 import { useActionCountdown } from "../hooks/useActionCountdown";
 import { useServerClockSkewRef } from "../hooks/useServerClockSkewRef";
 import { getRemainingMs, getRemainingSeconds } from "../utils/actionCountdown";
 import { formatInvestmentDeadlineClock } from "../utils/investmentDeadline";
 import { playerAvailableWealth } from "../utils/availableWealth";
+import {
+  archiveLoadIncomplete,
+  mergeTransactionLog,
+  oldestTransactionCursor,
+  sortedTransactionsFromMap,
+} from "../utils/transactionLogMerge";
+import { filterGameForPlayerView } from "../utils/filterGameForPlayerView";
+import { PLAYER_GROUP_CHAT_ENABLED } from "../config/playerChatFeatures";
+import { visibleTransactionsForViewer } from "../utils/transactionVisibility";
+import { AdminSectionPerspectiveSelect } from "../components/admin/AdminSectionPerspectiveSelect";
+import { AdminProjectAdjustPanel } from "../components/admin/AdminProjectAdjustPanel";
 import GameRoom from "../GameRoom";
+import { BuffDescText } from "../utils/buffDescEmphasis";
 
 const AdminPlayerPdfCapture = lazy(() =>
   import("../admin/AdminPlayerPdfCapture").then((m) => ({ default: m.AdminPlayerPdfCapture }))
@@ -37,6 +50,8 @@ interface Props {
   eraImages?: Record<string, number>;
   buffImages?: Record<string, number>;
   personaImages?: Record<string, number>;
+  /** 服务端是否开启 AI 玩家（AI_PLAYERS_ENABLED） */
+  aiPlayersEnabled?: boolean;
 }
 
 const PHASE_NAMES: Record<string, string> = {
@@ -46,39 +61,6 @@ const PHASE_NAMES: Record<string, string> = {
   AUCTION: "拍卖会", GAME_OVER: "游戏结束", COMMUNITY_NAMING: "社区命名",
 };
 
-const TX_STATUS_LABEL: Record<Transaction["status"], string> = {
-  pending: "待确认",
-  accepted: "已接受",
-  rejected: "已拒绝",
-};
-
-function formatAdminTxTime(ts: number): string {
-  try {
-    return new Date(ts).toLocaleString("zh-CN", {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  } catch {
-    return "";
-  }
-}
-
-function adminTxBubbleText(tx: Transaction): string {
-  return formatBubbleText({
-    id: tx.id,
-    txId: tx.id,
-    peerId: tx.toId,
-    direction: "out",
-    amount: tx.amount,
-    note: tx.note || "",
-    status: tx.status,
-    timestamp: tx.timestamp,
-  });
-}
-
 export const AdminView: React.FC<Props> = ({
   game,
   onExit,
@@ -86,6 +68,7 @@ export const AdminView: React.FC<Props> = ({
   eraImages = {},
   buffImages = {},
   personaImages = {},
+  aiPlayersEnabled = true,
 }) => {
   const timerPausedAt = game.investmentTimerPausedAt;
   const timerPaused = typeof timerPausedAt === "number";
@@ -98,6 +81,11 @@ export const AdminView: React.FC<Props> = ({
   );
   const clockSkewRef = useServerClockSkewRef(game.serverNow);
   const [communityNameDraft, setCommunityNameDraft] = useState("");
+  const [aiDifficulty, setAiDifficulty] = useState<"easy" | "normal" | "hard">("normal");
+  const aiAddDisabled =
+    game.players.length >= 6 ||
+    game.phase === "GAME_OVER" ||
+    game.phase === "COMMUNITY_NAMING";
   const [unlockingPlayerId, setUnlockingPlayerId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   /** 浏览器常拦截同一次点击的第二次下载：先 JSON，再点一次导出 Excel */
@@ -112,6 +100,21 @@ export const AdminView: React.FC<Props> = ({
     playerName: string;
   } | null>(null);
   const [cardAdjustPick, setCardAdjustPick] = useState<string | null>(null);
+  /** 玩家界面预览：空=公共空座位总览 */
+  const [uiViewAsPlayerId, setUiViewAsPlayerId] = useState("");
+  /** 私信面板：空=全桌 */
+  const [dmViewAsPlayerId, setDmViewAsPlayerId] = useState("");
+  const dmViewAsPlayerIdRef = useRef("");
+  dmViewAsPlayerIdRef.current = dmViewAsPlayerId;
+  const [adminDmTxTotal, setAdminDmTxTotal] = useState(0);
+  const adminTxMergeRef = useRef<Map<string, Transaction>>(new Map());
+  const [adminTxList, setAdminTxList] = useState<Transaction[]>([]);
+  const [adminTxTotal, setAdminTxTotal] = useState(0);
+  const [adminTxLoadingOlder, setAdminTxLoadingOlder] = useState(false);
+  const [adminTxAtBottom, setAdminTxAtBottom] = useState(true);
+  const adminTxScrollRef = useRef<HTMLDivElement>(null);
+  const adminTxLoadingOlderRef = useRef(false);
+  const adminTxRestoreScrollRef = useRef<{ height: number; top: number } | null>(null);
   const pdfExportResolverRef = useRef<((result: GeneratePdfResult) => void) | null>(null);
   const gameRef = useRef(game);
   gameRef.current = game;
@@ -120,13 +123,120 @@ export const AdminView: React.FC<Props> = ({
     .filter((p) => !isAiPlayer(p))
     .sort((a, b) => b.wealth - a.wealth);
 
-  const adminTransactionsNewestFirst = useMemo(
-    () =>
-      [...(game.transactions ?? [])].sort(
-        (a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id)
-      ),
-    [game.transactions]
-  );
+  useEffect(() => {
+    adminTxMergeRef.current = new Map();
+    setAdminTxList([]);
+    setAdminTxTotal(0);
+    setAdminTxAtBottom(true);
+    adminTxLoadingOlderRef.current = false;
+    setAdminTxLoadingOlder(false);
+    adminTxRestoreScrollRef.current = null;
+    setUiViewAsPlayerId("");
+    setDmViewAsPlayerId("");
+    setAdminDmTxTotal(0);
+  }, [game.roomId]);
+
+  useEffect(() => {
+    if (!dmViewAsPlayerId) return;
+    const visible = visibleTransactionsForViewer(
+      sortedTransactionsFromMap(adminTxMergeRef.current),
+      dmViewAsPlayerId,
+      false
+    );
+    setAdminDmTxTotal((prev) => Math.max(prev, visible.length));
+  }, [dmViewAsPlayerId, game.transactions, game.transactionLog]);
+
+  useEffect(() => {
+    const merged = mergeTransactionLog(adminTxMergeRef.current, game.transactions ?? []);
+    adminTxMergeRef.current = merged;
+    setAdminTxList(sortedTransactionsFromMap(merged));
+    if (typeof game.transactionLog?.total === "number") {
+      setAdminTxTotal(game.transactionLog.total);
+    } else {
+      setAdminTxTotal(merged.size);
+    }
+  }, [game.transactions, game.transactionLog]);
+
+  useEffect(() => {
+    const onPage = (payload: {
+      roomId?: string;
+      transactions?: Transaction[];
+      hasMore?: boolean;
+      total?: number;
+    }) => {
+      if (payload.roomId !== game.roomId) return;
+      const merged = mergeTransactionLog(adminTxMergeRef.current, payload.transactions ?? []);
+      adminTxMergeRef.current = merged;
+      const sorted = sortedTransactionsFromMap(merged);
+      setAdminTxList(sorted);
+      if (typeof payload.total === "number") {
+        if (dmViewAsPlayerIdRef.current) setAdminDmTxTotal(payload.total);
+        else setAdminTxTotal(payload.total);
+      }
+      adminTxLoadingOlderRef.current = false;
+      setAdminTxLoadingOlder(false);
+    };
+    const onError = () => {
+      if (!adminTxLoadingOlderRef.current) return;
+      adminTxLoadingOlderRef.current = false;
+      setAdminTxLoadingOlder(false);
+      adminTxRestoreScrollRef.current = null;
+    };
+    socket.on("transactionHistoryPage", onPage);
+    socket.on("error", onError);
+    return () => {
+      socket.off("transactionHistoryPage", onPage);
+      socket.off("error", onError);
+    };
+  }, [game.roomId]);
+
+  useEffect(() => {
+    if (!adminTxLoadingOlder) return;
+    const t = window.setTimeout(() => {
+      if (!adminTxLoadingOlderRef.current) return;
+      adminTxLoadingOlderRef.current = false;
+      setAdminTxLoadingOlder(false);
+      adminTxRestoreScrollRef.current = null;
+    }, 20_000);
+    return () => window.clearTimeout(t);
+  }, [adminTxLoadingOlder]);
+
+  useLayoutEffect(() => {
+    const el = adminTxScrollRef.current;
+    const saved = adminTxRestoreScrollRef.current;
+    if (!el || !saved) return;
+    const delta = el.scrollHeight - saved.height;
+    el.scrollTop = saved.top + delta;
+    adminTxRestoreScrollRef.current = null;
+  }, [adminTxList]);
+
+  useEffect(() => {
+    if (!adminTxAtBottom) return;
+    const el = adminTxScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [adminTxList, adminTxAtBottom]);
+
+  const loadOlderAdminTransactions = useCallback(() => {
+    if (adminTxLoadingOlderRef.current) return;
+    const cursor = oldestTransactionCursor(adminTxList);
+    if (!cursor) return;
+    const el = adminTxScrollRef.current;
+    if (el) {
+      adminTxRestoreScrollRef.current = { height: el.scrollHeight, top: el.scrollTop };
+    }
+    adminTxLoadingOlderRef.current = true;
+    setAdminTxLoadingOlder(true);
+    socket.emit("fetchTransactionHistory", {
+      roomId: gameRef.current.roomId,
+      beforeTimestamp: cursor.timestamp,
+      beforeId: cursor.id,
+      limit: 80,
+      ...(dmViewAsPlayerIdRef.current
+        ? { viewAsPlayerId: dmViewAsPlayerIdRef.current }
+        : {}),
+    });
+  }, [adminTxList]);
 
   const pendingDeviceClaimPlayerIds = useMemo(
     () => new Set((game.pendingDeviceClaims ?? []).map((c) => c.playerId)),
@@ -160,7 +270,7 @@ export const AdminView: React.FC<Props> = ({
   }, [game.players, game.phase, unlockingPlayerId]);
 
   const reportPlayers = [...game.players]
-    .filter((p) => !!p.analysisResult)
+    .filter((p) => !!p.analysisResult && !isAiPlayer(p))
     .sort((a, b) => b.wealth - a.wealth);
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -248,6 +358,54 @@ export const AdminView: React.FC<Props> = ({
 
   const emit = (event: string, extra?: object) => socket.emit(event, { roomId: game.roomId, ...extra });
 
+  const scrollAdminTxToLatest = useCallback(() => {
+    const el = adminTxScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setAdminTxAtBottom(true);
+  }, []);
+
+  const onAdminTxMessageScroll = useCallback(() => {
+    const el = adminTxScrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    setAdminTxAtBottom(atBottom);
+  }, []);
+
+  const adminTxDisplayList = useMemo(() => {
+    if (!dmViewAsPlayerId) return adminTxList;
+    return adminTxList.filter(
+      (t) => t.fromId === dmViewAsPlayerId || t.toId === dmViewAsPlayerId
+    );
+  }, [adminTxList, dmViewAsPlayerId]);
+
+  const adminChatGroups = useMemo(() => {
+    if (!PLAYER_GROUP_CHAT_ENABLED) return [];
+    const groups = game.chatGroups ?? [];
+    if (!dmViewAsPlayerId) return groups;
+    return groups.filter((g) => g.memberIds.includes(dmViewAsPlayerId));
+  }, [game.chatGroups, dmViewAsPlayerId]);
+
+  const adminGroupMessages = useMemo(() => {
+    if (!PLAYER_GROUP_CHAT_ENABLED) return [];
+    const visibleIds = new Set(adminChatGroups.map((g) => g.id));
+    return (game.groupMessages ?? []).filter((m) => visibleIds.has(m.groupId));
+  }, [game.groupMessages, adminChatGroups]);
+
+  const showAdminLoadOlder = archiveLoadIncomplete(
+    dmViewAsPlayerId ? adminTxDisplayList.length : adminTxList.length,
+    dmViewAsPlayerId ? adminDmTxTotal : adminTxTotal
+  );
+
+  const playerPreviewGame = useMemo(() => {
+    if (!uiViewAsPlayerId) return game;
+    return filterGameForPlayerView(game, uiViewAsPlayerId);
+  }, [game, uiViewAsPlayerId]);
+
+  const uiPerspectivePlayer = uiViewAsPlayerId
+    ? humanPlayers.find((p) => p.id === uiViewAsPlayerId)
+    : null;
+
   const handleRevokeAuctionCard = (
     cardId: string,
     displayName: string,
@@ -281,21 +439,14 @@ export const AdminView: React.FC<Props> = ({
   };
 
   const handleSettleLottery = (playerId: string, playerName: string) => {
-    const amount = prompt("请输入彩票中奖金额（可负）:", "0");
-    if (amount === null) return;
-    const parsed = Number(String(amount).trim());
-    if (!Number.isSafeInteger(parsed)) {
-      alert("开奖金额必须为整数");
+    if (
+      !window.confirm(
+        `向 ${playerName} 发起线上随机开奖？\n将调用 random.org（失败时自动改用服务器加密随机），结果由玩家确认后入账。`
+      )
+    ) {
       return;
     }
-    const target = game.players.find((p) => p.id === playerId);
-    const goldApplied = !!target?.activeBuffs?.some((b) => b.cardId === "buff_gold") && parsed > 0;
-    const credited = goldApplied ? Math.floor(parsed * 1.5) : parsed;
-    const amountLabel = goldApplied
-      ? `（${parsed}）×1.5 = ${credited} 财富（点石成金，向下取整）`
-      : `${parsed} 财富`;
-    if (!window.confirm(`向 ${playerName} 发送彩票开奖确认：${amountLabel}？\n确认后才会入账。`)) return;
-    emit("adminSettleLottery", { targetPlayerId: playerId, amount: parsed });
+    emit("adminDrawLottery", { targetPlayerId: playerId });
   };
 
   const handleRevokeLottery = (
@@ -624,6 +775,19 @@ export const AdminView: React.FC<Props> = ({
         </div>
 
         <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{
+              background: game.autoHostEnabled ? "rgba(56,189,248,0.2)" : "rgba(148,163,184,0.12)",
+              border: `1px solid ${game.autoHostEnabled ? "rgba(56,189,248,0.5)" : "rgba(148,163,184,0.35)"}`,
+              color: game.autoHostEnabled ? "#7dd3fc" : "#cbd5e1",
+            }}
+            onClick={() => emit("adminSetAutoHost", { enabled: !game.autoHostEnabled })}
+            title="开启后：自动开局、自动推进阶段、自动拍卖落槌、自动彩票开奖、命名兜底"
+          >
+            {game.autoHostEnabled ? "🤖 系统自动主持：开" : "🖐 系统自动主持：关"}
+          </button>
           {(game.phase === "ROOM_WAITING" || game.phase === "ERA_INTRO") && (
             <>
               <button className="btn btn-primary btn-sm" onClick={() => emit("adminStartTutorial")}>🎓 教程</button>
@@ -640,9 +804,19 @@ export const AdminView: React.FC<Props> = ({
             </>
           )}
           {game.phase === "AUCTION" ? (
-            <button className="btn btn-purple btn-sm animate-pulse" onClick={() => { if (confirm("结束拍卖并进入下一阶段？")) emit("adminEndAuction"); }}>🏁 结束拍卖</button>
+            <button
+              type="button"
+              className="btn btn-purple btn-sm animate-pulse"
+              style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
+              onClick={() => {
+                if (confirm("结束拍卖并进入下一阶段？")) emit("adminEndAuction");
+              }}
+            >
+              <GavelIcon size={16} decorative style={{ color: "inherit" }} />
+              结束拍卖
+            </button>
           ) : (
-            <button className="btn btn-sm" style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.4)", color: "#c084fc" }} onClick={() => { if (confirm("开启拍卖阶段？")) emit("adminSkipPhase", { targetPhase: "AUCTION" }); }}>🔨 拍卖</button>
+            <button className="btn btn-sm" style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.4)", color: "#c084fc", display: "inline-flex", alignItems: "center", gap: "0.35rem" }} onClick={() => { if (confirm("开启拍卖阶段？")) emit("adminSkipPhase", { targetPhase: "AUCTION" }); }}><GavelIcon size={16} decorative style={{ color: "inherit" }} /> 拍卖</button>
           )}
           {game.phase === "COMMUNITY_NAMING" && (
             <form
@@ -706,6 +880,112 @@ export const AdminView: React.FC<Props> = ({
           )}
           <button className="btn btn-danger btn-sm" onClick={() => { if (confirm("警告：解散房间？")) emit("adminDissolveRoom"); }}>💣 解散</button>
           <button className="btn btn-ghost btn-sm" onClick={onExit}>← 返回</button>
+        </div>
+
+        {/* AI 玩家：主持可添加/补位/移除。AI 由服务端托管，缺模型时自动用本地策略。 */}
+        <div
+          style={{
+            marginTop: "1rem",
+            padding: "0.85rem 1rem",
+            borderRadius: "0.9rem",
+            background: "rgba(56,189,248,0.05)",
+            border: "1px solid rgba(56,189,248,0.2)",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "0.6rem",
+            alignItems: "center",
+          }}
+        >
+          <span style={{ fontWeight: 800, color: "#7dd3fc", fontSize: uiRem(0.85) }}>🤖 AI 玩家</span>
+          {!aiPlayersEnabled && (
+            <span style={{ fontSize: uiRem(0.75), color: "var(--color-text-muted)" }}>
+              服务端已关闭 AI 玩家（AI_PLAYERS_ENABLED=false）
+            </span>
+          )}
+          {aiPlayersEnabled && (
+            <>
+          <span
+            style={{
+              fontSize: uiRem(0.75),
+              color: "#bae6fd",
+              padding: "0.35rem 0.55rem",
+              borderRadius: "0.45rem",
+              background: "rgba(56,189,248,0.08)",
+              border: "1px solid rgba(56,189,248,0.22)",
+            }}
+          >
+            不预设人格 · 由模型自由发挥
+          </span>
+          <select
+            className="input"
+            value={aiDifficulty}
+            onChange={(e) => setAiDifficulty(e.target.value as "easy" | "normal" | "hard")}
+            style={{ width: "6.5rem", padding: "0.35rem 0.55rem" }}
+            aria-label="AI 难度"
+          >
+            <option value="easy">简单</option>
+            <option value="normal">普通</option>
+            <option value="hard">困难</option>
+          </select>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ background: "rgba(56,189,248,0.18)", border: "1px solid rgba(56,189,248,0.45)", color: "#bae6fd" }}
+            onClick={() => emit("adminAddAI", { difficulty: aiDifficulty })}
+            disabled={aiAddDisabled}
+          >
+            + 添加 AI
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.3)", color: "#7dd3fc" }}
+            onClick={() => emit("adminFillAI", { target: 6, difficulty: aiDifficulty })}
+            disabled={aiAddDisabled}
+          >
+            补满到 6 人
+          </button>
+          <span style={{ fontSize: uiRem(0.72), color: "var(--color-text-muted)" }}>
+            {game.players.filter((p) => isAiPlayer(p)).length} 名 AI 在座
+          </span>
+          {game.players
+            .filter((p) => isAiPlayer(p))
+            .map((p) => (
+              <span
+                key={p.id}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.35rem",
+                  padding: "0.2rem 0.5rem",
+                  borderRadius: "9999px",
+                  background: "rgba(255,255,255,0.05)",
+                  border: "1px solid var(--color-border)",
+                  fontSize: uiRem(0.75),
+                  color: "var(--color-text-secondary)",
+                }}
+              >
+                {p.name}
+                {p.aiDifficulty ? ` · ${aiDifficultyLabel(p.aiDifficulty)}` : ""}
+                <button
+                  type="button"
+                  title="移除该 AI"
+                  onClick={() => emit("adminRemoveAI", { targetPlayerId: p.id })}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: "#f87171",
+                    cursor: "pointer",
+                    padding: 0,
+                    lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            </>
+          )}
         </div>
       </div>
 
@@ -891,8 +1171,19 @@ export const AdminView: React.FC<Props> = ({
               boxShadow: "0 0 30px rgba(168,85,247,0.15)",
             }}
           >
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#c084fc", marginBottom: "1rem" }}>
-              🔨 拍卖控制台 · 第 {auctionRound} 场
+            <h2
+              style={{
+                fontSize: "1.2rem",
+                fontWeight: 800,
+                color: "#c084fc",
+                marginBottom: "1rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.45rem",
+              }}
+            >
+              <GavelIcon size={22} decorative style={{ color: "inherit" }} />
+              拍卖控制台 · 第 {auctionRound} 场
             </h2>
 
             <div
@@ -1081,7 +1372,12 @@ export const AdminView: React.FC<Props> = ({
                       {sold && (
                         <span style={{ color: "var(--color-text-muted)", fontWeight: 600, marginLeft: "0.35rem" }}>
                           (已成交{winnerName ? ` · ${winnerName}` : ""}
-                          {deal ? ` · ${deal.cost}` : ""})
+                          {deal
+                            ? deal.source === "force_buy" || (deal.source == null && deal.cost === 0)
+                              ? " · 强买"
+                              : ` · ${deal.cost}`
+                            : ""}
+                          )
                         </span>
                       )}
                     </div>
@@ -1093,7 +1389,7 @@ export const AdminView: React.FC<Props> = ({
                         lineHeight: 1.45,
                       }}
                     >
-                      {def?.desc}
+                      {def?.desc ? <BuffDescText text={def.desc} /> : null}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                       {!sold && (
@@ -1472,12 +1768,18 @@ export const AdminView: React.FC<Props> = ({
                                 type="button"
                                 onClick={() => handleSettleLottery(p.id, p.name)}
                                 className={`admin-inline-btn${pendingLottery ? "" : " animate-pulse"}`}
+                                disabled={Boolean(pendingLottery)}
                                 title={
                                   pendingLottery
-                                    ? `重新发送开奖确认（当前 ${pendingAmountLabel}）`
-                                    : "开奖"
+                                    ? `已有待确认开奖（${pendingAmountLabel}），先撤回再重开`
+                                    : "线上随机开奖"
                                 }
-                                style={{ background: "rgba(16,185,129,0.2)", border: "1px solid rgba(16,185,129,0.4)", color: "#34d399" }}
+                                style={{
+                                  background: "rgba(16,185,129,0.2)",
+                                  border: "1px solid rgba(16,185,129,0.4)",
+                                  color: "#34d399",
+                                  opacity: pendingLottery ? 0.45 : 1,
+                                }}
                               >🎲</button>
                             )}
                             {pendingLottery && (
@@ -1561,6 +1863,8 @@ export const AdminView: React.FC<Props> = ({
             </div>
           </div>
 
+          <AdminProjectAdjustPanel game={game} />
+
           {/* 日志 */}
           <div
             style={{
@@ -1597,101 +1901,27 @@ export const AdminView: React.FC<Props> = ({
           </div>
         </div>
 
-        <div
-          style={{
-            marginTop: "1.5rem",
-            background: "var(--color-bg-card)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "1.25rem",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-            height: "320px",
-          }}
-        >
-          <div
-            style={{
-              padding: "1rem 1.25rem",
-              borderBottom: "1px solid var(--color-border)",
-              flexShrink: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: "0.75rem",
-              flexWrap: "wrap",
+        <div style={{ marginTop: "1.5rem" }}>
+          <AdminPrivateChatPanel
+            roomId={game.roomId}
+            transactions={adminTxDisplayList}
+            chatGroups={adminChatGroups}
+            groupMessages={adminGroupMessages}
+            total={dmViewAsPlayerId ? adminDmTxTotal : adminTxTotal}
+            showLoadOlder={showAdminLoadOlder}
+            loadingOlder={adminTxLoadingOlder}
+            onLoadOlder={loadOlderAdminTransactions}
+            messageScrollRef={adminTxScrollRef}
+            onMessageScroll={onAdminTxMessageScroll}
+            atBottom={adminTxAtBottom}
+            onScrollToLatest={scrollAdminTxToLatest}
+            perspectivePlayers={humanPlayers}
+            viewAsPlayerId={dmViewAsPlayerId}
+            onViewAsPlayerIdChange={(id) => {
+              setDmViewAsPlayerId(id);
+              setAdminDmTxTotal(0);
             }}
-          >
-            <h2 style={{ fontWeight: 700, fontSize: uiRem(1), margin: 0 }}>💬 私信与转账（只读）</h2>
-            <span style={{ fontSize: uiRem(0.75), color: "var(--color-text-muted)" }}>
-              共 {adminTransactionsNewestFirst.length} 条
-            </span>
-          </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: "0.875rem" }}>
-            {adminTransactionsNewestFirst.length === 0 ? (
-              <div
-                style={{
-                  textAlign: "center",
-                  color: "var(--color-text-muted)",
-                  fontSize: uiRem(0.85),
-                  padding: "2rem 1rem",
-                }}
-              >
-                暂无私信/转账
-              </div>
-            ) : (
-              adminTransactionsNewestFirst.map((tx) => {
-                const isDm = tx.amount === 0;
-                return (
-                  <div
-                    key={tx.id}
-                    style={{
-                      borderLeft: `2px solid ${isDm ? "rgba(96,165,250,0.45)" : "rgba(251,191,36,0.45)"}`,
-                      paddingLeft: "0.75rem",
-                      paddingTop: "0.5rem",
-                      paddingBottom: "0.5rem",
-                      marginBottom: "0.5rem",
-                      fontSize: uiRem(0.75),
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: "0.35rem 0.75rem",
-                        alignItems: "center",
-                        marginBottom: "0.25rem",
-                      }}
-                    >
-                      <span style={{ color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
-                        {formatAdminTxTime(tx.timestamp)}
-                      </span>
-                      <span style={{ fontWeight: 700, color: "white" }}>
-                        {tx.fromName} → {tx.toName}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: uiRem(0.65),
-                          fontWeight: 700,
-                          padding: "0.1rem 0.45rem",
-                          borderRadius: "9999px",
-                          background: isDm ? "rgba(59,130,246,0.15)" : "rgba(251,191,36,0.12)",
-                          border: `1px solid ${isDm ? "rgba(59,130,246,0.35)" : "rgba(251,191,36,0.35)"}`,
-                          color: isDm ? "#93c5fd" : "#fcd34d",
-                        }}
-                      >
-                        {isDm ? "私信" : `转账 ${tx.amount}`}
-                      </span>
-                      <span style={{ color: "var(--color-text-muted)" }}>{TX_STATUS_LABEL[tx.status]}</span>
-                    </div>
-                    <div style={{ color: "var(--color-text-secondary)", wordBreak: "break-word" }}>
-                      {adminTxBubbleText(tx)}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
+          />
         </div>
 
         <div
@@ -1715,28 +1945,60 @@ export const AdminView: React.FC<Props> = ({
             }}
           >
             <h2 style={{ fontWeight: 700, fontSize: uiRem(1), margin: 0 }}>📱 玩家界面</h2>
-            <span style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>
-              公共预览（不可操作）
-            </span>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.75rem",
+                flexWrap: "wrap",
+              }}
+            >
+              {humanPlayers.length > 0 && (
+                <AdminSectionPerspectiveSelect
+                  label="视角"
+                  value={uiViewAsPlayerId}
+                  onChange={setUiViewAsPlayerId}
+                  players={humanPlayers}
+                  overviewLabel="总览（公共空座位）"
+                />
+              )}
+              <span style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>
+                {uiViewAsPlayerId
+                  ? `${uiPerspectivePlayer?.name ?? uiViewAsPlayerId} · 只读`
+                  : "公共预览（不可操作）"}
+              </span>
+            </div>
           </div>
           <div
             style={{
               maxHeight: "70vh",
               overflow: "auto",
               background: "#070b14",
-              // 让内部 position:fixed 底栏/遮罩相对本容器定位，避免盖住主持台
               transform: "translateZ(0)",
             }}
           >
             <div style={{ pointerEvents: "none" }}>
-              <GameRoom
-                game={game}
-                embed
-                projectImages={projectImages}
-                eraImages={eraImages}
-                buffImages={buffImages}
-                personaImages={personaImages}
-              />
+              {uiViewAsPlayerId ? (
+                <GameRoom
+                  game={playerPreviewGame}
+                  myPlayerId={uiViewAsPlayerId}
+                  readOnly
+                  hidePlayerChat
+                  projectImages={projectImages}
+                  eraImages={eraImages}
+                  buffImages={buffImages}
+                  personaImages={personaImages}
+                />
+              ) : (
+                <GameRoom
+                  game={game}
+                  embed
+                  projectImages={projectImages}
+                  eraImages={eraImages}
+                  buffImages={buffImages}
+                  personaImages={personaImages}
+                />
+              )}
             </div>
           </div>
         </div>

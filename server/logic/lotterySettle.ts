@@ -27,11 +27,19 @@ export function restoreLotteryBuff(player: Player): void {
 export function createLotteryOffer(
   game: GameState,
   playerId: string,
-  amount: number
+  amount: number,
+  meta?: { roll?: number; source?: "random.org" | "server" | "manual"; drawnAt?: number }
 ): { offer: LotteryOffer; replaced?: LotteryOffer } {
   const pending = game.pendingLotteryOffers ?? [];
   const replaced = pending.find((o) => o.playerId === playerId);
-  const offer: LotteryOffer = { offerId: randomUUID(), playerId, amount };
+  const offer: LotteryOffer = {
+    offerId: randomUUID(),
+    playerId,
+    amount,
+    ...(meta?.roll != null ? { roll: meta.roll } : {}),
+    ...(meta?.source ? { source: meta.source } : {}),
+    drawnAt: meta?.drawnAt ?? Date.now(),
+  };
   game.pendingLotteryOffers = pending.filter((o) => o.playerId !== playerId);
   game.pendingLotteryOffers.push(offer);
   return { offer, replaced };
@@ -60,7 +68,15 @@ export function claimLotteryResponse(
   playerId: string,
   offerId: unknown,
   accept: boolean
-): { ok: true; amount: number } | { ok: false; message: string } {
+):
+  | {
+      ok: true;
+      amount: number;
+      roll?: number;
+      source?: "random.org" | "server" | "manual";
+      drawnAt?: number;
+    }
+  | { ok: false; message: string } {
   if (typeof offerId !== "string" || !offerId) {
     return { ok: false, message: "彩票开奖已失效" };
   }
@@ -81,7 +97,13 @@ export function claimLotteryResponse(
   if (!offer) {
     return { ok: false, message: "彩票开奖已失效" };
   }
-  return { ok: true, amount: offer.amount };
+  return {
+    ok: true,
+    amount: offer.amount,
+    roll: offer.roll,
+    source: offer.source,
+    drawnAt: offer.drawnAt,
+  };
 }
 
 export function recordLotteryCompletedDeal(
@@ -89,7 +111,8 @@ export function recordLotteryCompletedDeal(
   playerId: string,
   amount: number,
   enteredAmount?: number,
-  goldApplied?: boolean
+  goldApplied?: boolean,
+  meta?: { roll?: number; source?: "random.org" | "server" | "manual" }
 ): void {
   if (!game.lotteryCompletedDeals) game.lotteryCompletedDeals = [];
   game.lotteryCompletedDeals = game.lotteryCompletedDeals.filter((d) => d.playerId !== playerId);
@@ -98,19 +121,28 @@ export function recordLotteryCompletedDeal(
     amount,
     ...(enteredAmount != null ? { enteredAmount } : {}),
     ...(goldApplied != null ? { goldApplied } : {}),
+    ...(meta?.roll != null ? { roll: meta.roll } : {}),
+    ...(meta?.source ? { source: meta.source } : {}),
   });
 }
 
 export function applyLotteryAccept(
   game: GameState,
   player: Player,
-  amount: number
+  amount: number,
+  meta?: { roll?: number; source?: "random.org" | "server" | "manual" }
 ): { enteredAmount: number; creditedAmount: number; goldApplied: boolean } {
+  const lotteryBuff = player.activeBuffs?.find((b) => b.cardId === LOTTERY_CARD_ID);
   const goldApplied = Boolean(player.activeBuffs?.some((b) => b.cardId === "buff_gold"));
   const credited = applyGoldMultiplier(player, amount);
   player.wealth += credited;
+  const playId = lotteryBuff?.instanceId;
+  if (playId && game.roundBuffPlays) {
+    const rec = game.roundBuffPlays.find((p) => p.playId === playId && !p.voided);
+    if (rec) rec.wealthCredited = credited;
+  }
   removeLotteryBuff(player);
-  recordLotteryCompletedDeal(game, player.id, credited, amount, goldApplied);
+  recordLotteryCompletedDeal(game, player.id, credited, amount, goldApplied, meta);
   return { enteredAmount: amount, creditedAmount: credited, goldApplied };
 }
 
@@ -160,7 +192,7 @@ export function proposeLotterySettle(
     return { ok: false, message: "开奖金额必须为整数" };
   }
   const player = game.players.find((p) => p.id === playerId);
-  if (!player || player.isAI) {
+  if (!player) {
     return { ok: false, message: "开奖对象无效" };
   }
   if ((game.lotteryCompletedDeals ?? []).some((d) => d.playerId === playerId)) {
@@ -169,6 +201,9 @@ export function proposeLotterySettle(
   if (!playerHasLotteryBuff(player)) {
     return { ok: false, message: "该玩家没有待开奖的彩票" };
   }
-  const { offer, replaced } = createLotteryOffer(game, player.id, amount);
+  const { offer, replaced } = createLotteryOffer(game, player.id, amount, {
+    source: "manual",
+    drawnAt: Date.now(),
+  });
   return { ok: true, offer, replaced, player };
 }

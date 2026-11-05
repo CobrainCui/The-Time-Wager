@@ -50,3 +50,9 @@ _pack_staging/
 *.bak
 scratch/eng.traineddata
 卡牌图片/
+
+# 独立仓库：agent-edition 单独推送，不并入本仓库
+agent-edition/
+
+# 真实对局导出数据（含玩家/社群信息，不入库）
+2026.10 data/

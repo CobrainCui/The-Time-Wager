@@ -4,19 +4,30 @@ import { GameState, Transaction } from "../state/gameState.js";
 import { getPublicCommunityLeaderboard } from "../state/communityLeaderboard.js";
 import { peekNextRoundEnergy } from "../logic/energySchedule.js";
 import { buildAuctionLotPublicView, publicSessionAuctionWins } from "../logic/auctionCards.js";
-import { LIGHTER_CARD_ID, listLighterBurnTargets } from "../logic/buffLogic.js";
 import { pendingDeviceClaimsForGodView } from "../logic/deviceClaim.js";
+import { transactionsForViewerPayload, visibleTransactionsForViewer } from "../util/transactionHistory.js";
+import { chatGroupsForViewer, groupMessagesForViewer } from "../logic/chatGroups.js";
+import { GROUP_CHAT_ENABLED } from "../config/playerChatFeatures.js";
+import { serializationForMemberSocket } from "./adminPerspective.js";
+import type { SettlementBaseline } from "../logic/settlementBaseline.js";
+import type { Socket } from "socket.io";
 
 const HIDDEN_INVESTMENT_PHASES = new Set<GameState["phase"]>(["INVESTMENT", "BUFF_USAGE"]);
+
+/** 他人精力不对玩家 payload 暴露（仅本人或上帝可见） */
+function energyVisibleToViewer(
+  isGodView: boolean,
+  visibleToViewer: boolean
+): boolean {
+  return isGodView || visibleToViewer;
+}
 
 export function transactionsForViewer(
   transactions: Transaction[],
   viewerPlayerId: string | null | undefined,
   isGodView: boolean
 ): Transaction[] {
-  if (isGodView) return transactions;
-  if (!viewerPlayerId) return [];
-  return transactions.filter((t) => t.fromId === viewerPlayerId || t.toId === viewerPlayerId);
+  return visibleTransactionsForViewer(transactions, viewerPlayerId, isGodView);
 }
 
 /** 与 broadcastUpdate 一致，供观战首包等单独 emit 使用 */
@@ -26,7 +37,11 @@ export function serializeGameForClient(
   viewerPlayerId?: string | null
 ) {
   const isGodView = extra.isGodView === true;
-  const transactions = transactionsForViewer(game.transactions, viewerPlayerId ?? null, isGodView);
+  const { transactions, transactionLog } = transactionsForViewerPayload(
+    game.transactions,
+    viewerPlayerId ?? null,
+    isGodView
+  );
   const {
     sessionTelemetry,
     sessionStartedAt,
@@ -37,6 +52,9 @@ export function serializeGameForClient(
     auctionBids,
     auctionCompletedDeals: _auctionCompletedDeals,
     createdByIp: _createdByIp,
+    settlementBaseline: _settlementBaseline,
+    adminProjectAdjustments: _adminProjectAdjustments,
+    hostRevision: _hostRevision,
     ...gamePublic
   } = game;
   const hideInvestments = HIDDEN_INVESTMENT_PHASES.has(game.phase);
@@ -49,17 +67,30 @@ export function serializeGameForClient(
       ? (pendingWealthAdjustments ?? []).find((o) => o.playerId === viewerPlayerId)
       : undefined;
   const lotView = buildAuctionLotPublicView(game);
-  const viewerPlayer =
-    viewerPlayerId != null ? game.players.find((p) => p.id === viewerPlayerId) : undefined;
-  const viewerHasLighter =
-    !isGodView && (viewerPlayer?.inventory ?? []).includes(LIGHTER_CARD_ID);
+
+  const chatGroups = GROUP_CHAT_ENABLED
+    ? chatGroupsForViewer(game, viewerPlayerId ?? null, isGodView)
+    : [];
+  const groupMessages = GROUP_CHAT_ENABLED
+    ? groupMessagesForViewer(game, viewerPlayerId ?? null, isGodView)
+    : [];
 
   return {
     ...gamePublic,
+    chatGroups,
+    groupMessages,
     ...lotView,
     auctionSessionWins: publicSessionAuctionWins(game),
     ...(isGodView
       ? {
+          hostRevision: game.hostRevision ?? 0,
+          ...(game.settlementBaseline
+            ? {
+                settlementBaselineActiveProjects: (
+                  game.settlementBaseline as SettlementBaseline
+                ).activeProjects,
+              }
+            : {}),
           pendingAuctionOffers: pendingAuctionOffers ?? [],
           pendingLotteryOffers: pendingLotteryOffers ?? [],
           lotteryCompletedDeals: lotteryCompletedDeals ?? [],
@@ -83,6 +114,9 @@ export function serializeGameForClient(
         receivedRoundEnergy: _receivedRoundEnergy,
         buffRoundNotes,
         pendingSlackHits,
+        pendingLighterBurnNotices,
+        slackedBy: _slackedBy,
+        slackEnergyLost: _slackEnergyLost,
         inventory,
         activeBuffs,
         usedCards,
@@ -90,43 +124,75 @@ export function serializeGameForClient(
         lighterBurnGhostIds: _lighterBurnGhostIds,
         ...rest
       } = p as typeof p & { lighterBurnGhostIds?: string[] };
+      const slackAttribution =
+        isGodView
+          ? { slackedBy: p.slackedBy ?? [], slackEnergyLost: p.slackEnergyLost ?? [] }
+          : { slackedBy: [] as string[], slackEnergyLost: [] as number[] };
       const visibleToViewer = isGodView || p.id === viewerPlayerId;
+      const { energy, ...restWithoutEnergy } = rest;
+      const energyField = energyVisibleToViewer(isGodView, visibleToViewer)
+        ? { energy }
+        : {};
       if (visibleToViewer) {
         return {
-          ...rest,
+          ...restWithoutEnergy,
+          ...energyField,
+          ...slackAttribution,
           inventory,
           activeBuffs,
           usedCards,
           // 本轮道具短记录仅本人（或上帝）可见
           buffRoundNotes: buffRoundNotes ?? [],
           pendingSlackHits: pendingSlackHits ?? [],
+          pendingLighterBurnNotices: pendingLighterBurnNotices ?? [],
           investmentDraft: p.investmentDraft,
           investment: p.investment,
           coffeePurchasesThisRound: p.coffeePurchasesThisRound ?? 0,
         };
       }
       return {
-        ...rest,
-        // 他人手牌 / 已发动 / 已用对玩家隐藏；持打火机时仅下发拍卖成交卡种列表
+        ...restWithoutEnergy,
+        ...energyField,
+        ...slackAttribution,
+        // 他人手牌 / 已发动 / 已用对玩家隐藏
         buffRoundNotes: undefined,
         pendingSlackHits: undefined,
+        pendingLighterBurnNotices: undefined,
         investmentDraft: undefined,
         investment: hideInvestments ? {} : p.investment,
         coffeePurchasesThisRound: p.coffeePurchasesThisRound ?? 0,
-        ...(viewerHasLighter && p.id !== viewerPlayerId
-          ? { burnableCardIds: listLighterBurnTargets(game, p.id) }
-          : {}),
       };
     }),
     transactions,
+    transactionLog,
     serverNow: Date.now(),
     nextRoundEnergy: peekNextRoundEnergy(game),
     // 倒计时控场：显式下发，避免后续序列化改动漏字段导致 Admin/玩家不同步
     investmentEndsAt: game.investmentEndsAt,
     investmentTimerPausedAt: game.investmentTimerPausedAt,
+    settlementHistory: sessionTelemetry?.settlementHistory ?? [],
     ...extra,
     globalLeaderboard: getPublicCommunityLeaderboard(),
   };
+}
+
+export function emitSerializedGameUpdate(
+  socket: Socket,
+  game: GameState
+): void {
+  const player = game.players.find((p) => p.socketId === socket.id);
+  const isSuperAdmin = socket.data.isSuperAdmin === true;
+  if (isSuperAdmin) {
+    socket.emit("gameUpdate", serializeGameForClient(game, { isGodView: true }, null));
+    return;
+  }
+  const { extra, viewerPlayerId } = serializationForMemberSocket(
+    game,
+    false,
+    undefined,
+    player?.id ?? null
+  );
+  socket.emit("gameUpdate", serializeGameForClient(game, extra, viewerPlayerId));
 }
 
 export function broadcastUpdate(io: Server, game: GameState) {
@@ -136,13 +202,6 @@ export function broadcastUpdate(io: Server, game: GameState) {
   for (const socketId of memberIds) {
     const socket = io.sockets.sockets.get(socketId);
     if (!socket) continue;
-
-    const player = game.players.find((p) => p.socketId === socket.id);
-    const isGodView = socket.data.isSuperAdmin === true;
-
-    socket.emit(
-      "gameUpdate",
-      serializeGameForClient(game, isGodView ? { isGodView: true } : {}, player?.id ?? null)
-    );
+    emitSerializedGameUpdate(socket, game);
   }
 }

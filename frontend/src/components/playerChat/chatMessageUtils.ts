@@ -16,7 +16,8 @@ export function msgFromTx(tx: Transaction, myId: string): ChatMessage {
 }
 
 export function sortMessages(messages: ChatMessage[]): ChatMessage[] {
-  return [...messages].sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+  // 稳定排序：同一毫秒内保持到达顺序，避免随机 id 打乱聊天顺序
+  return [...messages].sort((a, b) => a.timestamp - b.timestamp);
 }
 
 /** 乐观气泡是否对应某条服务端交易（优先 clientTempId） */

@@ -2,7 +2,9 @@ import React, { useState, useEffect, lazy, Suspense } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState } from "../types";
 import { socket } from "../socket";
-import { saveGameSession } from "../gameSession";
+import { clearGameSession, loadGameSession, saveGameSession } from "../gameSession";
+import { LobbyTutorial } from "./LobbyTutorial";
+import { RuleAgentChat } from "../components/ruleAgent/RuleAgentChat";
 const DevicePreviewShell = lazy(() =>
   import("../devicePreview/DevicePreviewShell").then((m) => ({ default: m.DevicePreviewShell }))
 );
@@ -16,6 +18,17 @@ export const Lobby: React.FC<Props> = ({ game }) => {
   const [roomId, setRoomId] = useState("");
   const [isJoining, setIsJoining] = useState(false);
   const [devicePreviewOpen, setDevicePreviewOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [hasStoredSession, setHasStoredSession] = useState(() => Boolean(loadGameSession()));
+
+  useEffect(() => {
+    const session = loadGameSession();
+    if (session) {
+      setRoomId(session.roomId);
+      setName(session.playerName);
+      setHasStoredSession(true);
+    }
+  }, []);
 
   useEffect(() => {
     const clearJoining = () => setIsJoining(false);
@@ -35,7 +48,20 @@ export const Lobby: React.FC<Props> = ({ game }) => {
     if (!cleanRoomId || !cleanName) return;
     setIsJoining(true);
     saveGameSession(cleanRoomId, cleanName);
-    socket.emit("joinGame", { roomId: cleanRoomId, name: cleanName });
+    const session = loadGameSession();
+    const reconnectToken =
+      session?.roomId === cleanRoomId &&
+      session?.playerName === cleanName &&
+      session.reconnectToken
+        ? session.reconnectToken
+        : undefined;
+    socket.emit("joinGame", { roomId: cleanRoomId, name: cleanName, reconnectToken });
+  };
+
+  const clearLocalSession = () => {
+    clearGameSession();
+    setHasStoredSession(false);
+    setIsJoining(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -44,6 +70,9 @@ export const Lobby: React.FC<Props> = ({ game }) => {
 
   return (
     <>
+      {tutorialOpen && (
+        <LobbyTutorial playerName={name} onClose={() => setTutorialOpen(false)} />
+      )}
       {devicePreviewOpen && (
         <Suspense fallback={null}>
           <DevicePreviewShell onClose={() => setDevicePreviewOpen(false)} />
@@ -159,6 +188,20 @@ export const Lobby: React.FC<Props> = ({ game }) => {
             <button
               type="button"
               className="btn btn-ghost btn-sm"
+              onClick={() => setTutorialOpen(true)}
+              style={{
+                width: "100%",
+                marginTop: "0.5rem",
+                fontSize: uiRem(0.78),
+                color: "var(--color-text-muted)",
+              }}
+            >
+              📖 教程（六人场玩法）
+            </button>
+
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
               onClick={() => setDevicePreviewOpen(true)}
               style={{
                 width: "100%",
@@ -169,6 +212,22 @@ export const Lobby: React.FC<Props> = ({ game }) => {
             >
               设备预览
             </button>
+
+            {hasStoredSession && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={clearLocalSession}
+                style={{
+                  width: "100%",
+                  marginTop: "0.25rem",
+                  fontSize: uiRem(0.78),
+                  color: "var(--color-text-muted)",
+                }}
+              >
+                清除本机进房记录
+              </button>
+            )}
           </div>
 
           {game?.players && game.players.length > 0 && (
@@ -212,7 +271,8 @@ export const Lobby: React.FC<Props> = ({ game }) => {
           )}
         </div>
       </div>
-    </div>
+      </div>
+      <RuleAgentChat />
     </>
   );
 };

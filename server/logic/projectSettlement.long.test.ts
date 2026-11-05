@@ -186,8 +186,8 @@ describe("settleOneProject long-term", () => {
     assert.equal(result.playerGains.p1?.total, 7);
     assert.equal(result.playerInvestments.p1, 7);
     assert.equal(p.investedLongEnergy, 0);
-    assert.equal(project.investorRecords.p1, undefined);
-    assert.equal(project.accumulatedInvested, 0);
+    assert.equal(project.investorRecords.p1, 7);
+    assert.equal(project.accumulatedInvested, 7);
   });
 
   it("abandon preserves per-round slices", () => {
@@ -208,7 +208,7 @@ describe("settleOneProject long-term", () => {
     assert.equal(result.playerInvestments.p1, 7);
   });
 
-  it("abandon with currentRound 2 only subtracts historical from board progress", () => {
+  it("abandon keeps board total and adds current round to accumulated", () => {
     const p = makePlayer("p1", {
       longTerm: { 101: { totalInvested: 7, status: "active" } },
       investment: { 101: 2 },
@@ -230,9 +230,10 @@ describe("settleOneProject long-term", () => {
     assert.deepEqual(p.longTerm[101]?.roundSlices, [7, 2]);
     assert.equal(result.playerInvestments.p1, 9);
     assert.equal(result.playerGains.p1?.total, 9);
-    assert.equal(project.investorRecords.p1, undefined);
+    assert.equal(project.investorRecords.p1, 9);
     assert.equal(project.investorRecords.p2, 5 + 3);
-    assert.equal(project.accumulatedInvested, 5 + 3);
+    assert.equal(project.accumulatedInvested, 17);
+    assert.equal(result.totalInvested, 17);
   });
 
   it("syncLongTermRecordsFromHistory enables abandon on legacy data", () => {
@@ -247,8 +248,8 @@ describe("settleOneProject long-term", () => {
     assert.equal(p.longTerm[101]?.status, "abandoned");
     assert.equal(p.longTerm[101]?.totalInvested, 0);
     assert.equal(p.wealth, 4);
-    assert.equal(project.investorRecords.p1, undefined);
-    assert.equal(project.accumulatedInvested, 0);
+    assert.equal(project.investorRecords.p1, 4);
+    assert.equal(project.accumulatedInvested, 4);
   });
 
   it("sanitizeInvestments zeros active 1-2 before settle path", () => {

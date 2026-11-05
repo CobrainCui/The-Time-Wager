@@ -4,19 +4,19 @@ import { GameState } from "./types";
 import GameRoom from "./GameRoom";
 import { DeviceClaimWait } from "./views/DeviceClaimWait";
 import { Lobby } from "./views/Lobby";
+import { handleServerClientUpdateRequired } from "./bootstrapAppUpdate";
 import { clearGameSession, loadGameSession, saveReconnectToken } from "./gameSession";
 import { ConnectionGate } from "./components/ConnectionGate";
 import { useSocketConnection } from "./hooks/useSocketConnection";
 
 function tryRejoinFromSession() {
   const session = loadGameSession();
-  if (session) {
-    socket.emit("joinGame", {
-      roomId: session.roomId,
-      name: session.playerName,
-      reconnectToken: session.reconnectToken,
-    });
-  }
+  if (!session?.reconnectToken) return;
+  socket.emit("joinGame", {
+    roomId: session.roomId,
+    name: session.playerName,
+    reconnectToken: session.reconnectToken,
+  });
 }
 
 function App() {
@@ -76,6 +76,9 @@ function App() {
       setGame(null);
       setMyPlayerId("");
     };
+    const onClientUpdateRequired = () => {
+      handleServerClientUpdateRequired("player");
+    };
     const onError = (msg: string) => alert(`❌ ${msg}`);
     const onPlayerKicked = ({ message }: { message?: string }) => {
       alert(message || "你已被移出房间");
@@ -83,7 +86,13 @@ function App() {
       setGame(null);
       setMyPlayerId("");
     };
-    const onPlayerNotify = (payload: { message?: string; msg?: string } | string) => {
+    const onPlayerNotify = (
+      payload: { type?: string; message?: string; msg?: string } | string
+    ) => {
+      if (typeof payload !== "string") {
+        const t = payload?.type;
+        if (t === "chat" || t === "transfer") return;
+      }
       const text =
         typeof payload === "string"
           ? payload
@@ -102,6 +111,7 @@ function App() {
     socket.on("deviceClaimCancelled", onDeviceClaimCancelled);
     socket.on("deviceClaimSuperseded", onDeviceClaimSuperseded);
     socket.on("roomDissolved", onRoomDissolved);
+    socket.on("clientUpdateRequired", onClientUpdateRequired);
     socket.on("error", onError);
     socket.on("playerKicked", onPlayerKicked);
     socket.on("sessionReplaced", onSessionReplaced);
@@ -121,6 +131,7 @@ function App() {
       socket.off("deviceClaimCancelled", onDeviceClaimCancelled);
       socket.off("deviceClaimSuperseded", onDeviceClaimSuperseded);
       socket.off("roomDissolved", onRoomDissolved);
+      socket.off("clientUpdateRequired", onClientUpdateRequired);
       socket.off("error", onError);
       socket.off("playerKicked", onPlayerKicked);
       socket.off("sessionReplaced", onSessionReplaced);

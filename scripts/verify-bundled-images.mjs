@@ -52,10 +52,11 @@ if (fs.existsSync(projectsDir)) {
   }
 }
 
-const buffTs = fs.readFileSync(path.join(root, "frontend", "src", "data", "buffDefs.ts"), "utf8");
+const buffTs = fs.readFileSync(path.join(root, "frontend", "src", "config", "buffCards.ts"), "utf8");
+const buffBlock = buffTs.slice(buffTs.indexOf("export const BUFF_CARD_DEFS"));
 const buffRe = /^\s*(buff_[a-z0-9_]+)\s*:/gm;
 const buffIds = new Set();
-while ((m = buffRe.exec(buffTs))) {
+while ((m = buffRe.exec(buffBlock))) {
   buffIds.add(m[1]);
   requireFile(path.join("buffs", `${m[1]}.jpg`));
 }
@@ -65,7 +66,7 @@ if (fs.existsSync(buffsDir)) {
     if (!f.toLowerCase().endsWith(".jpg")) continue;
     const id = f.replace(/\.jpg$/i, "");
     if (!buffIds.has(id)) {
-      missing.push(`buffs/${f} (id not in buffDefs.ts — remove retired/orphan defaults)`);
+      missing.push(`buffs/${f} (id not in buffCards.ts BUFF_CARD_DEFS — remove retired/orphan defaults)`);
     }
   }
 }

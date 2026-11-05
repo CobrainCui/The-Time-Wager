@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { uiRem } from "../utils/typography";
 import { socket } from "../socket";
 import type { GameState } from "../types";
+import { GavelIcon } from "./icons/GavelIcon";
 import {
   formatWealthHoldNote,
   playerAvailableWealth,
@@ -37,6 +38,7 @@ type Props = {
   meId?: string;
   /** 离开拍卖阶段时清空本地兜底 */
   phase?: string;
+  readOnly?: boolean;
 };
 
 export const AuctionConfirmModal: React.FC<Props> = ({
@@ -46,6 +48,7 @@ export const AuctionConfirmModal: React.FC<Props> = ({
   game,
   meId,
   phase,
+  readOnly = false,
 }) => {
   const queue = useMemo(() => {
     if (pendingOffers && pendingOffers.length > 0) return pendingOffers;
@@ -80,6 +83,7 @@ export const AuctionConfirmModal: React.FC<Props> = ({
   }, [request?.offerId]);
 
   const handleRespond = (accept: boolean) => {
+    if (readOnly) return;
     if (!request || submitting) return;
     setSubmitting(true);
     socket.emit("playerRespondAuction", { offerId: request.offerId, accept });
@@ -115,8 +119,8 @@ export const AuctionConfirmModal: React.FC<Props> = ({
           textAlign: "center",
         }}
       >
-        <div style={{ fontSize: "3.5rem", marginBottom: "1rem" }} aria-hidden>
-          🔨
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: "1rem" }} aria-hidden>
+          <GavelIcon size={56} decorative />
         </div>
         <h3
           id="auction-confirm-title"
@@ -180,7 +184,7 @@ export const AuctionConfirmModal: React.FC<Props> = ({
         <div style={{ display: "flex", gap: "0.75rem" }}>
           <button
             type="button"
-            disabled={submitting}
+            disabled={readOnly || submitting}
             onClick={() => handleRespond(false)}
             className="btn btn-ghost"
             style={{ flex: 1 }}
@@ -189,7 +193,7 @@ export const AuctionConfirmModal: React.FC<Props> = ({
           </button>
           <button
             type="button"
-            disabled={submitting}
+            disabled={readOnly || submitting}
             onClick={() => handleRespond(true)}
             className="btn btn-purple"
             style={{ flex: 1, fontSize: uiRem(1) }}

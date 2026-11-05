@@ -7,6 +7,7 @@ import {
   refundCoffee,
 } from "./coffeeLogic.js";
 import { serializeGameForClient } from "../network/broadcast.js";
+import { STARTING_WEALTH } from "../config/startingWealth.js";
 import { createInitialGame, Player } from "../state/gameState.js";
 
 function makePlayer(id: string, overrides: Partial<Player> = {}): Player {
@@ -28,7 +29,7 @@ function makePlayer(id: string, overrides: Partial<Player> = {}): Player {
     slackedBy: [],
     coffeePurchasesThisRound: 0,
     totalEnergyConsumed: 15,
-    wealthHistory: [0],
+    wealthHistory: [STARTING_WEALTH],
     investedRiskEnergy: 0,
     investedLongEnergy: 0,
     investedShortEnergy: 0,
@@ -92,6 +93,33 @@ describe("coffee purchase and refund", () => {
     const result = purchaseCoffee(game, player);
     assert.equal(result.ok, false);
     assert.equal(player.wealth, -70);
+  });
+
+  it("refundCoffee from negative book can go lower but not from zero", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "BUFF_USAGE";
+    const neg = makePlayer("neg", {
+      wealth: 85,
+      energy: -5,
+      coffeePurchasesThisRound: 1,
+      investmentDraft: {},
+    });
+    game.players = [neg];
+    game.activeProjects = [];
+    const ok = refundCoffee(game, neg, 1);
+    assert.equal(ok.ok, true);
+    assert.equal(neg.energy, -6);
+
+    const zero = makePlayer("zero", {
+      wealth: 85,
+      energy: 0,
+      coffeePurchasesThisRound: 1,
+      investmentDraft: {},
+    });
+    game.players = [zero];
+    const blocked = refundCoffee(game, zero, 1);
+    assert.equal(blocked.ok, false);
+    assert.equal(zero.energy, 0);
   });
 
   it("refundCoffee floors energy at 0", () => {

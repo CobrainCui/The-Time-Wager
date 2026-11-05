@@ -7,6 +7,9 @@ import {
 } from "./rankRewardSchedule";
 import type { GameState } from "../types";
 
+export const ERA_BONUS_SHORT = 50;
+export const ERA_BONUS_LONG = 100;
+
 export type CatalogProjectType = "short" | "long" | "risk";
 
 export interface ProjectCatalogEntry {
@@ -31,26 +34,26 @@ function riskHint(name: string): string {
 }
 
 const short: ProjectCatalogEntry[] = [
-  { id: 1, name: "新能源汽车", type: "short", era: "气候", maxEnergy: 23, rankRewards: [45, 30, 20, 15, 10, 5], overInvestPenalty: [-35, -20, -15, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
-  { id: 2, name: "兴建巨型水坝", type: "short", era: "气候", maxEnergy: 30, rankRewards: [55, 35, 25, 20, 15, 5], overInvestPenalty: [-40, -25, -20, -15, -5, -5], baseReturnHint: "10/⚡/轮" },
-  { id: 3, name: "视频会议", type: "short", era: "科技", maxEnergy: 23, rankRewards: [45, 30, 20, 15, 10, 5], overInvestPenalty: [-35, -20, -15, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
-  { id: 4, name: "数字地图", type: "short", era: "科技", maxEnergy: 18, rankRewards: [30, 20, 15, 10, 5, 5], overInvestPenalty: [-25, -15, -10, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
-  { id: 5, name: "国际文化艺术节", type: "short", era: "文化", maxEnergy: 18, rankRewards: [30, 20, 15, 10, 5, 5], overInvestPenalty: [-25, -15, -10, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
-  { id: 6, name: "民俗主题公园", type: "short", era: "文化", maxEnergy: 30, rankRewards: [55, 35, 25, 20, 15, 5], overInvestPenalty: [-40, -25, -20, -15, -5, -5], baseReturnHint: "10/⚡/轮" },
-  { id: 7, name: "公共体育设施免费开放", type: "short", era: "健康", maxEnergy: 23, rankRewards: [45, 30, 20, 15, 10, 5], overInvestPenalty: [-35, -20, -15, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
-  { id: 8, name: "“全民健身日”嘉年华", type: "short", era: "健康", maxEnergy: 18, rankRewards: [30, 20, 15, 10, 5, 5], overInvestPenalty: [-25, -15, -10, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
-  { id: 9, name: "数字排毒", type: "short", era: "心理", maxEnergy: 23, rankRewards: [45, 30, 20, 15, 10, 5], overInvestPenalty: [-35, -20, -15, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
-  { id: 10, name: "EAP全面推行", type: "short", era: "心理", maxEnergy: 30, rankRewards: [55, 35, 25, 20, 15, 5], overInvestPenalty: [-40, -25, -20, -15, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 1, name: "新能源汽车", type: "short", era: "气候", maxEnergy: 23, rankRewards: [80, 55, 35, 25, 20, 10], overInvestPenalty: [-35, -20, -15, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 2, name: "兴建巨型水坝", type: "short", era: "气候", maxEnergy: 30, rankRewards: [105, 65, 50, 40, 30, 10], overInvestPenalty: [-40, -25, -20, -15, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 3, name: "视频会议", type: "short", era: "科技", maxEnergy: 23, rankRewards: [80, 55, 35, 25, 20, 10], overInvestPenalty: [-35, -20, -15, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 4, name: "数字地图", type: "short", era: "科技", maxEnergy: 18, rankRewards: [65, 45, 35, 20, 10, 10], overInvestPenalty: [-25, -15, -10, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 5, name: "国际文化艺术节", type: "short", era: "文化", maxEnergy: 18, rankRewards: [65, 45, 35, 20, 10, 10], overInvestPenalty: [-25, -15, -10, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 6, name: "民俗主题公园", type: "short", era: "文化", maxEnergy: 30, rankRewards: [105, 65, 50, 40, 30, 10], overInvestPenalty: [-40, -25, -20, -15, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 7, name: "公共体育设施免费开放", type: "short", era: "健康", maxEnergy: 23, rankRewards: [80, 55, 35, 25, 20, 10], overInvestPenalty: [-35, -20, -15, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 8, name: "“全民健身日”嘉年华", type: "short", era: "健康", maxEnergy: 18, rankRewards: [65, 45, 35, 20, 10, 10], overInvestPenalty: [-25, -15, -10, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 9, name: "数字排毒", type: "short", era: "心理", maxEnergy: 23, rankRewards: [80, 55, 35, 25, 20, 10], overInvestPenalty: [-35, -20, -15, -10, -5, -5], baseReturnHint: "10/⚡/轮" },
+  { id: 10, name: "EAP全面推行", type: "short", era: "心理", maxEnergy: 30, rankRewards: [105, 65, 50, 40, 30, 10], overInvestPenalty: [-40, -25, -20, -15, -5, -5], baseReturnHint: "10/⚡/轮" },
 ];
 
 const long: ProjectCatalogEntry[] = [
-  { id: 101, name: "植树造林", type: "long", era: "气候", maxEnergy: 90, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
-  { id: 102, name: "城市海绵体改造", type: "long", era: "气候", maxEnergy: 100, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "15/⚡" },
-  { id: 103, name: "数字图书馆", type: "long", era: "科技", maxEnergy: 90, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
-  { id: 104, name: "遗产保护基金", type: "long", era: "文化", maxEnergy: 90, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
-  { id: 105, name: "文化桥梁使者", type: "long", era: "文化", maxEnergy: 100, rankRewards: [70, 50, 40, 30, 23, 13], baseReturnHint: "15/⚡" },
-  { id: 106, name: "建立体育俱乐部", type: "long", era: "健康", maxEnergy: 90, rankRewards: [65, 45, 35, 25, 20, 10], baseReturnHint: "15/⚡" },
-  { id: 107, name: "心理学教育普及", type: "long", era: "心理", maxEnergy: 110, rankRewards: [75, 55, 45, 35, 25, 15], baseReturnHint: "15/⚡" },
+  { id: 101, name: "植树造林", type: "long", era: "气候", maxEnergy: 90, rankRewards: [80, 55, 40, 30, 25, 10], baseReturnHint: "15/⚡" },
+  { id: 102, name: "海绵城市", type: "long", era: "气候", maxEnergy: 100, rankRewards: [85, 60, 50, 35, 30, 15], baseReturnHint: "15/⚡" },
+  { id: 103, name: "数字图书馆", type: "long", era: "科技", maxEnergy: 90, rankRewards: [80, 55, 40, 30, 25, 10], baseReturnHint: "15/⚡" },
+  { id: 104, name: "遗产保护基金", type: "long", era: "文化", maxEnergy: 90, rankRewards: [80, 55, 40, 30, 25, 10], baseReturnHint: "15/⚡" },
+  { id: 105, name: "文化桥梁使者", type: "long", era: "文化", maxEnergy: 100, rankRewards: [85, 60, 50, 35, 30, 15], baseReturnHint: "15/⚡" },
+  { id: 106, name: "建立体育俱乐部", type: "long", era: "健康", maxEnergy: 90, rankRewards: [80, 55, 40, 30, 25, 10], baseReturnHint: "15/⚡" },
+  { id: 107, name: "心理学教育普及", type: "long", era: "心理", maxEnergy: 110, rankRewards: [90, 65, 55, 40, 30, 20], baseReturnHint: "15/⚡" },
 ];
 
 const risk: ProjectCatalogEntry[] = [
@@ -152,7 +155,7 @@ export const TYPE_LABEL: Record<CatalogProjectType, string> = {
 /** 项目卡 / 帮助速查用 */
 export const SETTLEMENT_TIMING_SHORT: Record<CatalogProjectType, string> = {
   short: "当轮结算",
-  long: "完成后结算；第四时代第二轮未完成按梯度结算",
+  long: "完成后结算；游戏结束（第四时代第二轮）未完成按梯度结算",
   risk: "当轮结算",
 };
 
@@ -164,6 +167,19 @@ export const SETTLEMENT_TIMING_DETAIL: Record<CatalogProjectType, string> = {
     "达到或超过总上限时一次性发放完成回报与排名奖（恰好满额与超额完成均正常结算，无短期式投爆罚；排名奖按开局人数 4/5/6 重分档，总池与六人版一致）。未填满期间每轮仅更新进度、不发完成奖。参投后每轮须≥3⚡，否则放弃：累计投入按 1:1 结算为财富，并退出完成排名与时代加成。第四时代第二轮结算时若仍未完成，按该项目全场累计投入进度梯度结算你的累计投入：不足 1/3 上限为 1:1，达 1/3 为 1:5，达 2/3 为 1:10。",
   risk: "每轮投资阶段结束后，按本轮投入结算回报（未超上限时）；超上限则当轮投爆，并追回历史风险收益。",
 };
+
+/** 牌面存续（与 server projectSettlement 离场逻辑一致） */
+export const PROJECT_BOARD_WITHDRAW_HELP =
+  "新发放后累计投入仍为 0，且连续 2 轮无人投，则不再出现（曾投过、累计大于 0 的不会因空轮撤场）";
+export const PROJECT_BOARD_PERSIST_HELP =
+  "未完成之前不会撤场，跨时代仍留在牌面（完成、投爆、长期填满离场除外）";
+export const PROJECT_BOARD_RISK_ERA_STRIP = "换代时，上一时代主题的风险项目会移除";
+
+export const PROJECT_BOARD_NEW_PROJECTS_HELP =
+  "每个时代第一轮发放一次新项目（第二轮不发）：第 1 时代 6 个（短期 3、长期 2、风险 1），第 2 至第 4 时代各 4 个（短期 2、长期 1、风险 1）";
+
+export const PROJECT_BOARD_PERSISTENCE_DETAIL =
+  `${PROJECT_BOARD_PERSIST_HELP}。${PROJECT_BOARD_WITHDRAW_HELP}。${PROJECT_BOARD_RISK_ERA_STRIP}。`;
 
 /** 与 ProjectCard 类型色一致，用于速查等纯文字标注 */
 export const TYPE_TEXT_COLOR: Record<CatalogProjectType, string> = {

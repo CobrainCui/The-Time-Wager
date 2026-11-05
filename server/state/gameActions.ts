@@ -3,6 +3,7 @@ import { AI_BOT_ENABLED } from "../config/features.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 import { applyInvestments, reopenSubmittedInvestment, sanitizeInvestments } from "../logic/investmentLogic.js";
 import { getInvestmentRemainingMs } from "./actionDeadline.js";
+import { hasLotteryDrawInFlight } from "../logic/lotteryDraw.js";
 
 export function playersRequiringAction(game: GameState): Player[] {
   return game.players.filter(
@@ -52,6 +53,8 @@ export function isEveryoneReadyToLeaveBuff(game: GameState): boolean {
  * 检查投资是否完成
  */
 export function isInvestmentComplete(game: GameState): boolean {
+  // 线上随机开奖还在请求中：先等它落定，避免结算清掉彩票 buff 导致丢奖
+  if (hasLotteryDrawInFlight(game.roomId)) return false;
   const players = playersRequiringAction(game);
   if (players.length === 0) return false;
   return players.every((p) => p.ready);
@@ -82,15 +85,22 @@ export function forceSubmitPendingInvestments(
   }
 }
 
-export type AdminUnlockResult =
+export type UnlockInvestmentResult =
   | { ok: true }
   | { ok: false; reason: "not_found" | "not_ready" | "wrong_phase" | "timer_closed" | "ai_player" };
 
+export type AdminUnlockResult = UnlockInvestmentResult;
+
 /**
- * 上帝解锁：仅投资阶段、倒计时未结束时，回退单个已锁定真人玩家到「未锁定」可再编辑状态。
- * 结算页 / 倒计时结束后不可解锁。
+ * 投资阶段、倒计时未结束时，回退单个已锁定玩家到可再编辑状态（玩家自解锁与主持解锁共用）。
  */
-export function adminUnlockPlayer(game: GameState, playerId: string): AdminUnlockResult {
+export type InvestmentUnlockSource = "admin" | "self";
+
+export function unlockSubmittedInvestment(
+  game: GameState,
+  playerId: string,
+  source: InvestmentUnlockSource = "self"
+): UnlockInvestmentResult {
   const player = game.players.find((p) => p.id === playerId);
   if (!player) return { ok: false, reason: "not_found" };
   if (isAiPlayer(player)) return { ok: false, reason: "ai_player" };
@@ -101,8 +111,13 @@ export function adminUnlockPlayer(game: GameState, playerId: string): AdminUnloc
     return { ok: false, reason: "timer_closed" };
   }
 
-  reopenSubmittedInvestment(game, playerId);
+  reopenSubmittedInvestment(game, playerId, source);
   player.ready = false;
   game.readyPlayers.delete(playerId);
   return { ok: true };
+}
+
+/** @deprecated 使用 unlockSubmittedInvestment */
+export function adminUnlockPlayer(game: GameState, playerId: string): AdminUnlockResult {
+  return unlockSubmittedInvestment(game, playerId, "admin");
 }

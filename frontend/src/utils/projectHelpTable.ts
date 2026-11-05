@@ -46,7 +46,10 @@ const STATUS_META: Record<
     tooltip: "长期项目超过上限仍正常结算（非投爆罚）",
     chipColor: LONG_COMPLETE_CHIP_COLOR,
   },
-  withdrawn: { chip: "🗑️ 已撤场", tooltip: "连续 2 轮无人投资，项目离场" },
+  withdrawn: {
+    chip: "🗑️ 已撤场",
+    tooltip: "累计投入仍为 0 且连续 2 轮无人投资，项目离场",
+  },
   abandoned: {
     chip: "🚫 已放弃",
     tooltip: "已 1:1 结算累计投入，并退出该项目完成时的排名与时代加成",
@@ -134,7 +137,7 @@ function longFinishedStatusId(game: GameState, projectId: number): ProjectHelpSt
   return kind === "over" ? "long_over_complete" : "long_exact_complete";
 }
 
-/** 结算页：仅短期/风险投爆时隐藏总投入/上限 */
+/** 结算页个人条：短期/风险投爆时不显示个人 / 上限分母（全场行仍显示 x/上限） */
 export function settlementHidesInvestedRatio(result: SettlementProjectResult): boolean {
   return result.isExploded && result.type !== "long";
 }
@@ -172,6 +175,7 @@ function isOffTableWithdrawn(game: GameState, projectId: number): boolean {
   if (!findUncompleted(game, projectId)) return false;
   if (isOffTableExploded(game, projectId)) return false;
   const u = findUncompleted(game, projectId)!;
+  if ((u.accumulatedInvested ?? 0) > 0) return false;
   return (u.roundsNoInvestment ?? 0) >= 2;
 }
 

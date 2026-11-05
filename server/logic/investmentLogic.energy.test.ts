@@ -100,6 +100,7 @@ describe("applyInvestments energy floor", () => {
     const sanitized = sanitizeInvestments(game, p, { 1: 5 });
     assert.deepEqual(sanitized, {});
     assert.equal(applyInvestments(game, "a", { 1: 5 }, "player"), true);
-    assert.equal(p.energy, 0);
+    assert.equal(p.energy, -13);
+    assert.deepEqual(p.investment, {});
   });
 });

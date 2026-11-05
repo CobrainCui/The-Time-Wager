@@ -9,6 +9,7 @@ import {
   LONG_COMPLETE_CHIP_COLOR,
 } from "../utils/projectHelpTable";
 import { BuffRoundChips } from "../components/BuffRoundChips";
+import { AutoHostCountdown } from "../components/AutoHostCountdown";
 import { useFixedDockClearance } from "../hooks/useFixedDockClearance";
 import {
   formatPersonalBarCaption,
@@ -228,9 +229,7 @@ const GlobalCard: React.FC<{
         <span>
           {result.shortSold
             ? "清零"
-            : hideCapRatio
-            ? "—"
-            : `全场 ${result.totalInvested} / ${result.maxEnergy}`}
+            : `全场 ${hideCapRatio ? "x" : result.totalInvested} / ${result.maxEnergy}`}
         </span>
         <span style={{ color }}>{result.type === "short" ? "短期" : result.type === "long" ? "长期" : "风险"}</span>
       </div>
@@ -354,6 +353,8 @@ export const Settlement: React.FC<Props> = ({ game, me, embed = false }) => {
     );
   }
 
+  const hostAdjusted = snapshot.hostAdjusted === true;
+
   const rankBadge = (i: number) => {
     const colors = ["#f59e0b", "#94a3b8", "#cd7c32"];
     return { background: colors[i] || "#1f2937", color: i < 3 ? (i === 0 ? "#000" : "#fff") : "#6b7280" };
@@ -407,6 +408,18 @@ export const Settlement: React.FC<Props> = ({ game, me, embed = false }) => {
             Round {snapshot.round} · 结算报告
           </div>
           <h1 style={{ fontSize: "2.25rem", fontWeight: 900, color: "white" }}>本轮战报</h1>
+          {hostAdjusted && !embed && (
+            <p
+              style={{
+                marginTop: "0.75rem",
+                fontSize: uiRem(0.85),
+                color: "#fbbf24",
+                fontWeight: 600,
+              }}
+            >
+              主持已调整本轮结算，以下数据以最新结果为准
+            </p>
+          )}
           {!embed && (
             <div style={{ marginTop: "0.75rem" }}>
               <BuffRoundChips me={me} actionsDisabled />
@@ -760,13 +773,18 @@ export const Settlement: React.FC<Props> = ({ game, me, embed = false }) => {
           zIndex: 50,
         }}
       >
-        <button
-          onClick={() => socket.emit("playerReady")}
-          className="btn btn-primary btn-lg"
-          style={{ padding: "0.875rem 3.5rem", fontSize: uiRem(1.05) }}
-        >
-          {me.ready ? "✅ 已确认，等待其他人..." : "确认战绩，继续 →"}
-        </button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.4rem", padding: "0.35rem 0" }}>
+          {game.autoHostEnabled && (
+            <AutoHostCountdown at={game.autoHostNextActionAt} label="自动进入下一阶段" compact />
+          )}
+          <button
+            onClick={() => socket.emit("playerReady")}
+            className="btn btn-primary btn-lg"
+            style={{ padding: "0.875rem 3.5rem", fontSize: uiRem(1.05) }}
+          >
+            {me.ready ? "✅ 已确认，等待其他人..." : "确认战绩，继续 →"}
+          </button>
+        </div>
       </div>
       )}
     </div>

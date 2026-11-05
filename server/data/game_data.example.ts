@@ -54,14 +54,14 @@ export interface BuffCard {
 
 // ====== Buff 卡池 (数值已脱敏) ======
 export const buffCards: BuffCard[] = [
-  { id: 'buff_insurance', name: '保险', type: 'special', description: '本轮参与的风险项目投爆则赔付 [Hidden]', auctionRound: 1 },
-  { id: 'buff_gold', name: '点石成金', type: 'gain', description: '本轮正收益与保险、彩票 x[Hidden]；惩罚不放大', auctionRound: 1 },
-  { id: 'buff_slack', name: '摸鱼传染', type: 'interfere', description: '指定玩家精力 -[Hidden]；对方发动劳逸结合则获得 +[Hidden]', auctionRound: 1 },
-  { id: 'buff_force_buy', name: '强买强卖', type: 'special', description: '拍卖期一次免费拿当前卡', auctionRound: 2 },
-  { id: 'buff_work_rest', name: '劳逸结合', type: 'special', description: '被摸鱼后获得 +[Hidden] 精力；单独使用无效', auctionRound: 2 },
-  { id: 'buff_short', name: '项目做空', type: 'special', description: '指定项目结算时已积累精力清零，已入账财富不追回', auctionRound: 2 },
-  { id: 'buff_lighter', name: '打火机', type: 'special', description: '烧毁一张尚未结算道具', auctionRound: 3 },
-  { id: 'buff_lottery', name: '彩票', type: 'special', description: '主持输入金额开奖', auctionRound: 3 },
+  { id: 'buff_insurance', name: '保险', type: 'special', description: '在使用本卡的轮次内，你参与的风险项目若投爆则赔付 [Hidden]。点石成金会把保险赔付作为正向收益按 [Hidden] 倍向下取整。', auctionRound: 1 },
+  { id: 'buff_gold', name: '点石成金', type: 'gain', description: '所有的正向收益（包括基础收益、排名奖励、时代加成、彩票、保险赔付）按 [Hidden] 倍向下取整。惩罚不放大。', auctionRound: 1 },
+  { id: 'buff_slack', name: '摸鱼传染', type: 'interfere', description: '指定玩家精力 -[Hidden]；目标已有劳逸结合被动则 +[Hidden]', auctionRound: 1 },
+  { id: 'buff_force_buy', name: '强买强卖', type: 'special', description: '仅能在拍卖阶段使用。该卡牌（强买强卖）只能用一次，免费将当前正在拍卖的道具卡入手。', auctionRound: 2 },
+  { id: 'buff_work_rest', name: '劳逸结合', type: 'special', description: '指定玩家：该玩家在使用本卡的轮次内被摸鱼传染时不减精力而+[Hidden]精力', auctionRound: 2 },
+  { id: 'buff_short', name: '项目做空', type: 'special', description: '投资阶段声明，结算页判定：指定项目已积累精力清零（含长期），已入账财富不追回', auctionRound: 2 },
+  { id: 'buff_lighter', name: '打火机', type: 'special', description: '投资阶段声明，结算页判定：指定玩家与卡种；可烧毁对方在使用本卡的轮次打出或手牌中的指定卡（使用本卡之前的轮次不可烧），未持有且未打出则无效', auctionRound: 3 },
+  { id: 'buff_lottery', name: '彩票', type: 'special', description: '线上随机掷骰 1–6 定奖，点石成金对奖金按 [Hidden] 倍向下取整', auctionRound: 3 },
 ];
 
 // ====== 短期项目 (数值已脱敏) ======
@@ -81,7 +81,7 @@ export const shortTermProjects: ProjectCard[] = [
 // ====== 长期项目 (数值已脱敏) ======
 export const longTermProjects: ProjectCard[] = [
   {id:101, name:'植树造林', type:'long', maxEnergy:90, era:'气候', rankRewards:[10,5,0,0,0,0]},
-  {id:102, name:'城市海绵体改造', type:'long', maxEnergy:100, era:'气候', rankRewards:[10,5,0,0,0,0]},
+  {id:102, name:'海绵城市', type:'long', maxEnergy:100, era:'气候', rankRewards:[10,5,0,0,0,0]},
   {id:103, name:'数字图书馆', type:'long', maxEnergy:90, era:'科技', rankRewards:[10,5,0,0,0,0]},
   {id:104, name:'遗产保护基金', type:'long', maxEnergy:90, era:'文化', rankRewards:[10,5,0,0,0,0]},
   {id:105, name:'文化桥梁使者', type:'long', maxEnergy:100, era:'文化', rankRewards:[10,5,0,0,0,0]},

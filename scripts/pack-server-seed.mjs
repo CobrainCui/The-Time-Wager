@@ -39,13 +39,17 @@ const buffsDir = path.join(root, "frontend", "public", "images", "buffs");
 const stagedBuffsDir = path.join(stage, "data", "uploads_buffs");
 rim(stagedBuffsDir);
 mkdirp(stagedBuffsDir);
-const buffTs = fs.readFileSync(path.join(root, "frontend", "src", "data", "buffDefs.ts"), "utf8");
+const buffTs = fs.readFileSync(path.join(root, "frontend", "src", "config", "buffCards.ts"), "utf8");
+const defsStart = buffTs.indexOf("export const BUFF_CARD_DEFS");
+const pricesStart = buffTs.indexOf("export const BUFF_CARD_PRICES", defsStart);
+const buffBlock = pricesStart > defsStart ? buffTs.slice(defsStart, pricesStart) : buffTs.slice(defsStart);
 const buffIdRe = /^\s*(buff_[a-z0-9_]+)\s*:/gm;
 let buffs = 0;
 let bm;
 const seededBuffIds = new Set();
-while ((bm = buffIdRe.exec(buffTs))) {
+while ((bm = buffIdRe.exec(buffBlock))) {
   const id = bm[1];
+  if (seededBuffIds.has(id)) continue;
   const src = path.join(buffsDir, `${id}.jpg`);
   if (!fs.existsSync(src)) continue;
   fs.copyFileSync(src, path.join(stagedBuffsDir, `${id}.jpg`));

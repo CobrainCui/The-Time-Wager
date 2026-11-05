@@ -7,6 +7,10 @@ import {
   syncLongTermRecordsFromHistory,
 } from "./longTermLogic.js";
 import { applyGoldMultiplier } from "./buffLogic.js";
+import { resolveRoundBuffsAtSettlement } from "./roundBuffResolve.js";
+import { ERA_BONUS_POOL_LONG, ERA_BONUS_POOL_SHORT } from "../config/eraBonus.js";
+import { captureSettlementBaseline } from "./settlementBaseline.js";
+import { replaceSettlementRound } from "../state/sessionTelemetry.js";
 
 // 辅助：创建零收益对象
 const zeroGain = (): GainBreakdown => ({ total: 0, base: 0, rank: 0, era: 0 });
@@ -32,9 +36,23 @@ function noteBeforeGold(
   }
 }
 
-export function settlePhase(game: GameState) {
+export type SettlePhaseOptions = {
+  replacePrevious?: boolean;
+  hostAdjusted?: boolean;
+  hostRevision?: number;
+};
+
+export function settlePhase(game: GameState, options?: SettlePhaseOptions) {
+  const replacePrevious = options?.replacePrevious === true;
+  if (!replacePrevious && !game.settlementBaseline) {
+    game.settlementBaseline = captureSettlementBaseline(game);
+    if (!game.adminProjectAdjustments) game.adminProjectAdjustments = [];
+    if (typeof game.hostRevision !== "number") game.hostRevision = 0;
+  }
+
   const snapshot: SettlementProjectResult[] = [];
   const logs: string[] = [];
+  const lighterResolve = resolveRoundBuffsAtSettlement(game);
   logs.push(`=== ${game.currentEra}时代 第${game.roundInEra}轮 结算 ===`);
 
   const remainingProjects: ActiveProject[] = [];
@@ -72,9 +90,12 @@ export function settlePhase(game: GameState) {
     } else if (result.isExploded) {
         game.uncompletedProjects.push(project);
         logs.push(`💥 项目「${project.name}」已爆掉，移出牌桌`);
-    } else if (project.roundsNoInvestment >= 2) {
+    } else if (
+      project.roundsNoInvestment >= 2 &&
+      (project.accumulatedInvested ?? 0) === 0
+    ) {
         game.uncompletedProjects.push(project);
-        logs.push(`🗑️ 项目「${project.name}」连续2轮无人问津，自动撤资离场`);
+        logs.push(`🗑️ 项目「${project.name}」连续2轮无人问津且从未被投入，自动撤资离场`);
     } else {
         remainingProjects.push(project);
     }
@@ -89,14 +110,35 @@ export function settlePhase(game: GameState) {
 
   game.lastSettlement = {
     round: game.globalRound,
-    results: snapshot
+    results: snapshot,
+    lighterResolve,
+    ...(options?.hostAdjusted
+      ? {
+          hostAdjusted: true,
+          hostRevision: options.hostRevision ?? game.hostRevision ?? 0,
+        }
+      : {}),
   };
-  appendSettlementRound(game, snapshot);
+  if (replacePrevious) {
+    replaceSettlementRound(game, snapshot);
+  } else {
+    appendSettlementRound(game, snapshot);
+  }
   game.logs.push(...logs);
 
-  game.players.forEach(p => {
+  if (replacePrevious) {
+    for (const p of game.players) {
+      if (p.wealthHistory.length > 0) {
+        p.wealthHistory[p.wealthHistory.length - 1] = p.wealth;
+      } else {
+        p.wealthHistory.push(p.wealth);
+      }
+    }
+  } else {
+    game.players.forEach((p) => {
       p.wealthHistory.push(p.wealth);
-  });
+    });
+  }
 }
 
 /**
@@ -116,6 +158,7 @@ function settleUnfinishedLongGradient(
     if (p.type === "long") candidates.set(p.id, p);
   }
   for (const p of game.uncompletedProjects) {
+    if (p.adminForceWithdrawn) continue;
     if (p.type === "long" && !p.endGradientPaid) candidates.set(p.id, p);
   }
 
@@ -284,11 +327,13 @@ export function settleOneProject(
 
           p.investedLongEnergy = Math.max(0, p.investedLongEnergy - totalRefund);
 
-          delete project.investorRecords[p.id];
-          project.accumulatedInvested = Math.max(
-            0,
-            (project.accumulatedInvested || 0) - historicalOnBoard
-          );
+          const priorOnBoard = project.investorRecords[p.id] ?? historicalOnBoard;
+          if (currentAmount > 0) {
+            project.investorRecords[p.id] = priorOnBoard + currentAmount;
+            project.accumulatedInvested = (project.accumulatedInvested || 0) + currentAmount;
+          } else if (priorOnBoard > 0) {
+            project.investorRecords[p.id] = priorOnBoard;
+          }
 
           project.totalPayout += totalRefund;
           project.earningRecords[p.id] = (project.earningRecords[p.id] || 0) + totalRefund;
@@ -449,7 +494,7 @@ export function settleOneProject(
   }
 
   // === B. Long (长期项目) ===
-  // 时代加成：累计 >= maxEnergy（含超填）结束时，主题契合的历史第一 +50（见 applyRankAndEraBonus）
+  // 时代加成：累计 >= maxEnergy（含超填）结束时，主题契合的历史第一 +50/+100（见 applyRankAndEraBonus）
   if (project.type === 'long') {
     // 处理本轮投资者的投入记录逻辑已经在上面完成了
     // Long项目的特性：未完成不发钱
@@ -572,8 +617,8 @@ export function settleOneProject(
 
 // 排名奖励(rankRewards) + 时代加成(eraBonus)，财富计入 player.wealth。
 // 投入相同则并列：共享所占用名次池（floor(sum/k)）；时代加成仅第一名并列组共享。
-//   短期 +30：仅 totalAccumulated === maxEnergy（调用方须为 !isExploded 分支）
-//   长期 +50：totalAccumulated >= maxEnergy（含超填）
+//   短期 +50：仅 totalAccumulated === maxEnergy（调用方须为 !isExploded 分支）
+//   长期 +100：totalAccumulated >= maxEnergy（含超填）
 //   风险：不进入本函数；短期超上限投爆：不进入本函数
 type InvestorEntry = { player: Player | undefined; total: number };
 
@@ -622,7 +667,7 @@ function applyRankAndEraBonus(
     if (rankedInvestors.length === 0) return;
     const currentTheme = game.currentEraCard?.era; 
     const isEraMatch = project.era === currentTheme;
-    const eraPool = project.type === 'long' ? 50 : 30;
+    const eraPool = project.type === 'long' ? ERA_BONUS_POOL_LONG : ERA_BONUS_POOL_SHORT;
 
     const groups = groupInvestorsByTiedTotal(rankedInvestors);
     for (const group of groups) {

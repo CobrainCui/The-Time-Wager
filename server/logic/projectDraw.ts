@@ -36,8 +36,8 @@ export function drawProjects(era: number, round: number, prevProjects: ProjectCa
     drawn.push(...shuffle(longDeck).slice(0, 1)); // 剩余长期项目再抽一张
     drawn.push(...shuffle(riskDeck).slice(0, 1));
   } else if (era === 1 && round === 2) {
-    // 第一时代第二轮固定放入”城市海绵体改造“和”文化桥梁使者“
-    const fixed1 = longDeck.find(p => p.name === "城市海绵体改造");
+    // 第一时代第二轮固定放入”海绵城市“和”文化桥梁使者“
+    const fixed1 = longDeck.find(p => p.name === "海绵城市");
     const fixed2 = longDeck.find(p => p.name === "文化桥梁使者");
     if (fixed1) { drawn.push(fixed1); longDeck = longDeck.filter(p => p.id !== fixed1.id); }
     if (fixed2) { drawn.push(fixed2); longDeck = longDeck.filter(p => p.id !== fixed2.id); }

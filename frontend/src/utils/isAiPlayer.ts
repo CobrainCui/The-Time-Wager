@@ -8,3 +8,16 @@ export function isAiPlayer(p: Player): boolean {
   if (/^AI\d+$/i.test(p.id) || /^AI\d+$/i.test(p.name)) return true;
   return false;
 }
+
+export const AI_DIFFICULTY_LABEL: Record<"easy" | "normal" | "hard", string> = {
+  easy: "简单",
+  normal: "普通",
+  hard: "困难",
+};
+
+export function aiDifficultyLabel(value: string | undefined): string {
+  if (value === "easy" || value === "hard" || value === "normal") {
+    return AI_DIFFICULTY_LABEL[value];
+  }
+  return AI_DIFFICULTY_LABEL.normal;
+}

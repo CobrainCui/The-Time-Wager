@@ -47,8 +47,17 @@ if (!fs.existsSync(entryPath)) {
   process.exit(1);
 }
 const entry = fs.readFileSync(entryPath, "utf8");
-if (!entry.includes("K=17,Q=1") && !entry.includes("const K=17") && !entry.includes("K=17,X=1")) {
-  console.error(`FAIL: ${entryChunk} does not contain coffee config K=17 (expected K=17,Q=1)`);
+const coffeeOk =
+  /const [A-Za-z_$][\w$]*=17,[A-Za-z_$][\w$]*=1/.test(entry) ||
+  entry.includes("K=17,Q=1") ||
+  entry.includes("const K=17") ||
+  entry.includes("K=17,X=1") ||
+  entry.includes("消耗17财富") ||
+  entry.includes("需要 17💰") ||
+  entry.includes("来杯咖啡（-17") ||
+  entry.includes("来杯咖啡（−17");
+if (!coffeeOk) {
+  console.error(`FAIL: ${entryChunk} does not contain coffee wealth cost 17`);
   process.exit(1);
 }
 

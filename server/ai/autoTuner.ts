@@ -1,5 +1,6 @@
+import { STARTING_WEALTH } from "../config/startingWealth.js";
 import { createInitialGame, GameState, Player } from "../state/gameState.js";
-import { handleAIPhase } from "./aiOrchestrator.js";
+import { handleAIPhase, forgetAiRoom } from "./aiOrchestrator.js";
 import {
   analyzeGamePersona,
   AnalysisWeights,
@@ -64,7 +65,7 @@ function pushAiPlayer(game: GameState, persona: string, index: number) {
     connected: true,
     ready: false,
     energy: 15,
-    wealth: 0,
+    wealth: STARTING_WEALTH,
     rank: 0,
     investment: {},
     longTerm: {},
@@ -74,7 +75,7 @@ function pushAiPlayer(game: GameState, persona: string, index: number) {
     activeBuffs: [],
     slackedBy: [],
     totalEnergyConsumed: 15,
-    wealthHistory: [0],
+    wealthHistory: [STARTING_WEALTH],
     investedRiskEnergy: 0,
     investedLongEnergy: 0,
     investedShortEnergy: 0,
@@ -93,7 +94,9 @@ export async function runAutoTuningSession(iterations: number = 10) {
 
   for (let i = 0; i < iterations; i++) {
     console.log(`\n--- Iteration ${i + 1} ---`);
-    const game = createInitialGame("auto-tune", []);
+    // 每轮用独立 roomId，避免上一轮的 AI 运行时状态（token/拍卖/道具轮次）串场
+    const roomId = `auto-tune-${i}-${Date.now()}`;
+    const game = createInitialGame(roomId, []);
 
     AI_PERSONA_SLOTS.forEach((persona, index) => {
       pushAiPlayer(game, persona, index);
@@ -123,6 +126,7 @@ export async function runAutoTuningSession(iterations: number = 10) {
     const evalResult = evaluatePersonaAccuracy(game);
     totalMatches += evalResult.correct;
     totalSlots += evalResult.total;
+    forgetAiRoom(roomId);
 
     for (const m of evalResult.mismatches) {
       console.log(

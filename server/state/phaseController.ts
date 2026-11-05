@@ -6,6 +6,8 @@ import {
   resetAllReady 
 } from "./gameActions.js";
 import { settlePhase } from "../logic/projectSettlement.js";
+import { settleAllPendingLotteryOffers } from "../logic/lotteryDraw.js";
+import { clearAdminProjectAdjustState } from "../logic/adminProjectAdjust.js";
 import { ensureProjectsDrawnForEra, stripExpiredRiskProjects, updateEraCard } from "../state/gameEra.js";
 import { AI_BOT_ENABLED } from "../config/features.js";
 import { beginAuctionSession } from "../logic/auctionCards.js";
@@ -57,6 +59,11 @@ export function tryAdvancePhase(game: GameState) {
   // 3. INVESTMENT -> SETTLEMENT
   else if (game.phase === "INVESTMENT") {
     if (isInvestmentComplete(game)) {
+      // 彩票结果是服务端权威随机值：结算前统一领取，避免玩家来不及确认而丢奖
+      const lotterySettled = settleAllPendingLotteryOffers(game);
+      if (lotterySettled > 0) {
+        game.logs.push(`🎲 结算前自动领取 ${lotterySettled} 张彩票开奖`);
+      }
       settlePhase(game);
       clearActionDeadline(game);
       
@@ -89,6 +96,8 @@ export function tryAdvancePhase(game: GameState) {
   }
 
   if (game.phase !== initialPhase) {
+    // 阶段已变化：旧的自动主持倒计时作废，由 host/autoHost 在新阶段重新起表
+    game.autoHostNextActionAt = undefined;
     if (game.phase === "INVESTMENT") {
       ensureSessionStarted(game);
     }
@@ -106,6 +115,7 @@ export function tryAdvancePhase(game: GameState) {
 }
 
 function advanceRound(game: GameState) {
+  clearAdminProjectAdjustState(game);
   clearActionDeadline(game);
   // 清理临时 Buff 与本轮道具短记录
   game.players.forEach((p) => {
@@ -114,7 +124,17 @@ function advanceRound(game: GameState) {
     p.slackedBy = [];
     p.slackEnergyLost = [];
     p.pendingSlackHits = [];
+    p.pendingLighterBurnNotices = [];
   });
+  game.lighterBurnDeclarations = [];
+  game.roundBuffPlays = [];
+
+  // 第 4 时代第 2 轮结算后直接进入社区命名：
+  // 不要先把 currentEra/globalRound 推到 5/9，否则导出与结算 UI 会多出不存在的一轮。
+  if (game.currentEra >= 4 && game.roundInEra >= 2) {
+    game.phase = "COMMUNITY_NAMING";
+    return;
+  }
 
   game.globalRound += 1;
   game.roundInEra += 1;

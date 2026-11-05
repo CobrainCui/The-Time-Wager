@@ -6,6 +6,32 @@ import {
   AuctionOffer,
   GameState,
 } from "../state/gameState.js";
+import { buffCards } from "../data/game_data.js";
+
+export type PublicAuctionSoldSource = "hammer" | "force_buy";
+
+export function normalizeAuctionSoldSource(
+  source?: AuctionCompletedDeal["source"]
+): PublicAuctionSoldSource {
+  return source === "force_buy" ? "force_buy" : "hammer";
+}
+
+export function formatAuctionSoldMessage(
+  game: GameState,
+  deal: {
+    cardId: string;
+    playerId: string;
+    cost: number;
+    source?: AuctionCompletedDeal["source"];
+  }
+): string {
+  const cardName = buffCards.find((c) => c.id === deal.cardId)?.name ?? deal.cardId;
+  const playerName = game.players.find((p) => p.id === deal.playerId)?.name ?? deal.playerId;
+  if (normalizeAuctionSoldSource(deal.source) === "force_buy") {
+    return `【${cardName}】强买强卖 · ${playerName}`;
+  }
+  return `【${cardName}】成交 · ${playerName} · ${deal.cost}`;
+}
 
 export const AUCTION_CARD_IDS_BY_ROUND: Record<number, string[]> = {
   1: ["buff_insurance", "buff_gold", "buff_slack", "buff_work_rest"],
@@ -149,7 +175,48 @@ export function findNextAvailableAuctionCard(
 export function advanceAuctionFocus(game: GameState, fromCardId?: string | null): string | undefined {
   const next = findNextAvailableAuctionCard(game, fromCardId ?? game.auctionFocusCardId);
   game.auctionFocusCardId = next;
+  game.auctionFocusSetAt = next ? Date.now() : undefined;
   return next;
+}
+
+/** 自动主持：在「未拍掉且未被自动跳过」的卡里找下一张 */
+export function findNextAutoAuctionCard(
+  game: GameState,
+  fromCardId?: string | null
+): string | undefined {
+  const pool = getAuctionCardIdsForGame(game);
+  const skipped = new Set(game.auctionPassedCardIds ?? []);
+  const available = pool.filter((id) => isAuctionCardAvailable(game, id) && !skipped.has(id));
+  if (available.length === 0) return undefined;
+  if (!fromCardId) return available[0];
+  const idx = pool.indexOf(fromCardId);
+  if (idx < 0) return available[0];
+  for (let i = idx + 1; i < pool.length; i++) {
+    if (available.includes(pool[i])) return pool[i];
+  }
+  for (let i = 0; i < idx; i++) {
+    if (available.includes(pool[i])) return pool[i];
+  }
+  return undefined;
+}
+
+/** 自动主持把某张卡标记为「本场跳过」，避免只剩一张时无限循环 */
+export function markAuctionCardPassed(game: GameState, cardId: string): void {
+  if (!game.auctionPassedCardIds) game.auctionPassedCardIds = [];
+  if (!game.auctionPassedCardIds.includes(cardId)) {
+    game.auctionPassedCardIds.push(cardId);
+  }
+}
+
+/** 结束本场拍卖：作废未落槌出价并进入下一个时代介绍 */
+export function endAuctionSession(game: GameState): boolean {
+  if (game.phase !== "AUCTION") return false;
+  voidAllOpenAuctionBids(game, "void_lot_changed");
+  game.auctionFocusCardId = undefined;
+  game.auctionFocusSetAt = undefined;
+  game.autoHostNextActionAt = undefined;
+  game.phase = "ERA_INTRO";
+  return true;
 }
 
 /** 作废所有未落槌的出价（换场次 / 结束拍卖前） */
@@ -170,8 +237,10 @@ export function beginAuctionSession(game: GameState): void {
   game.auctionDistributedCardIds = [];
   game.pendingAuctionOffers = [];
   game.forceBuyUsedPlayerIds = [];
-  // 开场不默认正在拍：由主持手动点「改成拍这张」
+  game.auctionPassedCardIds = [];
+  // 自动主持会立刻聚焦第一张；手动主持仍可自己点「改成拍这张」
   game.auctionFocusCardId = undefined;
+  game.auctionFocusSetAt = undefined;
 }
 
 /**
@@ -189,6 +258,7 @@ export function setAuctionFocusCard(
   if (cardId == null || cardId === "") {
     if (prev) voidOpenBidsOnCard(game, prev, "void_lot_changed");
     game.auctionFocusCardId = undefined;
+    game.auctionFocusSetAt = undefined;
     return { ok: true };
   }
   if (!isAuctionCardAvailable(game, cardId)) {
@@ -197,7 +267,10 @@ export function setAuctionFocusCard(
   if (prev && prev !== cardId) {
     voidOpenBidsOnCard(game, prev, "void_lot_changed");
   }
+  // 主持重新点回一张被自动跳过的卡：解除跳过标记
+  game.auctionPassedCardIds = (game.auctionPassedCardIds ?? []).filter((id) => id !== cardId);
   game.auctionFocusCardId = cardId;
+  game.auctionFocusSetAt = Date.now();
   return { ok: true };
 }
 
@@ -304,7 +377,7 @@ export function placeAuctionBid(
     return { ok: false, message: "这张卡已经拍掉了" };
   }
   const player = game.players.find((p) => p.id === playerId);
-  if (!player || player.isAI) {
+  if (!player) {
     return { ok: false, message: "无法出价" };
   }
   const prevLeading = getLeadingBidOnFocus(game);
@@ -436,6 +509,7 @@ export function passAuctionLot(
   }
   game.logs.push(`⏭️ 跳过 [${focusId}]，暂不成交`);
   game.auctionFocusCardId = next;
+  game.auctionFocusSetAt = Date.now();
   return { ok: true, cardId: focusId, nextFocusId: next };
 }
 
@@ -487,6 +561,7 @@ export function publicSoldLots(game: GameState): {
   playerId: string;
   playerName: string;
   cost: number;
+  source: PublicAuctionSoldSource;
 }[] {
   const round = getAuctionRound(game);
   const pool = new Set(getAuctionCardIdsForGame(game));
@@ -502,6 +577,7 @@ export function publicSoldLots(game: GameState): {
       playerId: d.playerId,
       playerName: game.players.find((p) => p.id === d.playerId)?.name ?? d.playerId,
       cost: d.cost,
+      source: normalizeAuctionSoldSource(d.source),
     }))
     .reverse();
 }
@@ -513,6 +589,7 @@ export function publicSessionAuctionWins(game: GameState): {
   playerName: string;
   cost: number;
   auctionRound?: number;
+  source: PublicAuctionSoldSource;
 }[] {
   // 成交记录跨拍卖场保留；distributed 仅表示当前场池内已拍出，新场 begin 会清空
   const sorted = [...(game.auctionCompletedDeals ?? [])].sort((a, b) => {
@@ -528,6 +605,7 @@ export function publicSessionAuctionWins(game: GameState): {
     playerName: game.players.find((p) => p.id === d.playerId)?.name ?? d.playerId,
     cost: d.cost,
     auctionRound: d.auctionRound,
+    source: normalizeAuctionSoldSource(d.source),
   }));
 }
 
@@ -786,6 +864,7 @@ export function revokeAuctionGrant(game: GameState, cardId: string): RevokeAucti
   // 撤回后若当前没有正在拍的卡，自动把这张设回正在拍
   if (!game.auctionFocusCardId && isAuctionCardAvailable(game, cardId)) {
     game.auctionFocusCardId = cardId;
+    game.auctionFocusSetAt = Date.now();
   }
   return { ok: true, kind: "completed", playerId: completed.playerId, cost: completed.cost };
 }

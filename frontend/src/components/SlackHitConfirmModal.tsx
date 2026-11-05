@@ -5,9 +5,10 @@ import { SlackHitNotice } from "../types";
 
 type Props = {
   hits?: SlackHitNotice[];
+  readOnly?: boolean;
 };
 
-export const SlackHitConfirmModal: React.FC<Props> = ({ hits }) => {
+export const SlackHitConfirmModal: React.FC<Props> = ({ hits, readOnly = false }) => {
   const hit = hits?.[0];
   const [submitting, setSubmitting] = useState(false);
 
@@ -38,8 +39,8 @@ export const SlackHitConfirmModal: React.FC<Props> = ({ hits }) => {
         aria-modal="true"
         aria-labelledby="slack-hit-title"
         style={{
-          border: "2px solid rgba(239,68,68,0.6)",
-          boxShadow: "0 0 60px rgba(239,68,68,0.3)",
+          border: isGain ? "2px solid rgba(34,197,94,0.65)" : "2px solid rgba(239,68,68,0.6)",
+          boxShadow: isGain ? "0 0 60px rgba(34,197,94,0.28)" : "0 0 60px rgba(239,68,68,0.3)",
           textAlign: "center",
         }}
       >
@@ -50,16 +51,22 @@ export const SlackHitConfirmModal: React.FC<Props> = ({ hits }) => {
           id="slack-hit-title"
           style={{ fontSize: "1.4rem", fontWeight: 800, color: "white", marginBottom: "0.5rem" }}
         >
-          你被摸鱼传染了
+          {isGain
+            ? "摸鱼传染 · 劳逸结合"
+            : hit.fromName === "你自己"
+              ? "摸鱼传染"
+              : "你被摸鱼传染了"}
         </h3>
         <p style={{ color: "var(--color-text-secondary)", marginBottom: "0.75rem" }}>
-          {hit.fromName} 对你使用了【摸鱼传染】
+          {hit.fromName === "你自己"
+            ? "你对自己使用了【摸鱼传染】"
+            : "有人对你使用了【摸鱼传染】"}
           {isGain ? "，【劳逸结合】生效：获得 8 精力" : ""}
         </p>
         <div
           style={{
-            background: "rgba(239,68,68,0.1)",
-            border: "1px solid rgba(239,68,68,0.25)",
+            background: isGain ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
+            border: isGain ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.25)",
             borderRadius: "0.875rem",
             padding: "1rem",
             marginBottom: "0.75rem",
@@ -98,11 +105,24 @@ export const SlackHitConfirmModal: React.FC<Props> = ({ hits }) => {
         >
           现在精力 {hit.energyAfter}
         </p>
+        {hit.investmentAutoUnlocked && (
+          <p
+            style={{
+              margin: "0 0 1.25rem",
+              color: "#fbbf24",
+              fontSize: uiRem(0.85),
+              fontWeight: 600,
+              lineHeight: 1.45,
+            }}
+          >
+            你已自动解锁投资方案，精力已退回，请关闭后重新调整并提交。
+          </p>
+        )}
         <button
           type="button"
-          disabled={submitting}
+          disabled={readOnly || submitting}
           onClick={() => {
-            if (submitting) return;
+            if (readOnly || submitting) return;
             setSubmitting(true);
             socket.emit("ackSlackHit", { hitId: hit.id });
           }}

@@ -35,7 +35,7 @@ export const TutorialView: React.FC<Props> = ({ game, me }) => {
           background: "var(--color-bg-card)",
           border: "1px solid var(--color-border)",
           borderRadius: "1.5rem",
-          overflow: "hidden",
+          overflow: "visible",
           boxShadow: "0 30px 80px rgba(0,0,0,0.5)",
         }}
       >

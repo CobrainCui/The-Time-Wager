@@ -10,9 +10,10 @@ export type WealthAdjustRequest = {
 type Props = {
   pending?: WealthAdjustRequest | null;
   wealth: number;
+  readOnly?: boolean;
 };
 
-export const WealthAdjustConfirmModal: React.FC<Props> = ({ pending, wealth }) => {
+export const WealthAdjustConfirmModal: React.FC<Props> = ({ pending, wealth, readOnly = false }) => {
   const [submitting, setSubmitting] = useState(false);
   const pendingOfferIdRef = useRef<string | null>(null);
   pendingOfferIdRef.current = pending?.offerId ?? null;
@@ -43,6 +44,7 @@ export const WealthAdjustConfirmModal: React.FC<Props> = ({ pending, wealth }) =
   }, []);
 
   const handleRespond = (accept: boolean) => {
+    if (readOnly) return;
     if (!pending || submitting) return;
     setSubmitting(true);
     socket.emit("playerRespondWealthAdjust", { offerId: pending.offerId, accept });
@@ -124,7 +126,7 @@ export const WealthAdjustConfirmModal: React.FC<Props> = ({ pending, wealth }) =
         <div style={{ display: "flex", gap: "0.75rem" }}>
           <button
             type="button"
-            disabled={submitting}
+            disabled={readOnly || submitting}
             onClick={() => handleRespond(false)}
             className="btn btn-ghost"
             style={{ flex: 1 }}
@@ -133,7 +135,7 @@ export const WealthAdjustConfirmModal: React.FC<Props> = ({ pending, wealth }) =
           </button>
           <button
             type="button"
-            disabled={submitting}
+            disabled={readOnly || submitting}
             onClick={() => handleRespond(true)}
             className="btn btn-primary"
             style={{ flex: 1, fontSize: uiRem(1) }}

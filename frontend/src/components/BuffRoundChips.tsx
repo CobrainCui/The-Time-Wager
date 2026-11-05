@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { uiRem } from "../utils/typography";
 import { BuffRoundNote, Player } from "../types";
-import { BUFF_DEFS } from "../data/buffDefs";
+import { BUFF_CARD_DEFS, getBuffDef } from "../config/buffCards";
 import { socket } from "../socket";
 
 interface Props {
@@ -28,10 +28,10 @@ export const BuffRoundChips: React.FC<Props> = ({
   const hasSlackCard = me.inventory.includes("buff_slack");
   const buttonsDisabled = actionsDisabled || !canAct;
 
-  if (notes.length === 0 && !showSlackActions) return null;
+  if (notes.length === 0 && !showSlackActions && !hasWorkRest) return null;
 
   const labelFor = (note: BuffRoundNote) => {
-    const def = BUFF_DEFS[note.cardId];
+    const def = getBuffDef(note.cardId);
     const name = def?.name || note.cardId;
     return note.role === "used" ? `已用·${name}` : `被用·${name}`;
   };
@@ -48,7 +48,7 @@ export const BuffRoundChips: React.FC<Props> = ({
     >
       {notes.map((note, idx) => {
         const open = expanded === idx;
-        const def = BUFF_DEFS[note.cardId];
+        const def = getBuffDef(note.cardId);
         const color = def?.color || "#94a3b8";
         return (
           <button
@@ -74,6 +74,23 @@ export const BuffRoundChips: React.FC<Props> = ({
           </button>
         );
       })}
+
+      {hasWorkRest && (
+        <span
+          title="本卡生效轮次内被摸鱼传染时不减精力，+8 精力"
+          style={{
+            border: `1px solid ${BUFF_CARD_DEFS.buff_work_rest?.color ?? "#10b981"}55`,
+            background: "rgba(16,185,129,0.12)",
+            color: "#6ee7b7",
+            borderRadius: "9999px",
+            padding: compact ? "0.15rem 0.55rem" : "0.25rem 0.7rem",
+            fontSize: uiRem(compact ? 0.68 : 0.75),
+            fontWeight: 700,
+          }}
+        >
+          ⚖️ 劳逸结合 · 被摸鱼 +8
+        </span>
+      )}
 
       {showSlackActions && (
         <>

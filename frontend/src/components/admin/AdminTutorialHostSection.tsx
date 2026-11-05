@@ -5,6 +5,7 @@ import { TUTORIAL_SLIDES } from "../../tutorialData";
 import { TutorialSlidePanel } from "../../tutorial/TutorialSlidePanel";
 import { preloadTutorialProjectCovers } from "../../tutorial/preloadTutorialImages";
 import { isAiPlayer } from "../../utils/isAiPlayer";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 interface Props {
   game: GameState;
@@ -34,6 +35,7 @@ export const AdminTutorialHostSection: React.FC<Props> = ({
   const slide = TUTORIAL_SLIDES[step];
   const demoPlayerName =
     game.players.find((p) => !isAiPlayer(p))?.name ?? "示例玩家";
+  const fitViewport = useMediaQuery("(min-width: 1024px)", false);
 
   useEffect(() => {
     preloadTutorialProjectCovers();
@@ -79,7 +81,7 @@ export const AdminTutorialHostSection: React.FC<Props> = ({
         background: "var(--color-bg-card)",
         border: "2px solid rgba(59,130,246,0.35)",
         borderRadius: "1.25rem",
-        overflow: "hidden",
+        overflow: "visible",
         marginBottom: "1.5rem",
         boxShadow: "0 0 40px rgba(59,130,246,0.12)",
       }}
@@ -108,6 +110,7 @@ export const AdminTutorialHostSection: React.FC<Props> = ({
         step={step}
         playerName={demoPlayerName}
         compact
+        fitViewport={fitViewport}
         hidePageFooter
       />
 

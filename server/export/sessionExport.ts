@@ -4,6 +4,7 @@ import { EXPORT_SCHEMA_VERSION, getAnalysisWeightsVersion } from "./constants.js
 import { emptySessionTelemetry } from "../state/sessionTelemetry.js";
 import { getCommunityLeaderboard } from "../state/communityLeaderboard.js";
 import { eraCards } from "../data/game_data.js";
+import { isAiPlayer } from "../util/isAiPlayer.js";
 
 type ProjectListKind = "active" | "completed" | "uncompleted";
 
@@ -38,6 +39,7 @@ function playerExportRow(p: Player) {
     name: p.name,
     isAI: p.isAI ?? false,
     aiPersona: p.aiPersona ?? "",
+    aiDifficulty: p.aiDifficulty ?? "",
     energy: p.energy,
     wealth: p.wealth,
     rank: p.rank,
@@ -65,6 +67,8 @@ export function buildSessionExport(game: GameState) {
       sessionId: game.sessionId ?? null,
       communityName: game.communityName ?? null,
       playerCount: game.players.length,
+      aiPlayerCount: game.players.filter((p) => isAiPlayer(p)).length,
+      humanPlayerCount: game.players.filter((p) => !isAiPlayer(p)).length,
       energyTableSize: game.energyTableSize ?? null,
       eraSequence: game.eraSequence,
       eraThemeNames: eraThemeNames(game.eraSequence),
@@ -104,6 +108,8 @@ export function buildSessionExport(game: GameState) {
       totalPayout: proj.totalPayout,
     })),
     transactions: game.transactions,
+    chatGroups: game.chatGroups ?? [],
+    groupMessages: game.groupMessages ?? [],
     auctionBids: game.auctionBids ?? [],
     auctionCompletedDeals: game.auctionCompletedDeals ?? [],
     lotteryDeals: (game.lotteryCompletedDeals ?? []).map((d) => ({
@@ -111,6 +117,8 @@ export function buildSessionExport(game: GameState) {
       creditedAmount: d.amount,
       enteredAmount: d.enteredAmount ?? null,
       goldApplied: d.goldApplied ?? null,
+      roll: d.roll ?? null,
+      source: d.source ?? null,
     })),
     settlementHistory: tel.settlementHistory,
     events: tel.events,
@@ -149,6 +157,8 @@ export async function buildSessionWorkbook(
     玩家ID: p.id,
     昵称: sanitizeCell(p.name),
     AI: p.isAI,
+    AI人格: sanitizeCell(p.aiPersona),
+    AI难度: sanitizeCell(p.aiDifficulty),
     财富: p.wealth,
     精力: p.energy,
     排名: p.rank,
@@ -210,6 +220,15 @@ export async function buildSessionWorkbook(
     状态: t.status,
   }));
   addSheet(wb, "转账", txRows.length ? txRows : [{ 提示: "无转账" }]);
+
+  const groupNameById = new Map((exportData.chatGroups ?? []).map((g) => [g.id, g.name]));
+  const groupRows = (exportData.groupMessages ?? []).map((m) => ({
+    时间: new Date(m.timestamp).toISOString(),
+    群名: sanitizeCell(groupNameById.get(m.groupId) ?? m.groupId),
+    发送者: sanitizeCell(m.fromName),
+    内容: sanitizeCell(m.text),
+  }));
+  addSheet(wb, "群聊", groupRows.length ? groupRows : [{ 提示: "无群聊" }]);
 
   const projRows = exportData.projects.map((p) => ({
     ID: p.id,
@@ -356,6 +375,8 @@ export async function buildSessionWorkbook(
     主持原额: d.enteredAmount ?? "",
     入账额: d.creditedAmount,
     点石成金: d.goldApplied === true ? "是" : d.goldApplied === false ? "否" : "",
+    骰子点数: d.roll ?? "",
+    随机源: d.source ?? "",
   }));
   addSheet(wb, "彩票", lotteryRows.length ? lotteryRows : [{ 提示: "无彩票开奖" }]);
 

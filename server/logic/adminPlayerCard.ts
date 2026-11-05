@@ -11,13 +11,30 @@ export function cardDisplayName(cardId: string): string {
   return buffCards.find((c) => c.id === cardId)?.name ?? cardId;
 }
 
-function parseInventoryIndex(value: unknown): number | undefined {
+export function parseInventoryIndex(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isInteger(value)) return value;
   if (typeof value === "string" && /^\d+$/.test(value)) {
     const n = Number(value);
     return Number.isSafeInteger(n) ? n : undefined;
   }
   return undefined;
+}
+
+/** 发动/收回手牌时定位具体一张（支持同名多张） */
+export function resolveInventoryIndexForCard(
+  inventory: string[],
+  cardId: string,
+  inventoryIndex?: unknown
+): { ok: true; index: number } | { ok: false; error: "missing" | "stale" } {
+  const parsed = parseInventoryIndex(inventoryIndex);
+  if (parsed !== undefined) {
+    if (parsed < 0 || parsed >= inventory.length) return { ok: false, error: "stale" };
+    if (inventory[parsed] !== cardId) return { ok: false, error: "stale" };
+    return { ok: true, index: parsed };
+  }
+  const idx = inventory.indexOf(cardId);
+  if (idx === -1) return { ok: false, error: "missing" };
+  return { ok: true, index: idx };
 }
 
 export function adminAdjustPlayerCard(
@@ -46,33 +63,17 @@ export function adminAdjustPlayerCard(
     return { ok: true, player, cardId, action, cardName: cardDisplayName(cardId) };
   }
 
-  const idxFromClient = parseInventoryIndex(inventoryIndex);
-  if (
-    idxFromClient !== undefined &&
-    idxFromClient >= 0 &&
-    idxFromClient < player.inventory.length
-  ) {
-    if (typeof cardId === "string" && cardId && player.inventory[idxFromClient] !== cardId) {
-      return { ok: false, message: "手牌已变化，请关闭后重试" };
-    }
-    const removedId = player.inventory[idxFromClient];
-    player.inventory.splice(idxFromClient, 1);
-    return {
-      ok: true,
-      player,
-      cardId: removedId,
-      action,
-      cardName: cardDisplayName(removedId),
-    };
-  }
-
   if (typeof cardId !== "string" || !cardId) {
     return { ok: false, message: "道具无效" };
   }
-  const idx = player.inventory.indexOf(cardId);
-  if (idx === -1) {
+  const resolved = resolveInventoryIndexForCard(player.inventory, cardId, inventoryIndex);
+  if (!resolved.ok) {
+    if (resolved.error === "stale") {
+      return { ok: false, message: "手牌已变化，请关闭后重试" };
+    }
     return { ok: false, message: "手牌中没有该道具，只能收回未使用的手牌" };
   }
+  const idx = resolved.index;
   player.inventory.splice(idx, 1);
   return { ok: true, player, cardId, action, cardName: cardDisplayName(cardId) };
 }

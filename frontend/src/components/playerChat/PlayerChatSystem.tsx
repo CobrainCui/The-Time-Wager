@@ -1,28 +1,57 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { uiRem } from "../../utils/typography";
 import { GameState, Player, Transaction } from "../../types";
 import { socket } from "../../socket";
 import type { ChatMessage, ChatThread } from "./types";
 import {
-  normalizeDigitsNonNegativeInt,
-  parseNormalizedNonNegativeInt,
-} from "../../utils/nonNegativeIntInput";
-import {
-  badgeCount,
   formatBadge,
-  formatBubbleText,
   isOptimisticMatchForTx,
-  mergeThreadMessages,
-  messageStatusMeta,
   msgFromTx,
   newClientTempId,
   sortMessages,
 } from "./chatMessageUtils";
+import {
+  ChatSeenSnapshot,
+  isGroupMessageUnread,
+  isTxUnreadForViewer,
+  loadChatSeen,
+  markGroupMessagesSeen,
+  markTransactionsSeen,
+  saveChatSeen,
+} from "./chatSeenStorage";
 import { playerAvailableWealth } from "../../utils/availableWealth";
+import { normalizeNoteInput, sanitizeTransactionNote } from "../../utils/transactionNoteFilter";
+import {
+  archiveLoadIncomplete,
+  mergeTransactionLog,
+  oldestTransactionCursor,
+  sortedTransactionsFromMap,
+} from "../../utils/transactionLogMerge";
+import type { ComposerDraft } from "./chatComposerDraft";
+import {
+  buildDisplayOrder,
+  bumpCollapsedRecency,
+  mergePeerListIntoRecency,
+  promoteExpandedStack,
+  removeFromExpandedStack,
+} from "./chatDockOrder";
+import { ExpandedChatDockPanel } from "./ExpandedChatDockPanel";
+import { GroupChatPanel } from "./GroupChatPanel";
+import { CreateGroupModal } from "./CreateGroupModal";
+import { groupThreadId, isGroupThreadId, parseGroupThreadId } from "./groupChatIds";
+import { mergeServerGroupMessageIntoThread } from "./groupMessageUtils";
+import { PLAYER_GROUP_CHAT_ENABLED } from "../../config/playerChatFeatures";
+import {
+  peerDockAttention,
+  peerMinibarAriaLabel,
+  pickLatestDockAction,
+  sortCollapsedPeerIds,
+  summarizeDockAttention,
+} from "./chatDockAttention";
 
-const NOTE_MAX = 500;
 /** 乐观气泡超时未对账则标为发送失败 */
 const OPTIMISTIC_TIMEOUT_MS = 8_000;
+const ATTENTION_FLASH_MS = 2_500;
+const DOCK_PREVIEW_HINT_MS = 4_000;
 
 function txInvolvesMe(tx: Transaction, myId: string): boolean {
   return tx.fromId === myId || tx.toId === myId;
@@ -41,209 +70,254 @@ function optimisticMessage(peerId: string, amount: number, note: string, clientT
   };
 }
 
-const QuickComposer: React.FC<{
-  peerId: string;
-  peerName: string;
-  maxWealth: number;
-  compact?: boolean;
-  onSend: (peerId: string, peerName: string, amount: number, note: string) => boolean;
-}> = ({ peerId, peerName, maxWealth, compact, onSend }) => {
-  const [amount, setAmount] = useState<number | "">("");
-  const [note, setNote] = useState("");
-  const [sending, setSending] = useState(false);
-  const trimmed = note.trim();
-  const effectiveAmount = amount === "" ? 0 : amount;
-  const isMsg = effectiveAmount === 0;
+export const PlayerChatSystem: React.FC<{
+  game: GameState;
+  me: Player;
+  readOnly?: boolean;
+}> = ({ game, me, readOnly = false }) => {
+  const gameRef = useRef(game);
+  gameRef.current = game;
 
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (sending) return;
-    if (isMsg && !trimmed) return;
-    if (!isMsg && (effectiveAmount <= 0 || effectiveAmount > maxWealth)) return;
-    setSending(true);
-    const ok = onSend(peerId, peerName, effectiveAmount, note);
-    if (ok) {
-      setAmount("");
-      setNote("");
-    }
-    window.setTimeout(() => setSending(false), 350);
-  };
-
-  return (
-    <form
-      onSubmit={onSubmit}
-      className="player-chat-composer"
-      style={{
-        marginTop: compact ? "0.5rem" : 0,
-        padding: compact ? "0 0.5rem 0.5rem" : 0,
-      }}
-    >
-      <div style={{ display: "flex", gap: "0.35rem" }}>
-        <input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          autoComplete="off"
-          className="input"
-          placeholder="金额"
-          value={amount === "" ? "" : String(amount)}
-          onChange={(e) => {
-            const normalized = normalizeDigitsNonNegativeInt(e.target.value);
-            if (normalized === "") {
-              setAmount("");
-              return;
-            }
-            const n = parseNormalizedNonNegativeInt(normalized, 0);
-            setAmount(Math.min(n, maxWealth));
-          }}
-          style={{ width: "4.5rem", fontFamily: "var(--font-mono)", fontSize: uiRem(0.8), padding: "0.35rem" }}
-        />
-        <input
-          className="input"
-          placeholder={isMsg ? "私信…" : "备注"}
-          value={note}
-          maxLength={NOTE_MAX}
-          onChange={(e) => setNote(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit();
-            }
-          }}
-          style={{ flex: 1, fontSize: uiRem(0.8), padding: "0.35rem 0.5rem" }}
-        />
-        <button
-          type="submit"
-          className="btn btn-primary btn-sm"
-          disabled={sending || (isMsg ? !trimmed : effectiveAmount <= 0 || effectiveAmount > maxWealth)}
-          style={{ padding: "0.35rem 0.65rem" }}
-        >
-          {sending ? "…" : "发"}
-        </button>
-      </div>
-    </form>
-  );
-};
-
-const IncomingRespondActions: React.FC<{
-  txId: string;
-  disabled: boolean;
-  onRespond: (txId: string, accept: boolean) => void;
-}> = ({ txId, disabled, onRespond }) => {
-  return (
-    <div className="player-chat-bubble-actions">
-      <button
-        type="button"
-        className="btn btn-success btn-sm"
-        disabled={disabled}
-        onClick={() => onRespond(txId, true)}
-      >
-        接收
-      </button>
-      <button
-        type="button"
-        className="btn btn-danger btn-sm"
-        disabled={disabled}
-        onClick={() => onRespond(txId, false)}
-      >
-        退回
-      </button>
-    </div>
-  );
-};
-
-const ChatPanel: React.FC<{
-  playerId: string;
-  thread: ChatThread;
-  displayMessages: ChatMessage[];
-  respondingTxIds: Set<string>;
-  maxWealth: number;
-  onCollapse: () => void;
-  onRespond: (txId: string, accept: boolean) => void;
-  onSend: (peerId: string, peerName: string, amount: number, note: string) => boolean;
-}> = ({
-  playerId,
-  thread,
-  displayMessages,
-  respondingTxIds,
-  maxWealth,
-  onCollapse,
-  onRespond,
-  onSend,
-}) => {
-  const listRef = useRef<HTMLDivElement>(null);
-  const prevCountRef = useRef(0);
-
-  useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    if (displayMessages.length >= prevCountRef.current) {
-      el.scrollTop = el.scrollHeight;
-    }
-    prevCountRef.current = displayMessages.length;
-  }, [displayMessages]);
-
-  return (
-    <div className="player-chat-panel">
-      <div className="player-chat-panel-header">
-        <div className="player-chat-panel-title">
-          <span style={{ fontWeight: 800, fontSize: uiRem(0.9) }}>{thread.playerName}</span>
-        </div>
-        <button type="button" className="player-chat-icon-btn" onClick={onCollapse} aria-label="收起">
-          ─
-        </button>
-      </div>
-      <div ref={listRef} className="player-chat-messages">
-        {displayMessages.length === 0 && (
-          <div className="player-chat-empty">暂无记录，发一条试试吧</div>
-        )}
-        {displayMessages.map((m) => {
-          const meta = messageStatusMeta(m);
-          return (
-            <div
-              key={m.clientTempId || m.txId || m.id}
-              className={`player-chat-bubble ${m.direction === "out" ? "out" : "in"}${
-                m.status === "failed" ? " failed" : ""
-              }`}
-            >
-              <div>{formatBubbleText(m)}</div>
-              {m.status === "pending" && m.direction === "in" && m.txId && m.amount > 0 && (
-                <IncomingRespondActions
-                  txId={m.txId}
-                  disabled={respondingTxIds.has(m.txId)}
-                  onRespond={onRespond}
-                />
-              )}
-              {meta && <div className="player-chat-bubble-meta">{meta}</div>}
-            </div>
-          );
-        })}
-      </div>
-      <QuickComposer
-        peerId={playerId}
-        peerName={thread.playerName}
-        maxWealth={maxWealth}
-        compact
-        onSend={onSend}
-      />
-    </div>
-  );
-};
-
-export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ game, me }) => {
   const [threads, setThreads] = useState<Record<string, ChatThread>>({});
-  const [threadOrder, setThreadOrder] = useState<string[]>([]);
+  const [expandedStack, setExpandedStack] = useState<string[]>([]);
+  const [collapsedRecency, setCollapsedRecency] = useState<string[]>([]);
   const [respondingTxIds, setRespondingTxIds] = useState<Set<string>>(() => new Set());
   const respondingTxRef = useRef<Set<string>>(new Set());
 
   const knownTxIdsRef = useRef<Set<string>>(new Set());
-  /** 己方未对账的乐观 clientTempId → peerId */
+  const seenRef = useRef<ChatSeenSnapshot>(loadChatSeen(game.roomId, me.id));
   const pendingOutRef = useRef<Map<string, { peerId: string; sentAt: number }>>(new Map());
+  const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const dockRef = useRef<HTMLDivElement>(null);
+  const draftsRef = useRef<Record<string, ComposerDraft>>({});
+  const activeComposerPeerRef = useRef<string | null>(null);
+  const composerImeActiveRef = useRef(false);
+  const deferredDockWorkRef = useRef<(() => void)[]>([]);
+  const txMergeRef = useRef<Map<string, Transaction>>(new Map());
+  const [playerTxMerged, setPlayerTxMerged] = useState<Transaction[]>([]);
+  const [txLogTotal, setTxLogTotal] = useState(0);
+  const [txLoadingOlder, setTxLoadingOlder] = useState(false);
+  const txLoadingOlderRef = useRef(false);
+  const [flashPeerId, setFlashPeerId] = useState<string | null>(null);
+  const [inboxFlash, setInboxFlash] = useState(false);
+  const [dockPreviewHint, setDockPreviewHint] = useState<string | null>(null);
+  const attentionFlashTimerRef = useRef<number | null>(null);
+  const previewHintTimerRef = useRef<number | null>(null);
+  const inboxNotifyFlashTimerRef = useRef<number | null>(null);
+  const [seenRevision, setSeenRevision] = useState(0);
 
-  const peerPlayers = useMemo(() => game.players.filter((p) => p.id !== me.id), [game.players, me.id]);
+  const peerSignature = useMemo(
+    () =>
+      game.players
+        .filter((p) => p.id !== me.id)
+        .map((p) => `${p.id}\t${p.name}`)
+        .join("\n"),
+    [game.players, me.id]
+  );
+
+  const peerPlayers = useMemo(
+    () => game.players.filter((p) => p.id !== me.id),
+    [peerSignature]
+  );
+
+  const myTransactions = useMemo(
+    () => playerTxMerged.filter((t) => txInvolvesMe(t, me.id)),
+    [playerTxMerged, me.id]
+  );
+
+  const maxWealth = useMemo(
+    () => playerAvailableWealth(gameRef.current, me),
+    [
+      me.id,
+      me.wealth,
+      me.ready,
+      game.auctionHighBidderId,
+      game.auctionCurrentBid,
+      game.transactions,
+      playerTxMerged.length,
+    ]
+  );
+
+  useEffect(() => {
+    txMergeRef.current = new Map();
+    knownTxIdsRef.current = new Set();
+    setPlayerTxMerged([]);
+    setTxLogTotal(0);
+    txLoadingOlderRef.current = false;
+    setTxLoadingOlder(false);
+  }, [game.roomId, game.sessionId, me.id]);
+
+  useEffect(() => {
+    const merged = mergeTransactionLog(txMergeRef.current, game.transactions ?? []);
+    txMergeRef.current = merged;
+    setPlayerTxMerged(sortedTransactionsFromMap(merged));
+    if (typeof game.transactionLog?.total === "number") {
+      setTxLogTotal(game.transactionLog.total);
+    } else {
+      setTxLogTotal(merged.size);
+    }
+  }, [game.transactions, game.transactionLog]);
+
+  useEffect(() => {
+    const onPage = (payload: {
+      roomId?: string;
+      transactions?: Transaction[];
+      hasMore?: boolean;
+      total?: number;
+    }) => {
+      if (payload.roomId !== game.roomId) return;
+      const merged = mergeTransactionLog(txMergeRef.current, payload.transactions ?? []);
+      txMergeRef.current = merged;
+      const sorted = sortedTransactionsFromMap(merged);
+      setPlayerTxMerged(sorted);
+      if (typeof payload.total === "number") setTxLogTotal(payload.total);
+      txLoadingOlderRef.current = false;
+      setTxLoadingOlder(false);
+    };
+    const onError = () => {
+      if (!txLoadingOlderRef.current) return;
+      txLoadingOlderRef.current = false;
+      setTxLoadingOlder(false);
+    };
+    socket.on("transactionHistoryPage", onPage);
+    socket.on("error", onError);
+    return () => {
+      socket.off("transactionHistoryPage", onPage);
+      socket.off("error", onError);
+    };
+  }, [game.roomId]);
+
+  const loadOlderTransactions = useCallback(() => {
+    if (txLoadingOlderRef.current) return;
+    const cursor = oldestTransactionCursor(myTransactions);
+    if (!cursor) return;
+    txLoadingOlderRef.current = true;
+    setTxLoadingOlder(true);
+    socket.emit("fetchTransactionHistory", {
+      roomId: game.roomId,
+      beforeTimestamp: cursor.timestamp,
+      beforeId: cursor.id,
+      limit: 80,
+    });
+  }, [game.roomId, myTransactions]);
+
+  const showLoadOlderTx = archiveLoadIncomplete(myTransactions.length, txLogTotal);
 
   const hasExpandedPanel = useMemo(() => Object.values(threads).some((t) => t.expanded), [threads]);
+
+  const hasExpandedPeerPanel = useMemo(
+    () =>
+      Object.entries(threads).some(
+        ([id, t]) => t.expanded && t.threadKind !== "group" && !isGroupThreadId(id)
+      ),
+    [threads]
+  );
+
+  const dockSummary = useMemo(
+    () => summarizeDockAttention(peerPlayers, threads, myTransactions, me.id, seenRef.current),
+    [peerPlayers, threads, myTransactions, me.id, seenRevision]
+  );
+
+  const pulsePeerAttention = useCallback((peerId: string) => {
+    setFlashPeerId(peerId);
+    setInboxFlash(true);
+    if (attentionFlashTimerRef.current != null) {
+      window.clearTimeout(attentionFlashTimerRef.current);
+    }
+    attentionFlashTimerRef.current = window.setTimeout(() => {
+      setFlashPeerId(null);
+      setInboxFlash(false);
+      attentionFlashTimerRef.current = null;
+    }, ATTENTION_FLASH_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (attentionFlashTimerRef.current != null) {
+        window.clearTimeout(attentionFlashTimerRef.current);
+      }
+      if (previewHintTimerRef.current != null) {
+        window.clearTimeout(previewHintTimerRef.current);
+      }
+      if (inboxNotifyFlashTimerRef.current != null) {
+        window.clearTimeout(inboxNotifyFlashTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const onPlayerNotify = (
+      payload: { type?: string; message?: string; msg?: string } | string
+    ) => {
+      if (typeof payload === "string") return;
+      const t = payload?.type;
+      if (t !== "chat" && t !== "transfer") return;
+      const text = payload?.message || payload?.msg || "";
+      if (!text) return;
+      if (t === "transfer" && !text.includes("向你转账")) return;
+      setDockPreviewHint(text);
+      setInboxFlash(true);
+      if (inboxNotifyFlashTimerRef.current != null) {
+        window.clearTimeout(inboxNotifyFlashTimerRef.current);
+      }
+      inboxNotifyFlashTimerRef.current = window.setTimeout(() => {
+        setInboxFlash(false);
+        inboxNotifyFlashTimerRef.current = null;
+      }, ATTENTION_FLASH_MS);
+      if (previewHintTimerRef.current != null) {
+        window.clearTimeout(previewHintTimerRef.current);
+      }
+      previewHintTimerRef.current = window.setTimeout(() => {
+        setDockPreviewHint(null);
+        previewHintTimerRef.current = null;
+      }, DOCK_PREVIEW_HINT_MS);
+    };
+    socket.on("playerNotify", onPlayerNotify);
+    return () => {
+      socket.off("playerNotify", onPlayerNotify);
+    };
+  }, []);
+
+  const persistSeen = useCallback(
+    (snapshot: ChatSeenSnapshot) => {
+      seenRef.current = snapshot;
+      saveChatSeen(game.roomId, me.id, snapshot);
+      setSeenRevision((v) => v + 1);
+    },
+    [game.roomId, me.id]
+  );
+
+  // 新一局：服务端会清空交易与群消息，但「全场」频道 id 固定复用，
+  // 必须同时清掉本地线程，避免上一局聊天残留在新一局。
+  const sessionKeyRef = useRef(game.sessionId ?? "");
+  useEffect(() => {
+    const nextKey = game.sessionId ?? "";
+    if (sessionKeyRef.current === nextKey) return;
+    sessionKeyRef.current = nextKey;
+    setThreads((prev) => {
+      let next = prev;
+      for (const key of Object.keys(next)) {
+        if (next === prev) next = { ...prev };
+        next[key] = { ...next[key], messages: [], unread: 0, expanded: false };
+      }
+      return next;
+    });
+    setExpandedStack([]);
+    setCollapsedRecency([]);
+    persistSeen({});
+  }, [game.sessionId, persistSeen]);
+
+  const markPeerSeenFromTxs = useCallback(
+    (peerId: string) => {
+      const txs = myTransactions.filter((t) => {
+        const peer = t.fromId === me.id ? t.toId : t.fromId;
+        return peer === peerId;
+      });
+      const next = markTransactionsSeen(seenRef.current, txs);
+      if (next !== seenRef.current) persistSeen(next);
+    },
+    [myTransactions, persistSeen, me.id]
+  );
 
   const collapseAllExpanded = useCallback(() => {
     setThreads((prev) => {
@@ -251,13 +325,20 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
       const next: Record<string, ChatThread> = { ...prev };
       for (const id of Object.keys(next)) {
         if (next[id].expanded) {
+          if (isGroupThreadId(id)) {
+            const ids = next[id].messages.map((m) => m.id);
+            persistSeen(markGroupMessagesSeen(seenRef.current, ids));
+          } else {
+            markPeerSeenFromTxs(id);
+          }
           changed = true;
           next[id] = { ...next[id], expanded: false };
         }
       }
       return changed ? next : prev;
     });
-  }, []);
+    setExpandedStack([]);
+  }, [markPeerSeenFromTxs, persistSeen]);
 
   useEffect(() => {
     if (!hasExpandedPanel) return;
@@ -273,14 +354,19 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [hasExpandedPanel, collapseAllExpanded]);
 
-  const myTransactions = useMemo(
-    () => (game.transactions ?? []).filter((t) => txInvolvesMe(t, me.id)),
-    [game.transactions, me.id]
-  );
-
-  const pendingTxs = myTransactions.filter(
-    (t) => t.toId === me.id && t.status === "pending" && t.amount > 0
-  );
+  useEffect(() => {
+    seenRef.current = loadChatSeen(game.roomId, me.id);
+    knownTxIdsRef.current = new Set();
+    pendingOutRef.current.clear();
+    respondingTxRef.current.clear();
+    draftsRef.current = {};
+    activeComposerPeerRef.current = null;
+    composerImeActiveRef.current = false;
+    setRespondingTxIds(new Set());
+    setThreads({});
+    setExpandedStack([]);
+    setCollapsedRecency([]);
+  }, [game.roomId, me.id]);
 
   useEffect(() => {
     const peerIds = peerPlayers.map((p) => p.id);
@@ -296,6 +382,7 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
             messages: [],
             expanded: false,
             unread: 0,
+            threadKind: "peer",
           };
         } else if (existing.playerName !== p.name) {
           if (next === prev) next = { ...prev };
@@ -304,30 +391,74 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
       }
       return next;
     });
-    setThreadOrder((order) => {
-      const kept = order.filter((id) => peerIds.includes(id));
-      const missing = peerIds.filter((id) => !kept.includes(id));
-      if (missing.length === 0) return order;
-      return [...kept, ...missing];
-    });
+    setCollapsedRecency((order) => mergePeerListIntoRecency(order, peerIds));
   }, [peerPlayers]);
 
+  const myChatGroups = useMemo(() => {
+    if (!PLAYER_GROUP_CHAT_ENABLED) return [];
+    // 服务端已按成员过滤：真人能看到自己所在的全部频道（全场 + 自建群）。
+    return game.chatGroups ?? [];
+  }, [game.chatGroups]);
+
+  const myCustomChatGroups = useMemo(
+    () => myChatGroups.filter((g) => g.kind === "custom"),
+    [myChatGroups]
+  );
+
+  const groupDockOrder = useMemo(() => {
+    if (!PLAYER_GROUP_CHAT_ENABLED) return [];
+    const groups = myChatGroups;
+    const lastByGroup = new Map<string, number>();
+    for (const m of game.groupMessages ?? []) {
+      if (!groups.some((g) => g.id === m.groupId)) continue;
+      lastByGroup.set(m.groupId, Math.max(lastByGroup.get(m.groupId) ?? 0, m.timestamp));
+    }
+    const byRecency = [...groups].sort(
+      (a, b) =>
+        (lastByGroup.get(b.id) ?? b.createdAt) - (lastByGroup.get(a.id) ?? a.createdAt) ||
+        a.id.localeCompare(b.id)
+    );
+    // 「全场」频道固定排在群聊区最前，便于新玩家找到。
+    const publicGroups = byRecency.filter((g) => g.kind === "public");
+    const customGroups = byRecency.filter((g) => g.kind !== "public");
+    return [...publicGroups, ...customGroups].map((g) => groupThreadId(g.id));
+  }, [myChatGroups, game.groupMessages]);
+
+  const dockIds = useMemo(
+    () => [...groupDockOrder, ...peerPlayers.map((p) => p.id)],
+    [groupDockOrder, peerPlayers]
+  );
+
   const displayOrder = useMemo(() => {
-    const peerIds = peerPlayers.map((p) => p.id);
-    const expandedIds = peerIds.filter((id) => threads[id]?.expanded);
-    const collapsedIds = peerIds.filter((id) => !threads[id]?.expanded);
+    const raw = buildDisplayOrder(dockIds, expandedStack, collapsedRecency, (id) => threads[id]?.expanded === true);
+    const expandedIds = raw.filter((id) => threads[id]?.expanded === true);
+    const collapsedIds = raw.filter((id) => !threads[id]?.expanded);
+    const peerCollapsed = collapsedIds.filter((id) => !isGroupThreadId(id));
+    const groupCollapsed = collapsedIds.filter((id) => isGroupThreadId(id));
+    const sortedPeers = sortCollapsedPeerIds(
+      peerCollapsed,
+      threads,
+      myTransactions,
+      me.id,
+      collapsedRecency
+    );
+    return [...expandedIds, ...sortedPeers, ...groupCollapsed];
+  }, [dockIds, expandedStack, collapsedRecency, threads, myTransactions, me.id]);
 
-    const sortByThreadOrder = (ids: string[]) => {
-      const sorted = threadOrder.filter((id) => ids.includes(id));
-      for (const id of ids) {
-        if (!sorted.includes(id)) sorted.push(id);
-      }
-      return sorted;
-    };
+  const flushDeferredDockWork = useCallback(() => {
+    if (composerImeActiveRef.current) return;
+    const queue = deferredDockWorkRef.current.splice(0);
+    for (const fn of queue) fn();
+  }, []);
 
-    const expandedStack = [...sortByThreadOrder(expandedIds)].reverse();
-    return [...expandedStack, ...sortByThreadOrder(collapsedIds)];
-  }, [peerPlayers, threadOrder, threads]);
+  const bumpCollapsedOnly = useCallback((peerId: string) => {
+    const run = () => setCollapsedRecency((order) => bumpCollapsedRecency(order, peerId));
+    if (activeComposerPeerRef.current) {
+      deferredDockWorkRef.current.push(run);
+      return;
+    }
+    run();
+  }, []);
 
   const activateThread = useCallback(
     (
@@ -353,26 +484,182 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
             messages: patch.messages ?? existing?.messages ?? [],
             expanded,
             unread,
+            threadKind: existing?.threadKind ?? (isGroupThreadId(playerId) ? "group" : "peer"),
+            groupId: existing?.groupId,
+            groupKind: existing?.groupKind,
+            ownerId: existing?.ownerId,
           },
         };
       });
 
-      setThreadOrder((order) => {
-        const rest = order.filter((id) => id !== playerId);
-        return [playerId, ...rest];
+      if (patch.expanded === true) {
+        if (isGroupThreadId(playerId)) {
+          setThreads((prev) => {
+            const t = prev[playerId];
+            if (!t?.messages.length) return prev;
+            persistSeen(markGroupMessagesSeen(seenRef.current, t.messages.map((m) => m.id)));
+            return prev;
+          });
+        } else {
+          markPeerSeenFromTxs(playerId);
+        }
+        setExpandedStack((stack) => promoteExpandedStack(stack, playerId));
+      } else if (patch.expanded === false) {
+        setExpandedStack((stack) => removeFromExpandedStack(stack, playerId));
+      }
+    },
+    [markPeerSeenFromTxs, persistSeen]
+  );
+
+  const openLatestAttention = useCallback(() => {
+    const latest = pickLatestDockAction(peerPlayers, myTransactions, me.id, seenRef.current);
+    if (!latest) return;
+    activateThread(latest.peerId, latest.peerName, { expanded: true, bumpUnread: false });
+  }, [peerPlayers, myTransactions, me.id, activateThread]);
+
+  useEffect(() => {
+    if (!PLAYER_GROUP_CHAT_ENABLED) {
+      setThreads((prev) => {
+        let next = prev;
+        for (const key of Object.keys(next)) {
+          if (!isGroupThreadId(key)) continue;
+          if (next === prev) next = { ...prev };
+          delete next[key];
+        }
+        return next;
       });
+      setExpandedStack((stack) => stack.filter((id) => !isGroupThreadId(id)));
+      setCollapsedRecency((order) => order.filter((id) => !isGroupThreadId(id)));
+      return;
+    }
+    const groups = myChatGroups;
+    const groupMsgs = (game.groupMessages ?? []).filter((m) => groups.some((g) => g.id === m.groupId));
+    const threadIds = groups.map((g) => groupThreadId(g.id));
+    const mergeFx = { seenIds: [] as string[], bumpThreads: [] as string[] };
+
+    setThreads((prev) => {
+      let next = prev;
+      for (const g of groups) {
+        const tid = groupThreadId(g.id);
+        const existing = next[tid];
+        if (!existing) {
+          if (next === prev) next = { ...prev };
+          next[tid] = {
+            playerId: tid,
+            playerName: g.name,
+            messages: [],
+            expanded: false,
+            unread: 0,
+            threadKind: "group",
+            groupId: g.id,
+            groupKind: g.kind,
+            ownerId: g.ownerId,
+          };
+        } else if (existing.playerName !== g.name || existing.ownerId !== g.ownerId) {
+          if (next === prev) next = { ...prev };
+          next[tid] = {
+            ...existing,
+            playerName: g.name,
+            groupKind: g.kind,
+            ownerId: g.ownerId,
+          };
+        }
+      }
+      for (const key of Object.keys(next)) {
+        if (!isGroupThreadId(key)) continue;
+        const gid = parseGroupThreadId(key);
+        if (gid && !groups.some((g) => g.id === gid)) {
+          if (next === prev) next = { ...prev };
+          delete next[key];
+        }
+      }
+
+      for (const gm of groupMsgs) {
+        if (!groups.some((g) => g.id === gm.groupId)) continue;
+        const tid = groupThreadId(gm.groupId);
+        const existing = next[tid];
+        if (!existing) continue;
+        const { thread, effects } = mergeServerGroupMessageIntoThread(existing, gm, me.id, (id) =>
+          isGroupMessageUnread(id, seenRef.current)
+        );
+        if (!effects.applied) continue;
+        if (next === prev) next = { ...prev };
+        next[tid] = thread;
+        if (effects.seenIds.length) mergeFx.seenIds.push(...effects.seenIds);
+        if (effects.bumpUnread && !effects.wasExpanded) mergeFx.bumpThreads.push(tid);
+        if (gm.clientTempId && gm.fromId === me.id) {
+          pendingOutRef.current.delete(gm.clientTempId);
+        }
+      }
+      return next;
+    });
+
+    setCollapsedRecency((order) => mergePeerListIntoRecency(order, threadIds));
+
+    const validGroupThreadIds = new Set(threadIds);
+    setExpandedStack((stack) =>
+      stack.filter((id) => !isGroupThreadId(id) || validGroupThreadIds.has(id))
+    );
+
+    if (mergeFx.seenIds.length) {
+      persistSeen(markGroupMessagesSeen(seenRef.current, mergeFx.seenIds));
+    }
+    for (const tid of mergeFx.bumpThreads) {
+      bumpCollapsedOnly(tid);
+    }
+  }, [myChatGroups, game.groupMessages, me.id, bumpCollapsedOnly, persistSeen]);
+
+  const knownCustomGroupIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    knownCustomGroupIdsRef.current = new Set();
+  }, [game.roomId]);
+
+  useEffect(() => {
+    if (!PLAYER_GROUP_CHAT_ENABLED) return;
+    const groups = myCustomChatGroups;
+    for (const g of groups) {
+      if (g.kind !== "custom" || g.createdById !== me.id) continue;
+      if (knownCustomGroupIdsRef.current.has(g.id)) continue;
+      knownCustomGroupIdsRef.current.add(g.id);
+      activateThread(groupThreadId(g.id), g.name, { expanded: true });
+    }
+  }, [myCustomChatGroups, me.id, activateThread]);
+
+  const appendOptimisticGroup = useCallback(
+    (threadId: string, groupName: string, text: string, clientTempId: string) => {
+      const msg: ChatMessage = {
+        id: clientTempId,
+        clientTempId,
+        direction: "out",
+        amount: 0,
+        note: text,
+        status: "pending",
+        timestamp: Date.now(),
+        peerId: parseGroupThreadId(threadId) ?? undefined,
+      };
+      pendingOutRef.current.set(clientTempId, { peerId: threadId, sentAt: Date.now() });
+      setThreads((prev) => {
+        const existing = prev[threadId];
+        return {
+          ...prev,
+          [threadId]: {
+            playerId: threadId,
+            playerName: groupName,
+            messages: sortMessages([...(existing?.messages ?? []), msg]),
+            expanded: true,
+            unread: 0,
+            threadKind: "group",
+            groupId: existing?.groupId ?? parseGroupThreadId(threadId) ?? undefined,
+            groupKind: existing?.groupKind,
+            ownerId: existing?.ownerId,
+          },
+        };
+      });
+      setExpandedStack((stack) => promoteExpandedStack(stack, threadId));
     },
     []
   );
 
-  const bumpThreadOrder = useCallback((peerId: string) => {
-    setThreadOrder((order) => {
-      const rest = order.filter((id) => id !== peerId);
-      return [peerId, ...rest];
-    });
-  }, []);
-
-  /** 用服务端交易就地升级乐观气泡；否则追加（收件方 / 无乐观态） */
   const ingestServerTx = useCallback(
     (tx: Transaction) => {
       if (!txInvolvesMe(tx, me.id)) return;
@@ -381,12 +668,17 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
 
       const peerId = tx.fromId === me.id ? tx.toId : tx.fromId;
       const peerName = tx.fromId === me.id ? tx.toName : tx.fromName;
-      const isIncoming = tx.toId === me.id;
       const serverMsg = msgFromTx(tx, me.id);
 
       if (tx.clientTempId) {
         pendingOutRef.current.delete(tx.clientTempId);
       }
+
+      const ingestMeta = {
+        seenMark: null as { id: string; status: string } | null,
+        wasExpanded: false,
+        bumpUnread: false,
+      };
 
       setThreads((prev) => {
         const existing = prev[peerId];
@@ -399,7 +691,6 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
         if (tx.fromId === me.id) {
           const idx = messages.findIndex((m) => isOptimisticMatchForTx(m, tx, me.id, peerId));
           if (idx >= 0) {
-            // 就地升级：保留稳定 React key（clientTempId / id）
             const prevMsg = messages[idx];
             const upgraded: ChatMessage = {
               ...serverMsg,
@@ -414,13 +705,15 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
           messages = [...messages, serverMsg];
         }
 
-        const wasExpanded = existing?.expanded ?? false;
-        const expanded = isIncoming ? wasExpanded : true;
-        const unread = isIncoming
-          ? wasExpanded
-            ? 0
-            : (existing?.unread ?? 0) + 1
-          : existing?.unread ?? 0;
+        ingestMeta.wasExpanded = existing?.expanded ?? false;
+        const bumpUnread =
+          !ingestMeta.wasExpanded && isTxUnreadForViewer(tx, me.id, seenRef.current);
+        ingestMeta.bumpUnread = bumpUnread;
+        const unread = (existing?.unread ?? 0) + (bumpUnread ? 1 : 0);
+
+        if (ingestMeta.wasExpanded) {
+          ingestMeta.seenMark = { id: tx.id, status: tx.status };
+        }
 
         return {
           ...prev,
@@ -428,15 +721,22 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
             playerId: peerId,
             playerName: peerName,
             messages: sortMessages(messages),
-            expanded,
-            unread,
+            expanded: ingestMeta.wasExpanded,
+            unread: ingestMeta.wasExpanded ? 0 : unread,
           },
         };
       });
 
-      bumpThreadOrder(peerId);
+      if (ingestMeta.seenMark) {
+        persistSeen(markTransactionsSeen(seenRef.current, [ingestMeta.seenMark]));
+      }
+
+      if (!ingestMeta.wasExpanded) {
+        bumpCollapsedOnly(peerId);
+        if (ingestMeta.bumpUnread) pulsePeerAttention(peerId);
+      }
     },
-    [me.id, bumpThreadOrder]
+    [me.id, bumpCollapsedOnly, persistSeen, pulsePeerAttention]
   );
 
   const appendOptimisticOut = useCallback(
@@ -456,9 +756,9 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
           },
         };
       });
-      bumpThreadOrder(peerId);
+      setExpandedStack((stack) => promoteExpandedStack(stack, peerId));
     },
-    [bumpThreadOrder]
+    []
   );
 
   const markOptimisticFailed = useCallback((clientTempId: string) => {
@@ -482,7 +782,6 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
     });
   }, []);
 
-  // 乐观发送超时 → 发送失败
   useEffect(() => {
     const id = window.setInterval(() => {
       const now = Date.now();
@@ -495,7 +794,6 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
     return () => window.clearInterval(id);
   }, [markOptimisticFailed]);
 
-  // 服务端 error：将仍 pending 的乐观气泡标失败（最近一条）
   useEffect(() => {
     const onError = () => {
       let latest: { tempId: string; sentAt: number } | null = null;
@@ -525,16 +823,30 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
       }
 
       const peerId = tx.fromId === me.id ? tx.toId : tx.fromId;
+      let shouldBumpCollapsed = false;
       setThreads((prev) => {
         const thread = prev[peerId];
         if (!thread) return prev;
 
         let changed = false;
-        const hasServerCopy = thread.messages.some((m) => m.txId === tx.id);
-        const messages = thread.messages.flatMap((m) => {
+        let unreadBump = false;
+        let messages = thread.messages;
+        let hasServerCopy = messages.some((m) => m.txId === tx.id);
+        if (!hasServerCopy) {
+          changed = true;
+          messages = sortMessages([...messages, msgFromTx(tx, me.id)]);
+          hasServerCopy = true;
+          if (!thread.expanded && isTxUnreadForViewer(tx, me.id, seenRef.current)) {
+            unreadBump = true;
+          }
+        }
+        messages = messages.flatMap((m) => {
           if (m.txId === tx.id) {
             if (m.status !== tx.status) {
               changed = true;
+              if (!thread.expanded && isTxUnreadForViewer(tx, me.id, seenRef.current)) {
+                unreadBump = true;
+              }
               return [{ ...m, status: tx.status, clientTempId: m.clientTempId || tx.clientTempId }];
             }
             return [m];
@@ -554,13 +866,35 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
         });
 
         if (!changed) return prev;
-        return { ...prev, [peerId]: { ...thread, messages: sortMessages(messages) } };
+
+        let unread = thread.unread + (unreadBump ? 1 : 0);
+        if (thread.expanded) {
+          unread = 0;
+          const nextSeen = markTransactionsSeen(seenRef.current, [{ id: tx.id, status: tx.status }]);
+          if (nextSeen !== seenRef.current) {
+            seenRef.current = nextSeen;
+            saveChatSeen(game.roomId, me.id, nextSeen);
+            setSeenRevision((v) => v + 1);
+          }
+        } else if (unreadBump) {
+          shouldBumpCollapsed = true;
+        }
+
+        return {
+          ...prev,
+          [peerId]: { ...thread, messages: sortMessages(messages), unread },
+        };
       });
+      if (shouldBumpCollapsed) {
+        bumpCollapsedOnly(peerId);
+        pulsePeerAttention(peerId);
+      }
     }
-  }, [myTransactions, ingestServerTx, me.id]);
+  }, [myTransactions, ingestServerTx, me.id, game.roomId, bumpCollapsedOnly, pulsePeerAttention]);
 
   const handleRespond = useCallback(
     (txId: string, accept: boolean) => {
+      if (readOnly) return;
       if (respondingTxRef.current.has(txId)) return;
       const tx = myTransactions.find((t) => t.id === txId && t.status === "pending");
       if (!tx || tx.toId !== me.id) return;
@@ -586,97 +920,281 @@ export const PlayerChatSystem: React.FC<{ game: GameState; me: Player }> = ({ ga
           },
         };
       });
-      bumpThreadOrder(peerId);
+      const nextSeen = markTransactionsSeen(seenRef.current, [
+        { id: txId, status: accept ? "accepted" : "rejected" },
+      ]);
+      persistSeen(nextSeen);
+      setExpandedStack((stack) => promoteExpandedStack(stack, peerId));
       socket.emit("respondTransaction", { txId, accept });
     },
-    [me.id, myTransactions, bumpThreadOrder]
+    [me.id, myTransactions, persistSeen, readOnly]
   );
 
   const sendToPeer = useCallback(
     (peerId: string, peerName: string, amount: number, note: string) => {
-      const trimmed = note.trim().slice(0, NOTE_MAX);
+      if (readOnly) return false;
+      if (amount === 0 && !normalizeNoteInput(note)) return false;
+      const message = sanitizeTransactionNote(note);
       const clientTempId = newClientTempId();
-      const available = playerAvailableWealth(game, me);
+      const g = gameRef.current;
+      const available = playerAvailableWealth(g, me);
       if (amount === 0) {
-        if (!trimmed) return false;
-        appendOptimisticOut(peerId, peerName, 0, trimmed, clientTempId);
-        socket.emit("createTransaction", { toId: peerId, amount: 0, note: trimmed, clientTempId });
+        appendOptimisticOut(peerId, peerName, 0, message, clientTempId);
+        socket.emit("createTransaction", { toId: peerId, amount: 0, note: message, clientTempId });
         return true;
       }
       if (amount <= 0 || amount > available) return false;
-      appendOptimisticOut(peerId, peerName, amount, trimmed, clientTempId);
-      socket.emit("createTransaction", { toId: peerId, amount, note: trimmed, clientTempId });
+      appendOptimisticOut(peerId, peerName, amount, message, clientTempId);
+      socket.emit("createTransaction", { toId: peerId, amount, note: message, clientTempId });
       return true;
     },
-    [appendOptimisticOut, game, me]
+    [appendOptimisticOut, me, readOnly]
   );
 
-  const orphanTxsForPeer = useCallback(
-    (playerId: string, thread: ChatThread) => {
-      const inThread = new Set(thread.messages.filter((m) => m.txId).map((m) => m.txId!));
-      const temps = new Set(
-        thread.messages.filter((m) => m.clientTempId).map((m) => m.clientTempId!)
-      );
-      return myTransactions.filter((t) => {
-        const peer = t.fromId === me.id ? t.toId : t.fromId;
-        if (peer !== playerId || inThread.has(t.id)) return false;
-        // 己方发出且乐观气泡仍在：不当地 orphan 叠一份
-        if (t.fromId === me.id && t.clientTempId && temps.has(t.clientTempId)) return false;
-        return true;
-      });
+  const sendGroupMessage = useCallback(
+    (threadId: string, text: string) => {
+      if (!PLAYER_GROUP_CHAT_ENABLED || readOnly) return false;
+      const groupId = parseGroupThreadId(threadId);
+      if (!groupId || !normalizeNoteInput(text)) return false;
+      const message = sanitizeTransactionNote(text);
+      const group = gameRef.current.chatGroups?.find((g) => g.id === groupId);
+      const clientTempId = newClientTempId();
+      appendOptimisticGroup(threadId, group?.name ?? "群聊", message, clientTempId);
+      socket.emit("sendGroupMessage", { groupId, text: message, clientTempId });
+      return true;
     },
-    [me.id, myTransactions]
+    [appendOptimisticGroup, readOnly]
   );
+
+  const sendGroupMessageRef = useRef(sendGroupMessage);
+  sendGroupMessageRef.current = sendGroupMessage;
+  const onSendGroupStable = useCallback(
+    (threadId: string, text: string) => sendGroupMessageRef.current(threadId, text),
+    []
+  );
+
+  const handleCreateGroup = useCallback((memberIds: string[], name: string) => {
+    if (!PLAYER_GROUP_CHAT_ENABLED) return;
+    socket.emit("createChatGroup", { memberIds, name: name || undefined });
+  }, []);
+
+  const handleLeaveGroup = useCallback((groupId: string | undefined) => {
+    if (!PLAYER_GROUP_CHAT_ENABLED) return;
+    if (!groupId) return;
+    socket.emit("leaveChatGroup", { groupId });
+  }, []);
+
+  const sendToPeerRef = useRef(sendToPeer);
+  sendToPeerRef.current = sendToPeer;
+  const onSendStable = useCallback(
+    (peerId: string, peerName: string, amount: number, note: string) =>
+      sendToPeerRef.current(peerId, peerName, amount, note),
+    []
+  );
+
+  const handleRespondRef = useRef(handleRespond);
+  handleRespondRef.current = handleRespond;
+  const onRespondStable = useCallback((txId: string, accept: boolean) => {
+    handleRespondRef.current(txId, accept);
+  }, []);
+
+  const onComposerFocus = useCallback((peerId: string) => {
+    activeComposerPeerRef.current = peerId;
+  }, []);
+
+  const onComposerImeChange = useCallback((active: boolean) => {
+    composerImeActiveRef.current = active;
+    if (!active) flushDeferredDockWork();
+  }, [flushDeferredDockWork]);
+
+  const onComposerBlur = useCallback(
+    (peerId: string) => {
+      if (activeComposerPeerRef.current === peerId) {
+        activeComposerPeerRef.current = null;
+      }
+      flushDeferredDockWork();
+    },
+    [flushDeferredDockWork]
+  );
+
+  const respondingTxKey = useMemo(
+    () => [...respondingTxIds].sort().join(","),
+    [respondingTxIds]
+  );
+
+  const collapseHandlersRef = useRef<Record<string, { name: string; fn: () => void }>>({});
+  const getCollapseHandler = useCallback(
+    (playerId: string, playerName: string) => {
+      const cached = collapseHandlersRef.current[playerId];
+      if (!cached || cached.name !== playerName) {
+        collapseHandlersRef.current[playerId] = {
+          name: playerName,
+          fn: () => activateThread(playerId, playerName, { expanded: false }),
+        };
+      }
+      return collapseHandlersRef.current[playerId].fn;
+    },
+    [activateThread]
+  );
+
+  const showInboxHeader = dockSummary.totalAttention > 0 && !hasExpandedPeerPanel;
+  const inboxPreview =
+    dockPreviewHint ??
+    (dockSummary.latestAction
+      ? `${dockSummary.latestAction.peerName}：${dockSummary.latestAction.preview}`
+      : null);
+  const inboxBadgeLabel = formatBadge(dockSummary.totalAttention);
 
   return (
-    <div ref={dockRef} className="player-chat-dock" aria-label="玩家私信与转账">
+    <div
+      ref={dockRef}
+      className="player-chat-dock"
+      aria-label={PLAYER_GROUP_CHAT_ENABLED ? "玩家私信、转账与群聊" : "玩家私信与转账"}
+    >
+      {PLAYER_GROUP_CHAT_ENABLED && !readOnly && (
+        <button
+          type="button"
+          className={`player-chat-minibar player-chat-minibar--action${
+            myCustomChatGroups.length === 0 ? " player-chat-minibar--create-group" : ""
+          }`}
+          title={myCustomChatGroups.length === 0 ? "建群聊（当前无群）" : "再建群聊"}
+          aria-label={myCustomChatGroups.length === 0 ? "建群聊，当前无群" : "再建群聊"}
+          onClick={() => setCreateGroupOpen(true)}
+        >
+          <span className="player-chat-avatar player-chat-avatar--label">
+            {myCustomChatGroups.length === 0 ? "建群" : "+群"}
+          </span>
+        </button>
+      )}
       {displayOrder.map((playerId) => {
         const thread = threads[playerId];
         if (!thread) return null;
+        if (!PLAYER_GROUP_CHAT_ENABLED && (thread.threadKind === "group" || isGroupThreadId(playerId))) {
+          return null;
+        }
 
         if (thread.expanded) {
-          const displayMessages = mergeThreadMessages(
-            thread.messages,
-            orphanTxsForPeer(playerId, thread),
-            me.id
-          );
+          if (thread.threadKind === "group" || isGroupThreadId(playerId)) {
+            return (
+              <GroupChatPanel
+                key={playerId}
+                thread={thread}
+                displayMessages={thread.messages}
+                draftsRef={draftsRef}
+                onCollapse={getCollapseHandler(playerId, thread.playerName)}
+                onLeaveGroup={
+                  thread.groupKind === "custom" && thread.groupId
+                    ? () => handleLeaveGroup(thread.groupId)
+                    : undefined
+                }
+                onSend={onSendGroupStable}
+                onComposerFocus={onComposerFocus}
+                onComposerBlur={onComposerBlur}
+                readOnly={readOnly}
+              />
+            );
+          }
           return (
-            <ChatPanel
+            <ExpandedChatDockPanel
               key={playerId}
               playerId={playerId}
               thread={thread}
-              displayMessages={displayMessages}
-              respondingTxIds={respondingTxIds}
-              maxWealth={playerAvailableWealth(game, me)}
-              onCollapse={() => activateThread(playerId, thread.playerName, { expanded: false })}
-              onRespond={handleRespond}
-              onSend={sendToPeer}
+              myId={me.id}
+              myTransactions={myTransactions}
+              respondingTxKey={respondingTxKey}
+              maxWealth={maxWealth}
+              draftsRef={draftsRef}
+              hasMoreOlder={showLoadOlderTx}
+              loadingOlder={txLoadingOlder}
+              onLoadOlder={loadOlderTransactions}
+              onCollapse={getCollapseHandler(playerId, thread.playerName)}
+              onRespond={onRespondStable}
+              onSend={onSendStable}
+              onComposerFocus={onComposerFocus}
+              onComposerBlur={onComposerBlur}
+              onComposerImeChange={onComposerImeChange}
+              readOnly={readOnly}
             />
           );
         }
 
-        const pendingCount = pendingTxs.filter((t) => t.fromId === playerId).length;
-        const badge = badgeCount(thread.unread, pendingCount);
+        const attention = peerDockAttention(playerId, thread.unread, myTransactions, me.id);
+        const badge = attention.total;
         const badgeLabel = formatBadge(badge);
+        const minibarClass = [
+          "player-chat-minibar",
+          badge > 0 ? "player-chat-minibar--attention" : "",
+          flashPeerId === playerId ? "player-chat-minibar--flash" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
 
         return (
           <button
             key={playerId}
             type="button"
-            className="player-chat-minibar"
-            title={badge > 0 ? `${thread.playerName}（${badgeLabel} 条未读）` : thread.playerName}
-            aria-label={badge > 0 ? `${thread.playerName}，${badgeLabel} 条未读` : thread.playerName}
+            className={minibarClass}
+            title={
+              badge > 0
+                ? `${thread.playerName}（${badgeLabel} 条待查看${attention.pendingTransfers > 0 ? `，含 ${attention.pendingTransfers} 笔待确认转账` : ""}）`
+                : thread.playerName
+            }
+            aria-label={peerMinibarAriaLabel(thread.playerName, attention)}
             onClick={() =>
               activateThread(playerId, thread.playerName, { expanded: true, bumpUnread: false })
             }
           >
             <span className="player-chat-avatar player-chat-avatar--label">
-              {thread.playerName.length <= 3 ? thread.playerName : thread.playerName.slice(0, 2)}
+              {thread.threadKind === "group"
+                ? thread.groupKind === "public"
+                  ? "全"
+                  : "群"
+                : thread.playerName.length <= 3
+                  ? thread.playerName
+                  : thread.playerName.slice(0, 2)}
             </span>
-            {badge > 0 && <span className="player-chat-badge player-chat-badge--minibar">{badgeLabel}</span>}
+            {badge > 0 && (
+              <span className="player-chat-badge player-chat-badge--minibar player-chat-badge--attention">
+                {badgeLabel}
+              </span>
+            )}
+            {attention.pendingTransfers > 0 && (
+              <span className="player-chat-minibar__pending-dot" aria-hidden title="有待确认转账" />
+            )}
           </button>
         );
       })}
+      {showInboxHeader && (
+        <button
+          type="button"
+          className={`player-chat-inbox-header${inboxFlash ? " player-chat-inbox-header--flash" : ""}`}
+          onClick={openLatestAttention}
+          aria-live="polite"
+          aria-label={`消息，${inboxBadgeLabel} 条待查看${dockSummary.totalPendingTransfers > 0 ? `，${dockSummary.totalPendingTransfers} 笔待确认转账` : ""}`}
+        >
+          <div className="player-chat-inbox-header__row">
+            <span className="player-chat-inbox-header__title">消息</span>
+            <span className="player-chat-inbox-header__count">{inboxBadgeLabel}</span>
+            {dockSummary.totalPendingTransfers > 0 && (
+              <span className="player-chat-inbox-header__pending">
+                待确认 {formatBadge(dockSummary.totalPendingTransfers)}
+              </span>
+            )}
+          </div>
+          {inboxPreview ? (
+            <div className="player-chat-inbox-header__preview">{inboxPreview}</div>
+          ) : null}
+        </button>
+      )}
+      {PLAYER_GROUP_CHAT_ENABLED && (
+        <CreateGroupModal
+          open={createGroupOpen}
+          meId={me.id}
+          players={game.players}
+          onClose={() => setCreateGroupOpen(false)}
+          onCreate={handleCreateGroup}
+        />
+      )}
     </div>
   );
 };

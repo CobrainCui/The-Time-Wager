@@ -1,5 +1,7 @@
-import { AUCTION_CARDS_BY_ROUND, BUFF_CARD_DEFS } from "./buffCards";
+import { AUCTION_CARDS_BY_ROUND, BUFF_CARD_DEFS, LIGHTER_CARD_BULLETS } from "./buffCards";
 import { COFFEE_ENERGY_GAIN, COFFEE_WEALTH_COST } from "./coffeeConfig";
+import { STARTING_WEALTH } from "./startingWealth";
+import type { CatalogProjectType } from "./projectCatalog";
 
 export type HelpTabId =
   | "projects_table"
@@ -16,9 +18,38 @@ export interface HelpTabDef {
 }
 
 export interface HelpLineDef {
-  icon: string;
+  icon?: string;
   text: string;
+  gavelIcon?: boolean;
+  projectType?: CatalogProjectType;
 }
+
+/** 玩家聊天说明（教程、侧栏指南、试玩 Demo 共用） */
+export const HELP_TAB_CHAT_TITLE = "转账与私信";
+
+/** 群聊上线时改回「私信、转账与群聊」并恢复 HELP_MISC / 教程中的群相关条目 */
+export const HELP_TAB_CHAT_TITLE_WITH_GROUPS = "私信、转账与群聊";
+
+export const HELP_CHAT_DOCK_INTRO =
+  "等待房、时代介绍与规则教程阶段不显示聊天坞。对局开始后，屏幕右侧为聊天坞：最前为「建群」（无群时）或「+群」（已有群），其后每位玩家各有一个一对一折叠会话。";
+
+export const HELP_DM_LINE = "私信：不填金额留言";
+
+export const HELP_TRANSFER_LINE =
+  "转账：填金额发送，对方收/退；金额不得超过可用财富（总额减去领先出价占用与未完成转出）";
+
+export const HELP_GROUP_LINE =
+  "群聊：开局无群，点「建群」至少再选 2 名其他玩家（共至少 3 名真人）；群内只可文字、不可转账，仅限群成员可见，无默认全场频道。";
+
+export const HELP_CHAT_PEER_ONLY_NOTE =
+  "私信与转账不会发给多名玩家；群聊文字仅该群成员可见。";
+
+export const HELP_CHAT_AUCTION_LINE =
+  "拍卖期间仍可私信与转账；暂时领先的出价会占用可用财富";
+
+/** 准备清单等场景的群聊一句摘要 */
+export const HELP_GROUP_LINE_SHORT =
+  "开局无群；建群至少 3 名真人，群内仅文字、不可转账";
 
 /** 分栏顺序（与产品一致） */
 export const HELP_TABS: HelpTabDef[] = [
@@ -27,99 +58,287 @@ export const HELP_TABS: HelpTabDef[] = [
   { id: "resources", icon: "💎", title: "资源与胜负" },
   { id: "projects_rules", icon: "📋", title: "项目结算规则" },
   { id: "flow", icon: "🔄", title: "阶段流程" },
-  { id: "misc", icon: "🤝", title: "转账与私信" },
+  { id: "misc", icon: "🤝", title: HELP_TAB_CHAT_TITLE },
 ];
 
-export const HELP_RESOURCES: HelpLineDef[] = [
-  { icon: "⚡", text: "精力每轮重置，用于投资项目" },
-  { icon: "💰", text: "财富决定排名，最高者可命名社区" },
-  { icon: "☕", text: `来杯咖啡：${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力（可退订）` },
-  { icon: "🗓️", text: "共 4 时代，每时代 2 轮" },
-  { icon: "🏆", text: "终局按财富决胜负" },
-];
+export type PlayerSidebarPanelId = "projects" | "buffs" | "guide" | "history";
 
-export interface HelpRuleSection {
+export interface SidebarActivityItem {
+  id: PlayerSidebarPanelId;
+  icon: string;
+  label: string;
   title: string;
-  lines: HelpLineDef[];
 }
 
-/** 项目结算 = 基础收益 + 排名奖惩 + 时代奖励，三块分栏说明 */
-export const HELP_PROJECT_RULE_SECTIONS: HelpRuleSection[] = [
+/** 左侧活动栏入口（与战报并列） */
+export const SIDEBAR_ACTIVITY_ITEMS: SidebarActivityItem[] = [
+  { id: "projects", icon: "📊", label: "项目", title: "项目总览" },
+  { id: "buffs", icon: "🃏", label: "道具", title: "道具卡" },
+  { id: "guide", icon: "📖", label: "指南", title: "玩法指南" },
+  { id: "history", icon: "📜", label: "战报", title: "个人战报" },
+];
+
+const SIDEBAR_PROJECTS = SIDEBAR_ACTIVITY_ITEMS.find((i) => i.id === "projects")!;
+
+/** 玩家侧栏「项目」入口与面板标题（与 PlayerGameHelp 一致） */
+export const HELP_SIDEBAR_PROJECTS_LABEL = SIDEBAR_PROJECTS.label;
+export const HELP_SIDEBAR_PROJECTS_TITLE = SIDEBAR_PROJECTS.title;
+
+/** 对局内查看投爆罚 / 回报档位（侧栏「项目总览」表列） */
+export const HELP_SIDEBAR_PROJECT_BURST_COLUMN =
+  `玩家侧栏「${HELP_SIDEBAR_PROJECTS_LABEL}」（${HELP_SIDEBAR_PROJECTS_TITLE}）表「投爆罚」列`;
+export const HELP_SIDEBAR_PROJECT_RETURN_COLUMN =
+  `玩家侧栏「${HELP_SIDEBAR_PROJECTS_LABEL}」（${HELP_SIDEBAR_PROJECTS_TITLE}）表「回报」列`;
+
+/** 教程「投资项目类型」页：动手试玩区（含左侧玩家侧栏）锚点 */
+export const TUTORIAL_PROJECT_TYPES_PLAY_ID = "tutorial-project-types-play";
+
+/** 教程幻灯标题（与 tutorialData 并列页一致，供跨页引用） */
+export const TUTORIAL_SLIDE_TITLE_TIED_RANK = "并列排名与共享结算";
+
+export const TUTORIAL_REF_TIED_RANK_LATER = `并列结算见后文「${TUTORIAL_SLIDE_TITLE_TIED_RANK}」`;
+
+function tutorialPlaySidebarColumnRef(columnLabel: string): string {
+  return `见下方试玩区侧栏「${HELP_SIDEBAR_PROJECTS_LABEL}」→「可投项目」表「${columnLabel}」列`;
+}
+
+/** 规则表展开说明中指向试玩区侧栏项目表 */
+export const TUTORIAL_REF_PROJECT_DATA_PREVIEW = `见下方试玩区侧栏「${HELP_SIDEBAR_PROJECTS_LABEL}」`;
+export const TUTORIAL_REF_PREVIEW_TABLE_BURST = tutorialPlaySidebarColumnRef("投爆罚");
+export const TUTORIAL_REF_PREVIEW_TABLE_RETURN = tutorialPlaySidebarColumnRef("回报");
+export const TUTORIAL_REF_PREVIEW_TABLE_RANK = tutorialPlaySidebarColumnRef("排名奖");
+
+export const TUTORIAL_REF_DEMO_PROJECT_CARD_DETAIL = "见下方试玩区项目卡（点卡打开详情）";
+
+/** 动手试一试副标题：与对局布局一致 */
+export const TUTORIAL_PROJECT_TYPES_PLAY_HINT =
+  `布局与正式对局相同：左侧点「${HELP_SIDEBAR_PROJECTS_LABEL}」查表，右侧试投项目卡。试玩不上传、不影响本局。`;
+
+/** 玩法指南面板内合并的四块内容 */
+export const GUIDE_MERGED_TAB_IDS: HelpTabId[] = [
+  "resources",
+  "projects_rules",
+  "flow",
+  "misc",
+];
+
+/** 道具卡：单次使用与发动时机（与 BuffUsage / server 阶段一致） */
+export const HELP_BUFF_ONCE_RULE = "每张道具卡只能使用一次";
+
+/** 与 server actionDeadline.BUFF_LOCKOUT_REMAINING_MS 一致 */
+export const BUFF_LOCKOUT_REMAINING_MS = 2 * 60 * 1000;
+
+export const HELP_INVESTMENT_SELF_UNLOCK =
+  "锁定后可自行解锁并修改，直到倒计时结束；倒计时结束后不可再解锁";
+export const HELP_INVESTMENT_ADVANCE_WHEN_ALL_LOCKED =
+  "当前在线玩家全部锁定后进入下一阶段（离线玩家不挡进度）";
+export const HELP_BUFF_LOCKOUT =
+  "倒计时最后 2 分钟不能使用道具卡（投资仍可改、可锁定）";
+
+export const HELP_BUFF_TIMING_SHORT =
+  "第二时代起：讨论与投资阶段、提交锁定前可发动";
+
+export const HELP_BUFF_ROUND_GLOSSARY =
+  "「使用本卡的轮次」指打出该道具卡的对局轮次；与结算页、投资阶段配合理解。侧栏要点中的「本卡生效轮次」与之同义（勿与咖啡等「本轮」混用）。";
+
+export const HELP_BUFF_SETTLEMENT_BULLETS = [
+  "项目做空：道具/投资阶段声明，**结算页判定**（进入结算时与其他道具一并执行）",
+  "做空：**全员**在该项目**已积累精力全部清零**（含长期进度与本卡生效轮次内本轮投入，**含使用者自己**）；**已入账财富不追回**",
+  "打火机：",
+  ...LIGHTER_CARD_BULLETS,
+];
+
+export const HELP_BUFF_SETTLEMENT_RESOLVE = HELP_BUFF_SETTLEMENT_BULLETS.join("；");
+
+export const HELP_BUFF_USE_TIMING_BULLETS = [HELP_BUFF_TIMING_SHORT, HELP_BUFF_LOCKOUT];
+
+export const HELP_BUFF_USE_TIMING = HELP_BUFF_USE_TIMING_BULLETS.join("；");
+
+/** 侧栏「道具」面板顶部规则（分组展示） */
+export const HELP_BUFF_GUIDE_SECTIONS: { title: string; bullets: string[] }[] = [
   {
-    title: "基础收益",
-    lines: [
-      { icon: "🟦", text: "短期：当轮投、当轮结，×10/⚡" },
-      { icon: "🟩", text: "长期：完成后个人累计 ×15/⚡（满额或超填均可）；第四时代第二轮未完成按全场进度梯度（不足 1/3→1:1，达 1/3→1:5，达 2/3→1:10）；参投后每轮至少 3⚡，否则 1:1 结算累计并退出完成排名" },
-      { icon: "🟥", text: "风险：当轮结算；超上限投爆，追回历史收益" },
+    title: "发动时机",
+    bullets: [HELP_BUFF_ONCE_RULE, HELP_BUFF_TIMING_SHORT, HELP_BUFF_LOCKOUT, HELP_BUFF_ROUND_GLOSSARY],
+  },
+  {
+    title: "打火机与项目做空",
+    bullets: HELP_BUFF_SETTLEMENT_BULLETS,
+  },
+];
+
+export const HELP_BUFF_GUIDE_BULLETS = HELP_BUFF_GUIDE_SECTIONS.flatMap((s) => s.bullets);
+
+/** 流程「发动道具卡」阶段要点（不重复展开打火机全文） */
+export const GUIDE_BUFF_PHASE_BULLETS = [
+  "不限时",
+  HELP_BUFF_ONCE_RULE,
+  "预览可投资项目",
+  ...HELP_BUFF_USE_TIMING_BULLETS,
+  "打火机与做空：道具/投资阶段声明，**结算页执行**（见本页各卡要点或完整说明）",
+];
+
+/** 拍卖会末尾：投资锁定与聊天（教程拍卖会幻灯与侧栏流程共用） */
+export const GUIDE_AUCTION_TAIL_BULLETS = [
+  HELP_INVESTMENT_SELF_UNLOCK,
+  HELP_INVESTMENT_ADVANCE_WHEN_ALL_LOCKED,
+  HELP_CHAT_AUCTION_LINE,
+];
+
+/** 侧栏道具卡要点（完整规则见 BUFF_CARD_DEFS.desc） */
+export const BUFF_SIDEBAR_BRIEF: Record<string, string[]> = {
+  buff_slack: [
+    "指定一名玩家（含自己）",
+    "对方精力 **−8（可低于 0）**",
+    "有劳逸结合被动则改为 **+8 精力**",
+    "摸鱼使精力为负时，已锁定的投资会自动解锁",
+  ],
+  buff_insurance: [
+    "本卡生效轮次内参与的风险项目投爆",
+    "**赔付 100** 财富",
+    "点石成金对赔付 **×1.5 向下取整**",
+  ],
+  buff_gold: ["**正向收益 ×1.5 向下取整**", "含基础、排名、时代、彩票、保险赔付", "**惩罚不放大**"],
+  buff_force_buy: ["**仅拍卖阶段**", "**免费**拿下当前正在拍的卡", "**每张只能用一次**"],
+  buff_short: [
+    "道具/投资阶段声明，**结算页判定**",
+    "**全员**在该项目**已积累精力全部清零**（含长期进度与本卡生效轮次内本轮投入，**含使用者自己**）",
+    "**已入账财富不追回**",
+  ],
+  buff_work_rest: [
+    "指定一名在局玩家",
+    "本卡生效轮次内被摸鱼时**不减精力而 +8**",
+    "与每场拍卖出现的摸鱼传染配合",
+  ],
+  buff_lighter: [...LIGHTER_CARD_BULLETS],
+  buff_lottery: ["系统线上随机掷 1–6 点定奖金", "点数 1/2/3/4/5/6 → 0/30/60/90/120/200", "点石成金对奖金 **×1.5 向下取整**"],
+};
+
+export interface GuideResourceRow {
+  label: string;
+  brief: string;
+}
+
+export const GUIDE_RESOURCE_ROWS: GuideResourceRow[] = [
+  { label: "财富", brief: `开局每人 ${STARTING_WEALTH}；终局最高者命名社区` },
+  {
+    label: "咖啡",
+    brief: `投资阶段 ${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力；本轮未提交可退订`,
+  },
+  { label: "赛制", brief: "4 时代 × 每时代 2 轮；终局按财富决胜" },
+];
+
+export const TUTORIAL_RESOURCE_WEALTH_LINE = `💰 财富：开局每人 ${STARTING_WEALTH}；终局最高者胜，可为社区命名。`;
+
+export const TUTORIAL_RESOURCE_COFFEE_LINE = `☕ 来杯咖啡：投资阶段可用 ${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力；本轮未提交前可退订返还。`;
+
+export interface GuideInvestTimerRow {
+  label: string;
+  duration: string;
+}
+
+export const GUIDE_INVEST_TIMER_ROWS: GuideInvestTimerRow[] = [
+  { label: "第 1 时代第 1 轮", duration: "12 分钟" },
+  { label: "其余轮次", duration: "约 10 分钟" },
+];
+
+export interface GuideChatRow {
+  feature: string;
+  how: string;
+  note: string;
+}
+
+export const TUTORIAL_TRANSFER_WEALTH_LIMIT_LINE =
+  "金额不得超过可用财富：总额减去领先出价占用，以及对方尚未处理的转出。";
+
+export const GUIDE_CHAT_ROWS: GuideChatRow[] = [
+  { feature: "转账", how: "右侧对话框填金额发送", note: "仅对方可见，可接收或退回" },
+  { feature: "私信", how: "不填金额（或 0）并留言", note: "不扣财富，仅对方可见" },
+  { feature: "用途", how: "结盟、议价、传递情报等", note: "不会发给多名玩家" },
+  {
+    feature: "财富上限",
+    how: "—",
+    note: "可用财富 = 总额 − 领先出价占用 − 对方未处理的转出",
+  },
+  { feature: "拍卖中", how: "仍可转账与私信", note: "暂时领先的出价占用可用财富" },
+];
+
+export const TUTORIAL_TRANSFER_BULLETS = [
+  "🤝 转账：右侧每人一个对话框。填金额发送，仅对方可见，可接收或退回。",
+  "💬 私信：不填金额（或填 0）并留言，即为仅对方可见的私信（不扣财富）。",
+  "可用于结盟、议价、传递情报等；不会发给多名玩家。",
+  TUTORIAL_TRANSFER_WEALTH_LIMIT_LINE,
+];
+
+export interface GuideFlowPhase {
+  id: string;
+  title: string;
+  bullets: string[];
+  gavelIcon?: boolean;
+  showInvestTimer?: boolean;
+}
+
+export const GUIDE_FLOW_PHASES: GuideFlowPhase[] = [
+  {
+    id: "era",
+    title: "时代介绍",
+    bullets: ["共 4 时代，每时代 2 轮", "两个时代切换时进入拍卖会"],
+    gavelIcon: true,
+  },
+  {
+    id: "buffs",
+    title: "发动道具卡（第二时代起）",
+    bullets: GUIDE_BUFF_PHASE_BULLETS,
+  },
+  {
+    id: "invest",
+    title: "讨论与投资",
+    showInvestTimer: true,
+    bullets: [
+      "全员进入后开始倒计时（见下表）",
+      "时限内分配精力并提交锁定",
+      "锁定后可自行解锁并修改",
+      "倒计时结束后不可再解锁",
+      HELP_INVESTMENT_ADVANCE_WHEN_ALL_LOCKED,
+      `来杯咖啡：${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力（未提交可退订）`,
     ],
   },
   {
-    title: "排名奖惩",
-    lines: [
-      { icon: "📊", text: "按累计投入排名发放排名奖；短期超上限另有投爆罚（见项目数据表）" },
-      { icon: "🤝", text: "投入相同则并列，共享占用名次的奖励/惩罚池并均分（向零取整）" },
+    id: "settlement",
+    title: "结算",
+    bullets: [
+      "按累计投入排名结算",
+      "基础收益 + 排名奖/罚 + 时代奖励",
+      "投入相同则并列，共享档位后均分（向零取整）",
     ],
   },
   {
-    title: "时代奖励",
-    lines: [
-      {
-        icon: "✨",
-        text: "短期恰好满额 +30、长期满/超 +50（契合主题、历史第 1；并列共享）；短期投爆与风险无时代奖励",
-      },
+    id: "auction",
+    title: "拍卖道具卡",
+    bullets: [
+      "时代交替时进行",
+      "同时只拍一张；主持先选定卡",
+      "公开加价；主持确认成交后最高者付钱拿卡",
+      "拍得卡存入手牌",
+      HELP_BUFF_ONCE_RULE,
+      HELP_BUFF_TIMING_SHORT,
+      HELP_BUFF_LOCKOUT,
+      ...GUIDE_AUCTION_TAIL_BULLETS,
     ],
+    gavelIcon: true,
   },
+];
+
+export const TUTORIAL_AUCTION_BULLETS = [
+  "时代交替时进入拍卖会。",
+  "同时只拍一张。主持先选定；左侧是这张卡，右侧是起拍价、最高价和每一次加价。",
+  "出价先占住。主持确认成交后，最高者付钱拿卡，然后换下一张。",
+  HELP_BUFF_ONCE_RULE,
+  HELP_BUFF_TIMING_SHORT,
+  HELP_BUFF_LOCKOUT,
+  ...GUIDE_AUCTION_TAIL_BULLETS,
 ];
 
 export const HELP_FLOW_OVERVIEW = "时代介绍 → 发动道具卡 → 讨论与投资 → 结算 → 拍卖道具卡";
-
-/** 阶段流程：综述 + 分阶段说明 */
-export const HELP_FLOW_SECTIONS: HelpRuleSection[] = [
-  {
-    title: "时代介绍",
-    lines: [
-      { icon: "🗓️", text: "共4个时代，每时代两轮" },
-      { icon: "🔨", text: "两个时代切换时进行拍卖，可使用财富购买道具卡" },
-    ],
-  },
-  {
-    title: "发动道具卡（第二时代开始）",
-    lines: [
-      { icon: "🃏", text: "不限时" },
-      { icon: "➡️", text: "预览可投资项目并发动合适的道具卡" },
-    ],
-  },
-  {
-    title: "讨论与投资",
-    lines: [
-      {
-        icon: "⏱",
-        text: "全员进入后开始倒计时（第 1 时代第 1 轮 12 分钟，其余轮约 10 分钟），在时限内分配精力并提交",
-      },
-      { icon: "☕", text: `来杯咖啡：${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力；已提交后若想再改，需联系主持人解锁` },
-    ],
-  },
-  {
-    title: "结算",
-    lines: [
-      { icon: "📊", text: "按累计投入排名结算基础收益、排名奖/罚与时代奖励" },
-      { icon: "🤝", text: "投入相同则并列，共享所占用名次档位的奖励/惩罚池并均分（向零取整）" },
-    ],
-  },
-  {
-    title: "拍卖道具卡",
-    lines: [
-      { icon: "🔨", text: "主持人先选定正在拍的卡，大家公开加价，再确认成交" },
-      { icon: "🃏", text: "拍得道具卡可在讨论与投资阶段前使用" },
-      { icon: "🤝", text: "拍卖期间仍可私信与转账；暂时领先的出价会占用可用财富" },
-    ],
-  },
-];
-
-export const HELP_MISC: HelpLineDef[] = [
-  { icon: "💰", text: "转账：填金额发送，对方收/退；金额不得超过可用财富（总额减去领先出价占用与未完成转出）" },
-  { icon: "💬", text: "私信：不填金额留言" },
-];
 
 const EVERY_AUCTION_BUFF_IDS = new Set(["buff_slack", "buff_work_rest"]);
 
@@ -144,7 +363,7 @@ export interface BuffHelpEntry {
 }
 
 export function buildBuffHelpEntries(): BuffHelpEntry[] {
-  return Object.entries(BUFF_CARD_DEFS).map(([cardId, def]) => ({
+  const entries = Object.entries(BUFF_CARD_DEFS).map(([cardId, def]) => ({
     cardId,
     icon: def.icon,
     name: def.name,
@@ -153,4 +372,16 @@ export function buildBuffHelpEntries(): BuffHelpEntry[] {
     everyAuction: EVERY_AUCTION_BUFF_IDS.has(cardId),
     auctionRound: cardIdToAuctionRound[cardId] ?? 0,
   }));
+  return sortBuffHelpEntries(entries);
+}
+
+/** 侧栏道具列表：每场拍卖出现的卡置顶，其余按拍卖场次升序 */
+export function sortBuffHelpEntries(entries: BuffHelpEntry[]): BuffHelpEntry[] {
+  return [...entries].sort((a, b) => {
+    const aEvery = !!a.everyAuction;
+    const bEvery = !!b.everyAuction;
+    if (aEvery !== bEvery) return aEvery ? -1 : 1;
+    if (aEvery) return a.name.localeCompare(b.name, "zh");
+    return a.auctionRound - b.auctionRound || a.name.localeCompare(b.name, "zh");
+  });
 }

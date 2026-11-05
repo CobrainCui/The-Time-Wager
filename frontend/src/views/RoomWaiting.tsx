@@ -1,6 +1,9 @@
 import React from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
+import { STARTING_WEALTH } from "../config/startingWealth";
+import { aiDifficultyLabel } from "../utils/isAiPlayer";
+import { AutoHostCountdown } from "../components/AutoHostCountdown";
 
 interface Props {
   game: GameState;
@@ -41,9 +44,29 @@ export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
           <h1 style={{ margin: "0 0 0.5rem", fontSize: uiRem(1.35), fontWeight: 800, color: "white" }}>
             等候开局
           </h1>
-          <p style={{ margin: "0 0 1.5rem", color: "var(--color-text-secondary)", fontSize: uiRem(0.9), lineHeight: 1.5 }}>
-            等待主持人开始游戏
+          <p style={{ margin: "0 0 1rem", color: "var(--color-text-secondary)", fontSize: uiRem(0.9), lineHeight: 1.5 }}>
+            {game.autoHostEnabled ? "系统自动主持" : "等待主持人开始游戏"}
+            <br />
+            <span style={{ fontSize: uiRem(0.82), color: "var(--color-text-muted)" }}>
+              开局每人 {STARTING_WEALTH} 财富
+            </span>
           </p>
+          {game.autoHostEnabled && (
+            <div style={{ marginBottom: "1.25rem" }}>
+              <AutoHostCountdown at={game.autoStartAt} label="自动开局" />
+              {!game.autoStartAt && (
+                <div
+                  style={{
+                    marginTop: "0.4rem",
+                    fontSize: uiRem(0.72),
+                    color: "var(--color-text-muted)",
+                  }}
+                >
+                  至少 2 名在线玩家（或开启 AI 自动补位）后开始倒计时
+                </div>
+              )}
+            </div>
+          )}
 
           <div
             style={{
@@ -95,8 +118,33 @@ export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
                     {isMe && (
                       <span style={{ marginLeft: "0.35rem", fontSize: uiRem(0.75), color: "#93c5fd" }}>(我)</span>
                     )}
+                    {p.isAI && (
+                      <span
+                        style={{
+                          marginLeft: "0.35rem",
+                          fontSize: uiRem(0.68),
+                          fontWeight: 700,
+                          color: "#7dd3fc",
+                          background: "rgba(56,189,248,0.12)",
+                          border: "1px solid rgba(56,189,248,0.3)",
+                          borderRadius: "9999px",
+                          padding: "0.05rem 0.4rem",
+                        }}
+                      >
+                        AI{p.aiDifficulty ? ` · ${aiDifficultyLabel(p.aiDifficulty)}` : ""}
+                      </span>
+                    )}
                   </span>
-                  <span style={{ width: "0.5rem", height: "0.5rem", borderRadius: "50%", background: "#34d399" }} aria-hidden />
+                  <span
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: uiRem(0.8),
+                      color: "#fbbf24",
+                      fontWeight: 600,
+                    }}
+                  >
+                    💰 {p.wealth}
+                  </span>
                 </li>
               );
               })}

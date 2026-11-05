@@ -1,5 +1,20 @@
 import type { TutorialDemoKey } from "./tutorial/demoKeys";
 import { COFFEE_ENERGY_GAIN, COFFEE_WEALTH_COST } from "./config/coffeeConfig";
+import { STARTING_WEALTH } from "./config/startingWealth";
+import { ERA_BONUS_LONG, ERA_BONUS_SHORT } from "./config/projectCatalog";
+import {
+  TUTORIAL_ENERGY_INTRO_LINE,
+  TUTORIAL_ENERGY_SCHEDULE_HOST_LINE,
+} from "./config/tutorialProjectTypes";
+import {
+  TUTORIAL_AUCTION_BULLETS,
+  TUTORIAL_RESOURCE_COFFEE_LINE,
+  TUTORIAL_RESOURCE_WEALTH_LINE,
+  TUTORIAL_SLIDE_TITLE_TIED_RANK,
+  TUTORIAL_TRANSFER_BULLETS,
+} from "./config/playerHelpReference";
+
+export { TUTORIAL_SLIDE_TITLE_TIED_RANK };
 
 export interface TutorialSlide {
     title: string;
@@ -11,6 +26,8 @@ export interface TutorialSlide {
     intro?: boolean;
     /** 收束页：更大字号与留白（如「准备出发」） */
     finale?: boolean;
+    /** 标题区用开源法槌图标，不用 emoji icon */
+    gavelIcon?: boolean;
 }
 
 export const TUTORIAL_SLIDES: TutorialSlide[] = [
@@ -28,46 +45,25 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
     {
         title: "认识你的核心资源",
         icon: "💎",
-        content: [
-            "⚡ 精力：用精力投资项目，以换取财富。每个轮次重置。",
-            "💰 财富：游戏的最终胜利条件，首富可以为社区命名。所有投资的终极目标。",
-            `☕ 来杯咖啡：投资阶段可用 ${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力；本轮未提交前可退订返还。`
-        ],
-        hostNotes: `重点解释精力是有限的，且每轮清空，鼓励大家花完。财富是胜利条件。可提一句咖啡 ${COFFEE_WEALTH_COST} 财富/杯。`,
+        content: [TUTORIAL_ENERGY_INTRO_LINE, TUTORIAL_RESOURCE_WEALTH_LINE, TUTORIAL_RESOURCE_COFFEE_LINE],
+        hostNotes: `重点解释精力每轮重置、同时代两轮相同、时代越往后越少（${TUTORIAL_ENERGY_SCHEDULE_HOST_LINE}）。鼓励花完当轮精力。开局 ${STARTING_WEALTH} 财富可先买咖啡或留作拍卖/转账。可提一句咖啡 ${COFFEE_WEALTH_COST} 财富/杯。`,
         intro: true,
         demoKey: "resources",
     },
     {
         title: "投资项目类型",
         icon: "📋",
-        content: [
-            "短期项目：当轮投入，当轮结算收益。",
-            "长期项目：高回报，需持续跟投（参投后每轮至少 3 精力，否则放弃：累计投入 1:1 结算并退出完成排名）。达到或超过上限后结算（×15/⚡，超填同样发奖）；第四时代第二轮结算时若仍未完成，按项目全场总进度梯度结算你的累计投入（不足 1/3→1:1，达 1/3→1:5，达 2/3→1:10）。",
-            "风险项目：超高回报，当轮结算；若全场总投入超过上限，不仅本轮白干，还要倒扣历史收益！",
-            "点击项目卡，可查看项目介绍、结算时间与完整投资/回报数值。"
-        ],
+        content: [],
         hostNotes:
             "强调三种结算节奏：短期/风险当轮结，长期完成后结与第四时代第二轮未完成梯度；断供与超上限投爆风险。可点项目卡演示详情弹窗。",
         demoKey: "projectTypes",
-    },
-    {
-        title: "并列排名与共享结算",
-        icon: "🤝",
-        intro: true,
-        content: [
-            "项目结算只按历史累计投入排名。",
-            "投入相同则并列：共享所占用名次对应的奖励或惩罚池，再均分（向零取整）。",
-            "时代加成仅第一名并列组共享；短期恰好满额 +30，长期满额或超填 +50。"
-        ],
-        hostNotes: "强调：并列是均分名次池，不是各拿第一名全额。",
-        demoKey: "tiedRank",
     },
     {
         title: "时代主题与加成",
         icon: "🌍",
         content: [
             "每个时代都有一个主题（如气候、科技、文化）。",
-            "主题契合时，按历史总投入排名第一发放时代加成：短期恰好满额 +30，长期满额或超出上限 +50。",
+            `主题契合且历史总投入第 1：短期恰好满额 +${ERA_BONUS_SHORT}，长期满额或超出上限 +${ERA_BONUS_LONG}。`,
             "短期超上限投爆无时代加成；风险项目不参与时代加成。"
         ],
         hostNotes: "强调：短期要「恰好满额」才有加成，投爆没有；长期填满或超填都可以；风险永远不参与。可点试玩卡看时代 UP。",
@@ -75,28 +71,31 @@ export const TUTORIAL_SLIDES: TutorialSlide[] = [
         demoKey: "eraTheme",
     },
     {
-        title: "拍卖会",
-        icon: "🔨",
+        title: TUTORIAL_SLIDE_TITLE_TIED_RANK,
+        icon: "🤝",
+        intro: true,
         content: [
-            "时代交替时会进入【拍卖会】阶段。",
-            "同一时间只拍一张卡。主持先选定正在拍的卡；左侧是那张卡，右侧能看到起拍价、现在最高价和每一次加价。",
-            "你出价后这笔钱会先占住；主持人点「确认成交」后，出价最高的人付钱拿卡，然后自动换成下一张。",
-            "拍卖期间仍可私信与转账。"
+            "项目结算只按历史累计投入排名。",
+            "投入相同则并列：共享所占用名次的奖励或惩罚，再均分（向零取整）。",
+            `时代加成仅第一名并列组共享；短期恰好满额 +${ERA_BONUS_SHORT}，长期满额或超填 +${ERA_BONUS_LONG}。`
         ],
-        hostNotes: "主持用「确认成交 / 这张先跳过 / 改成拍这张」控场；不要再手动填价选人。",
-        demoKey: "auction",
+        hostNotes: "强调：并列是均分所占用档位合计，不是各拿第一名全额。",
+        demoKey: "tiedRank",
     },
     {
         title: "转账与私信",
         icon: "💬",
-        content: [
-            "🤝 转账：屏幕右侧每位玩家独立对话框（一对一），填写金额发送；仅对方能在与你的会话里看到并接收或退回。",
-            "💬 私信：不填金额（或填 0）并留言，即为仅对方可见的私信（不扣财富）。",
-            "可用于结盟、议价、传递情报等；不会发给多名玩家。",
-            "金额不得超过可用财富：总额减去暂时领先的出价占用，以及尚未被对方处理的转出。"
-        ],
+        content: [...TUTORIAL_TRANSFER_BULLETS],
         hostNotes: "演示右侧折叠对话框；可试玩「插入待收转账」；私信可不填金额、只写留言。",
         demoKey: "transferAndMessage",
+    },
+    {
+        title: "拍卖会",
+        icon: "",
+        gavelIcon: true,
+        content: [...TUTORIAL_AUCTION_BULLETS],
+        hostNotes: "主持用「确认成交 / 这张先跳过 / 改成拍这张」控场；不要再手动填价选人。",
+        demoKey: "auction",
     },
     {
         title: "准备出发",

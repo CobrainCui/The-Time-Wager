@@ -53,8 +53,9 @@ export function applyInvestments(
   const available = spendableEnergy(player);
   if (totalSpent > available) return false;
 
-  // 扣除精力：用 available 扣减，保证结果 ≥ 0
-  player.energy = available - totalSpent;
+  const book =
+    typeof player.energy === "number" && Number.isFinite(player.energy) ? player.energy : 0;
+  player.energy = book - totalSpent;
   player.totalEnergyConsumed += totalSpent;
 
   player.preSubmitInvestmentDraft = player.investmentDraft
@@ -97,8 +98,26 @@ export function applyInvestments(
   return true;
 }
 
-/** 上帝解锁：回滚本轮已提交的投资（与 applyInvestments 对称） */
-export function revertInvestments(game: GameState, playerId: string): boolean {
+export type InvestmentRevertSource = "admin" | "self" | "slack_negative";
+
+function investmentUnlockLogLabel(playerName: string, source: InvestmentRevertSource): string {
+  if (source === "admin") return `上帝解锁 ${playerName}`;
+  if (source === "slack_negative") {
+    return `因摸鱼精力为负，${playerName} 的投资已自动解锁`;
+  }
+  return `${playerName} 自行解锁投资`;
+}
+
+function hasCommittedInvestment(player: Player): boolean {
+  return Object.values(player.investment ?? {}).some((n) => (Number(n) || 0) > 0);
+}
+
+/** 解锁投资：回滚本轮已提交的投资（与 applyInvestments 对称） */
+export function revertInvestments(
+  game: GameState,
+  playerId: string,
+  source: InvestmentRevertSource = "admin"
+): boolean {
   const player = game.players.find((p) => p.id === playerId);
   if (!player) return false;
 
@@ -114,7 +133,9 @@ export function revertInvestments(game: GameState, playerId: string): boolean {
     if (backup && Object.keys(backup).length > 0) {
       player.investmentDraft = sanitizeInvestments(game, player, backup);
       player.investment = {};
-      game.logs.push(`🔓 上帝解锁 ${player.name}，已恢复提交前的投资预填`);
+      game.logs.push(
+        `🔓 ${investmentUnlockLogLabel(player.name, source)}，已恢复提交前的投资预填`
+      );
       appendSessionEvent(
         game,
         "admin_investment_reverted",
@@ -153,7 +174,9 @@ export function revertInvestments(game: GameState, playerId: string): boolean {
   player.investment = {};
   delete player.preSubmitInvestmentDraft;
 
-  game.logs.push(`🔓 上帝解锁 ${player.name}，退回 ${totalSpent} 精力，可重新投资`);
+  game.logs.push(
+    `🔓 ${investmentUnlockLogLabel(player.name, source)}，退回 ${totalSpent} 精力，可重新投资`
+  );
 
   appendSessionEvent(
     game,
@@ -175,11 +198,15 @@ export function revertInvestments(game: GameState, playerId: string): boolean {
  * 主持解锁投资阶段：退回已扣精力并恢复可编辑 investmentDraft（与 applyInvestments 脱钩）。
  * revertInvestments 失败时仍尽量从 investment / preSubmit 恢复表单，禁止清空已有 draft。
  */
-export function reopenSubmittedInvestment(game: GameState, playerId: string): boolean {
+export function reopenSubmittedInvestment(
+  game: GameState,
+  playerId: string,
+  source: InvestmentRevertSource = "admin"
+): boolean {
   const player = game.players.find((p) => p.id === playerId);
   if (!player) return false;
 
-  if (revertInvestments(game, playerId)) {
+  if (revertInvestments(game, playerId, source)) {
     return true;
   }
 
@@ -207,7 +234,7 @@ export function reopenSubmittedInvestment(game: GameState, playerId: string): bo
   player.investment = {};
 
   if (restoredDraft !== undefined) {
-    game.logs.push(`🔓 上帝解锁 ${player.name}，已恢复投资方案可修改`);
+    game.logs.push(`🔓 ${investmentUnlockLogLabel(player.name, source)}，已恢复投资方案可修改`);
     appendSessionEvent(
       game,
       "admin_investment_reverted",
@@ -226,4 +253,33 @@ export function reopenSubmittedInvestment(game: GameState, playerId: string): bo
   }
 
   return true;
+}
+
+/**
+ * 账本精力为负时：投资阶段已锁定则自动回退提交（不受倒计时限制）；否则清空预填。
+ */
+export function handleInvestmentAfterBookEnergyNegative(
+  game: GameState,
+  playerId: string
+): { unlocked: boolean } {
+  const player = game.players.find((p) => p.id === playerId);
+  if (!player || player.energy >= 0) {
+    return { unlocked: false };
+  }
+
+  if (
+    game.phase === "INVESTMENT" &&
+    (player.ready || hasCommittedInvestment(player))
+  ) {
+    reopenSubmittedInvestment(game, playerId, "slack_negative");
+    player.ready = false;
+    game.readyPlayers.delete(playerId);
+    if (player.investmentDraft) {
+      player.investmentDraft = sanitizeInvestments(game, player, player.investmentDraft);
+    }
+    return { unlocked: true };
+  }
+
+  player.investmentDraft = undefined;
+  return { unlocked: false };
 }

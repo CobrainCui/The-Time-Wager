@@ -2,13 +2,15 @@ import React, { useState } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
+import { AutoHostCountdown } from "../components/AutoHostCountdown";
 
 interface Props { game: GameState; me: Player; embed?: boolean; }
 
 export const CommunityNaming: React.FC<Props> = ({ game, me, embed = false }) => {
   const [name, setName] = useState("");
+  // AI 与真人平权：在线首富是 AI 时，AI 会自己命名
   const namer = game.players
-    .filter((p) => p.connected && !p.isAI)
+    .filter((p) => p.connected)
     .sort((a, b) => b.wealth - a.wealth)[0];
   const canName = !embed && namer?.id === me.id;
 
@@ -56,6 +58,9 @@ export const CommunityNaming: React.FC<Props> = ({ game, me, embed = false }) =>
             >
               🌟 确认命名
             </button>
+            {game.autoHostEnabled && (
+              <AutoHostCountdown at={game.autoHostNextActionAt} label="超时自动命名" compact />
+            )}
           </div>
         ) : (
           <div
@@ -70,6 +75,11 @@ export const CommunityNaming: React.FC<Props> = ({ game, me, embed = false }) =>
             }}
           >
             ⏳ 等待在线首富{namer ? ` ${namer.name} ` : ""}为社区命名...
+            {game.autoHostEnabled && (
+              <div style={{ marginTop: "1rem", animation: "none" }}>
+                <AutoHostCountdown at={game.autoHostNextActionAt} label="超时自动命名" compact />
+              </div>
+            )}
           </div>
         )}
       </div>

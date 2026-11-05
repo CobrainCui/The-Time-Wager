@@ -2,6 +2,7 @@ import fs from "fs";
 import { GameState, getWealthiestPlayer } from "./gameState.js";
 import { buildSessionExport } from "../export/sessionExport.js";
 import { writeJsonAtomic } from "../util/atomicJson.js";
+import { isAiPlayer } from "../util/isAiPlayer.js";
 import {
   CommunityLeaderboardEntry,
   getCommunityLeaderboard,
@@ -23,6 +24,9 @@ export type GameSessionRecord = {
   communityName: string;
   communityWealth: number;
   playerCount: number;
+  /** AI 座位数 / 真人座位数；旧档可能缺省 */
+  aiPlayerCount?: number;
+  humanPlayerCount?: number;
   sessionStartedAt: number | null;
   completedAt: number;
   eraTheme: string | null;
@@ -64,6 +68,7 @@ function loadFromDisk(): void {
     sessionsById.clear();
     for (const s of parsed.sessions) {
       if (!s?.sessionId || typeof s.communityName !== "string") continue;
+      normalizeRecordScoring(s);
       sessionsById.set(s.sessionId, s);
     }
   } catch (err) {
@@ -72,8 +77,27 @@ function loadFromDisk(): void {
   }
 }
 
-function persistToDisk(): void {
-  if (!persistPath || persistDisabled) return;
+/**
+ * 社区榜按「所有座位」统计（AI 与真人平权）。
+ * 旧档若只有真人分，载入时按 snapshot.players 重算一次，使历史数据与新规则一致。
+ */
+function normalizeRecordScoring(record: GameSessionRecord): void {
+  const players = record.snapshot?.players;
+  if (!Array.isArray(players) || players.length === 0) return;
+  let total = 0;
+  let richest = players[0];
+  for (const p of players) {
+    const wealth = Number(p.wealth) || 0;
+    total += wealth;
+    if (wealth > (Number(richest.wealth) || 0)) richest = p;
+  }
+  record.communityWealth = Math.round(total);
+  record.aiPlayerCount = players.filter((p) => p.isAI).length;
+  record.humanPlayerCount = players.filter((p) => !p.isAI).length;
+  record.topPlayer = { name: richest.name, wealth: Number(richest.wealth) || 0 };
+}
+
+function persistToDisk(): void {  if (!persistPath || persistDisabled) return;
   try {
     const sessions = [...sessionsById.values()].sort((a, b) => b.completedAt - a.completedAt);
     writeJsonAtomic(persistPath, { sessions });
@@ -117,6 +141,9 @@ function migrateFromLeaderboardIfEmpty(): void {
 export function archiveCompletedSession(game: GameState): GameSessionRecord {
   const sessionId = game.sessionId ?? `fallback:${game.roomId}:${Date.now()}`;
   const completedAt = Date.now();
+  const humans = game.players.filter((p) => !isAiPlayer(p));
+  const aiPlayers = game.players.filter((p) => isAiPlayer(p));
+  // AI 与真人平权：社区总财富按全部座位统计，AI 也可以成为首富。
   const communityWealth = game.players.reduce((sum, p) => sum + p.wealth, 0);
   const richest = getWealthiestPlayer(game);
   const snapshot = buildSessionExport(game);
@@ -126,7 +153,7 @@ export function archiveCompletedSession(game: GameState): GameSessionRecord {
     .map((p) => ({
       name: p.name,
       wealth: p.wealth,
-      isAI: p.isAI ?? false,
+      isAI: isAiPlayer(p),
       fatePersona: p.analysisResult?.primaryPersona,
     }));
 
@@ -136,6 +163,8 @@ export function archiveCompletedSession(game: GameState): GameSessionRecord {
     communityName: game.communityName ?? snapshot.meta.communityName ?? "未命名",
     communityWealth: Math.round(communityWealth),
     playerCount: game.players.length,
+    aiPlayerCount: aiPlayers.length,
+    humanPlayerCount: humans.length,
     sessionStartedAt: game.sessionStartedAt ?? null,
     completedAt,
     eraTheme: game.currentEraCard?.name ?? null,

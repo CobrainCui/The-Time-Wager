@@ -17,6 +17,18 @@ import { CoffeeRoundIndicators } from "../components/CoffeeRoundIndicators";
 import { CoffeeUnsubscribeModal } from "../components/CoffeeUnsubscribeModal";
 import { BuffRoundChips } from "../components/BuffRoundChips";
 import { COFFEE_ENERGY_GAIN, COFFEE_WEALTH_COST } from "../config/coffeeConfig";
+import {
+  HELP_BUFF_LOCKOUT,
+  HELP_INVESTMENT_ADVANCE_WHEN_ALL_LOCKED,
+  HELP_INVESTMENT_SELF_UNLOCK,
+} from "../config/playerHelpReference";
+import { isInvestmentBuffLockout } from "../utils/investmentBuffLockout";
+import {
+  formatWealthHoldNote,
+  playerAvailableWealth,
+  playerLeadingBidReservedWealth,
+  playerPendingTransferOutWealth,
+} from "../utils/availableWealth";
 import { ProjectDetailModal } from "../components/ProjectDetailModal";
 import type { ActiveProject } from "../types";
 
@@ -54,6 +66,7 @@ interface Props {
 
 // ——— 顶部状态栏 ———
 const StatusBar: React.FC<{
+  game: GameState;
   me: Player;
   remainingEnergy: number;
   showCountdown: boolean;
@@ -84,7 +97,15 @@ const StatusBar: React.FC<{
   actionsDisabled,
   buffActionsEnabled,
   embed = false,
+  game,
 }) => {
+  const availableWealth = playerAvailableWealth(game, me);
+  const wealthHoldNote = formatWealthHoldNote(
+    playerLeadingBidReservedWealth(game, me.id),
+    playerPendingTransferOutWealth(game, me.id)
+  );
+  const canAffordCoffee = availableWealth >= COFFEE_WEALTH_COST;
+
   const timerPaused = typeof investmentTimerPausedAt === "number";
   const timeLeft = useActionCountdown(
     showCountdown && !!investmentEndsAt,
@@ -122,17 +143,35 @@ const StatusBar: React.FC<{
             >
               {Math.max(0, remainingEnergy)}
             </span>
-            <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}>
-              / {Math.max(0, typeof me.energy === "number" && Number.isFinite(me.energy) ? me.energy : 0)}
+            <span
+              style={{
+                color:
+                  typeof me.energy === "number" && Number.isFinite(me.energy) && me.energy < 0
+                    ? "#ef4444"
+                    : "var(--color-text-muted)",
+                fontSize: uiRem(0.85),
+              }}
+            >
+              /{" "}
+              {typeof me.energy === "number" && Number.isFinite(me.energy)
+                ? Math.floor(me.energy)
+                : 0}
             </span>
           </div>
           {!embed && (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <span style={{ fontSize: uiRem(1.1) }}>💰</span>
-                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: uiRem(1.2), color: "#fbbf24" }}>
-                  {me.wealth}
-                </span>
+              <div
+                className="auction-my-wealth-row"
+                aria-label={`可用财富 ${availableWealth}`}
+                title={wealthHoldNote ? `可用财富 ${availableWealth}（${wealthHoldNote}）` : undefined}
+              >
+                <span style={{ fontSize: uiRem(1.05) }} aria-hidden>💰</span>
+                <strong className="auction-mono-amount auction-mono-amount--wealth">
+                  {availableWealth}
+                </strong>
+                {wealthHoldNote ? (
+                  <span className="auction-wealth-hold">{wealthHoldNote}</span>
+                ) : null}
               </div>
               <BuffRoundChips
                 me={me}
@@ -195,17 +234,17 @@ const StatusBar: React.FC<{
           {!embed && (
             <button
               onClick={onCoffee}
-              disabled={coffeeLoading || me.wealth < COFFEE_WEALTH_COST || coffeeLocked}
+              disabled={coffeeLoading || !canAffordCoffee || coffeeLocked}
               className="btn btn-sm"
               style={{
                 background: "rgba(180,83,9,0.2)",
                 border: "1px solid rgba(180,83,9,0.4)",
-                color: me.wealth >= COFFEE_WEALTH_COST ? "#fcd34d" : "var(--color-text-muted)",
+                color: canAffordCoffee ? "#fcd34d" : "var(--color-text-muted)",
               }}
               title={
                 coffeeLoading
                   ? "正在购买…"
-                  : me.wealth < COFFEE_WEALTH_COST
+                  : !canAffordCoffee
                     ? `财富不足（需要 ${COFFEE_WEALTH_COST}💰）`
                     : `消耗${COFFEE_WEALTH_COST}财富换${COFFEE_ENERGY_GAIN}精力`
               }
@@ -262,12 +301,27 @@ export const Investment: React.FC<Props> = ({
   const draftSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSubmittedRef = useRef(false);
   const prevReadyRef = useRef(me.ready);
+  const prevAdminDraftRevRef = useRef(me.investmentDraftAdminRevision ?? 0);
   const [reopenEditHint, setReopenEditHint] = useState(false);
   const [submitPending, setSubmitPending] = useState(false);
   const isSubmittedRef = useRef(false);
   const investmentsRef = useRef(investments);
   investmentsRef.current = investments;
   const clockSkewRef = useServerClockSkewRef(game.serverNow);
+  const [, lockoutTick] = useState(0);
+
+  useEffect(() => {
+    if (game.phase !== "INVESTMENT" || !game.investmentEndsAt) return;
+    const id = window.setInterval(() => lockoutTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [game.phase, game.investmentEndsAt]);
+
+  const buffLockoutActive = isInvestmentBuffLockout(game, clockSkewRef.current);
+  const canSelfUnlock =
+    game.phase === "INVESTMENT" &&
+    !!game.investmentEndsAt &&
+    me.ready &&
+    getRemainingMs(game.investmentEndsAt, clockSkewRef.current, game.investmentTimerPausedAt) > 0;
 
   const currentAllocated = Object.values(investments).reduce((a, b) => a + b, 0);
   const isSubmitted = me.ready && game.phase === "INVESTMENT";
@@ -309,6 +363,22 @@ export const Investment: React.FC<Props> = ({
     setReopenEditHint(true);
     socket.emit("syncInvestmentDraft", { investment: nextDraft });
   }, [game.phase, me.ready, me.investmentDraft, me.id, setInvestments]);
+
+  useEffect(() => {
+    const rev = me.investmentDraftAdminRevision ?? 0;
+    if (rev === prevAdminDraftRevRef.current) return;
+    prevAdminDraftRevRef.current = rev;
+    if (game.phase !== "INVESTMENT" || me.ready) return;
+    const nextDraft = me.investmentDraft ? { ...me.investmentDraft } : {};
+    setInvestments(nextDraft);
+    investmentsRef.current = nextDraft;
+  }, [
+    game.phase,
+    me.ready,
+    me.investmentDraft,
+    me.investmentDraftAdminRevision,
+    setInvestments,
+  ]);
 
   useEffect(() => {
     if (investmentCommitted) setSubmitPending(false);
@@ -422,7 +492,7 @@ export const Investment: React.FC<Props> = ({
     } else {
       if (
         !window.confirm(
-          "确认提交投资方案吗？提交后将锁定方案；如需修改请联系主持人解锁。"
+          `确认提交投资方案吗？提交后将锁定方案；倒计时结束前可自行解锁修改。${HELP_INVESTMENT_ADVANCE_WHEN_ALL_LOCKED}`
         )
       ) {
         return;
@@ -549,6 +619,27 @@ export const Investment: React.FC<Props> = ({
   }, [me.coffeePurchasesThisRound, me.investmentDraft, me.energy, game.activeProjects, setInvestments]);
 
   useEffect(() => {
+    if (formLocked) return;
+    if (game.phase !== "BUFF_USAGE" && game.phase !== "INVESTMENT") return;
+    const book =
+      typeof me.energy === "number" && Number.isFinite(me.energy) ? me.energy : 0;
+    if (book >= 0) return;
+    const hasServerDraft = me.investmentDraft && Object.keys(me.investmentDraft).length > 0;
+    if (hasServerDraft) return;
+    const allocated = Object.values(investments).reduce((a, b) => a + b, 0);
+    if (allocated === 0) return;
+    setInvestments({});
+    investmentsRef.current = {};
+  }, [
+    formLocked,
+    game.phase,
+    me.energy,
+    me.investmentDraft,
+    investments,
+    setInvestments,
+  ]);
+
+  useEffect(() => {
     if (isSubmitted) return;
     const allocated = Object.values(investments).reduce((a, b) => a + b, 0);
     if (allocated <= safeEnergy) return;
@@ -588,7 +679,7 @@ export const Investment: React.FC<Props> = ({
   const effectiveCoffeeCups = Math.max(serverCoffeeCups, inferredCoffeeCups);
 
   const handleCoffee = () => {
-    if (coffeeLoading || me.wealth < COFFEE_WEALTH_COST || formLocked) return;
+    if (coffeeLoading || playerAvailableWealth(game, me) < COFFEE_WEALTH_COST || formLocked) return;
     coffeeAttemptSnapRef.current = { energy: me.energy, wealth: me.wealth };
     coffeePendingRef.current += 1;
     setCoffeeLoading(true);
@@ -662,6 +753,7 @@ export const Investment: React.FC<Props> = ({
       />
       {/* 顶部状态栏 */}
       <StatusBar
+        game={game}
         me={me}
         remainingEnergy={remainingEnergy}
         showCountdown={!hideCountdown && game.phase === "INVESTMENT" && !!game.investmentEndsAt}
@@ -677,7 +769,8 @@ export const Investment: React.FC<Props> = ({
           !embed &&
           (game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") &&
           !me.ready &&
-          !submitPending
+          !submitPending &&
+          !buffLockoutActive
         }
         embed={embed}
         onOpenUnsubscribe={() => {
@@ -697,6 +790,25 @@ export const Investment: React.FC<Props> = ({
           paddingRight: "1rem",
         }}
       >
+        {buffLockoutActive && !embed && game.phase === "INVESTMENT" && (
+          <div
+            role="status"
+            style={{
+              background: "rgba(251,191,36,0.1)",
+              border: "1px solid rgba(251,191,36,0.35)",
+              borderRadius: "0.875rem",
+              padding: "0.65rem 1rem",
+              marginBottom: "1rem",
+              color: "#fcd34d",
+              fontSize: uiRem(0.82),
+              fontWeight: 600,
+              textAlign: "center",
+            }}
+          >
+            {HELP_BUFF_LOCKOUT}
+          </div>
+        )}
+
         {reopenEditHint && game.phase === "INVESTMENT" && !formLocked && (
           <div
             role="status"
@@ -712,7 +824,7 @@ export const Investment: React.FC<Props> = ({
               textAlign: "center",
             }}
           >
-            主持人已允许修改：请调整分配后重新提交。
+            已解锁投资方案：请调整分配后重新提交。
           </div>
         )}
 
@@ -818,27 +930,69 @@ export const Investment: React.FC<Props> = ({
             <div
               style={{
                 display: "flex",
+                flexDirection: "column",
                 alignItems: "center",
-                gap: "0.75rem",
-                background: "rgba(16,185,129,0.1)",
-                border: "1px solid rgba(16,185,129,0.3)",
-                borderRadius: "9999px",
-                padding: "0.875rem 2.5rem",
+                gap: "0.65rem",
+                padding: "0.75rem 1.5rem",
               }}
             >
-              <span
+              <div
                 style={{
-                  width: "0.625rem",
-                  height: "0.625rem",
-                  borderRadius: "50%",
-                  background: "#34d399",
-                  animation: "pulse 1.5s infinite",
-                  display: "inline-block",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.75rem",
+                  background: "rgba(16,185,129,0.1)",
+                  border: "1px solid rgba(16,185,129,0.3)",
+                  borderRadius: "9999px",
+                  padding: "0.875rem 2.5rem",
                 }}
-              />
-              <span style={{ fontWeight: 700, color: "#34d399", fontSize: uiRem(1) }}>
-                {isSubmitted ? "已提交，等待其他玩家..." : "正在提交…"}
-              </span>
+              >
+                <span
+                  style={{
+                    width: "0.625rem",
+                    height: "0.625rem",
+                    borderRadius: "50%",
+                    background: "#34d399",
+                    animation: "pulse 1.5s infinite",
+                    display: "inline-block",
+                  }}
+                />
+                <span style={{ fontWeight: 700, color: "#34d399", fontSize: uiRem(1) }}>
+                  {isSubmitted ? "已锁定，等待其他在线玩家…" : "正在提交…"}
+                </span>
+              </div>
+              {isSubmitted && (
+                <p
+                  style={{
+                    margin: 0,
+                    maxWidth: "28rem",
+                    textAlign: "center",
+                    fontSize: uiRem(0.78),
+                    color: "var(--color-text-muted)",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {HELP_INVESTMENT_ADVANCE_WHEN_ALL_LOCKED}
+                </p>
+              )}
+              {canSelfUnlock && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        `解锁后可修改投资并重新提交，倒计时继续。\n${HELP_INVESTMENT_SELF_UNLOCK}\n确认解锁？`
+                      )
+                    ) {
+                      return;
+                    }
+                    socket.emit("unlockOwnInvestment");
+                  }}
+                >
+                  解锁并修改
+                </button>
+              )}
             </div>
           ) : (
             <button

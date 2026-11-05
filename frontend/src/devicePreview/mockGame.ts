@@ -276,10 +276,10 @@ export function getDevicePreviewGame(pageId: DevicePreviewPageId): GameState {
                   {
                     cardId: "buff_slack",
                     role: "hit",
-                    text: "玩家乙 对你使用摸鱼传染，精力 -8",
+                    text: "有人对你使用摸鱼传染，精力 -8",
                   },
                 ],
-                slackedBy: ["preview-p2"],
+                slackedBy: [],
                 inventory: ["buff_slack", "buff_work_rest", "buff_short"],
               }
             : { ready: false, investmentDraft: { 1: 2 } as Record<number, number> }
@@ -299,7 +299,7 @@ export function getDevicePreviewGame(pageId: DevicePreviewPageId): GameState {
                   {
                     cardId: "buff_slack",
                     role: "hit",
-                    text: "玩家乙 对你使用摸鱼传染，精力 -8",
+                    text: "有人对你使用摸鱼传染，精力 -8",
                   },
                 ],
               }
@@ -318,6 +318,7 @@ export function getDevicePreviewGame(pageId: DevicePreviewPageId): GameState {
             playerId: "preview-p3",
             playerName: "玩家丙",
             cost: 8,
+            source: "hammer",
           },
         ],
         auctionFocusCardId: "buff_work_rest",

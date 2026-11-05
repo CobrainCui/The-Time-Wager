@@ -5,14 +5,13 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import {
   HELP_TABS,
   HelpTabId,
-  HELP_RESOURCES,
-  HELP_PROJECT_RULE_SECTIONS,
   HELP_FLOW_OVERVIEW,
-  HELP_FLOW_SECTIONS,
-  HELP_MISC,
+  HELP_BUFF_GUIDE_SECTIONS,
   buildBuffHelpEntries,
+  SIDEBAR_ACTIVITY_ITEMS,
+  GUIDE_MERGED_TAB_IDS,
+  PlayerSidebarPanelId,
 } from "../config/playerHelpReference";
-import { BUFF_CARD_DEFS } from "../config/buffCards";
 import {
   CatalogProjectType,
   formatRankList,
@@ -29,16 +28,29 @@ import {
   resolveProjectStatus,
   ProjectHelpRow,
 } from "../utils/projectHelpTable";
-import { HelpLine } from "./help/HelpLine";
+import { ProjectTypesRulesTable } from "./help/ProjectTypesRulesTable";
+import { GuideResourcesBlock, GuideFlowBlock, GuideChatBlock } from "./help/GuideBlocks";
+import { BuffHelpCardBody } from "./help/BuffHelpCardBody";
+import { BuffDescText } from "../utils/buffDescEmphasis";
+import { SIDEBAR_PROJECT_TYPES_RULE_LEAD } from "../config/tutorialProjectTypes";
 import { ProjectTypeLabel } from "./help/ProjectTypeLabel";
+import { PlayerSettlementHistory } from "./PlayerSettlementHistory";
+
+export type PlayerSidebarPanel = null | PlayerSidebarPanelId;
+
+const PANEL_TITLE: Record<PlayerSidebarPanelId, string> = Object.fromEntries(
+  SIDEBAR_ACTIVITY_ITEMS.map((item) => [item.id, item.title])
+) as Record<PlayerSidebarPanelId, string>;
 
 interface Props {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  panel: PlayerSidebarPanel;
+  onPanelChange: (panel: PlayerSidebarPanel) => void;
   game: GameState;
   me: Player;
   /** 时代页等：展开时不挤主栏，侧栏浮层遮挡 */
   overlayWhenOpen?: boolean;
+  /** 教程「动手试一试」内嵌：不占满视口高度，与主内容横排 */
+  embedInTutorial?: boolean;
 }
 
 const thStyle: React.CSSProperties = {
@@ -59,6 +71,19 @@ const tdStyle: React.CSSProperties = {
 };
 
 const EMPTY_CELL_MARK = "—";
+
+const buffHelpChipBaseStyle: React.CSSProperties = {
+  fontSize: uiRem(0.72),
+  fontWeight: 700,
+  padding: "0.15rem 0.45rem",
+  borderRadius: "9999px",
+};
+
+interface CardAuctionWinner {
+  playerId: string;
+  playerName: string;
+  count: number;
+}
 
 const PLAYER_HELP_WIDTH_KEY = "player-help-sidebar-width";
 const PLAYER_HELP_MIN_WIDTH = 300;
@@ -206,69 +231,73 @@ function ProjectStatTableCells({
 }
 
 export const PlayerGameHelp: React.FC<Props> = ({
-  open,
-  onOpenChange,
+  panel,
+  onPanelChange,
   game,
   me,
   overlayWhenOpen = false,
+  embedInTutorial = false,
 }) => {
-  const [tab, setTab] = useState<HelpTabId>("projects_table");
-  const [openWidthPx, setOpenWidthPx] = useState<number | null>(() => readStoredOpenWidth());
+  const open = panel !== null;
+  const [openWidthPx, setOpenWidthPx] = useState<number | null>(() =>
+    embedInTutorial ? null : readStoredOpenWidth()
+  );
   const [isResizing, setIsResizing] = useState(false);
   const isDesktopLayout = useMediaQuery("(min-width: 1024px)", true);
   const asideRef = useRef<HTMLElement>(null);
-  const toggleRef = useRef<HTMLButtonElement>(null);
+  const sidebarBodyRef = useRef<HTMLDivElement>(null);
+  const activityRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const prevOpenRef = useRef(open);
+  const lastPanelRef = useRef<PlayerSidebarPanel>(null);
   const resizeDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const dynamicRows = useMemo(() => buildProjectHelpRows(game, me), [game, me]);
   const dynamicAnnotated = useMemo(() => annotateDynamicRows(dynamicRows), [dynamicRows]);
   const appearedCatalog = useMemo(() => buildAppearedCatalogEntries(game, me), [game, me]);
   const rankTierCount = resolveRankRewardTierCountFromGame(game);
-  const buffEntries = useMemo(
-    () =>
-      buildBuffHelpEntries().sort(
-        (a, b) =>
-          (a.everyAuction ? 99 : a.auctionRound) - (b.everyAuction ? 99 : b.auctionRound) ||
-          a.name.localeCompare(b.name, "zh")
-      ),
-    []
-  );
+  const buffEntries = useMemo(() => buildBuffHelpEntries(), []);
 
-  const auctionWinsByPlayer = useMemo(() => {
+  const auctionWinnersByCardId = useMemo(() => {
     const wins = game.auctionSessionWins ?? [];
-    if (wins.length === 0) return [];
     const seatOrder = new Map(game.players.map((p, i) => [p.id, i]));
-    const byPlayer = new Map<string, { playerName: string; cardNames: string[] }>();
+    const byCard = new Map<string, Map<string, CardAuctionWinner>>();
     for (const w of wins) {
-      const cardLabel = BUFF_CARD_DEFS[w.cardId]?.name ?? w.cardId;
       const playerName =
         game.players.find((p) => p.id === w.playerId)?.name ?? w.playerName ?? w.playerId;
-      const existing = byPlayer.get(w.playerId);
-      if (existing) {
-        existing.playerName = playerName;
-        existing.cardNames.push(cardLabel);
-      } else {
-        byPlayer.set(w.playerId, { playerName, cardNames: [cardLabel] });
+      let byPlayer = byCard.get(w.cardId);
+      if (!byPlayer) {
+        byPlayer = new Map();
+        byCard.set(w.cardId, byPlayer);
       }
+      const existing = byPlayer.get(w.playerId);
+      if (existing) existing.count += 1;
+      else byPlayer.set(w.playerId, { playerId: w.playerId, playerName, count: 1 });
     }
-    return [...byPlayer.entries()]
-      .sort(([idA], [idB]) => {
-        const oa = seatOrder.get(idA) ?? game.players.length;
-        const ob = seatOrder.get(idB) ?? game.players.length;
-        return oa - ob || idA.localeCompare(idB);
-      })
-      .map(([playerId, { playerName, cardNames }]) => ({ playerId, playerName, cardNames }));
+    const result = new Map<string, CardAuctionWinner[]>();
+    for (const [cardId, byPlayer] of byCard) {
+      result.set(
+        cardId,
+        [...byPlayer.values()].sort(
+          (a, b) =>
+            (seatOrder.get(a.playerId) ?? game.players.length) -
+              (seatOrder.get(b.playerId) ?? game.players.length) ||
+            a.playerId.localeCompare(b.playerId)
+        )
+      );
+    }
+    return result;
   }, [game.auctionSessionWins, game.players]);
 
+  const hasAuctionSessionWins = (game.auctionSessionWins?.length ?? 0) > 0;
+
   useEffect(() => {
-    if (!open || isDesktopLayout) return;
+    if (embedInTutorial || !open || isDesktopLayout) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [open, isDesktopLayout]);
+  }, [open, isDesktopLayout, embedInTutorial]);
 
   useEffect(() => {
     if (!open) return;
@@ -279,41 +308,48 @@ export const PlayerGameHelp: React.FC<Props> = ({
       const escClosesGlobally = !isDesktopLayout || overlayWhenOpen;
       if (!escClosesGlobally && !focusInSidebar) return;
       e.preventDefault();
-      onOpenChange(false);
+      onPanelChange(null);
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onOpenChange, isDesktopLayout, overlayWhenOpen]);
+  }, [open, onPanelChange, isDesktopLayout, overlayWhenOpen]);
 
   useEffect(() => {
-    if (!open) return;
-    const id = requestAnimationFrame(() => {
-      const active = asideRef.current?.querySelector<HTMLButtonElement>(
-        '.player-help-tab[aria-selected="true"]'
-      );
-      active?.focus();
-    });
-    return () => cancelAnimationFrame(id);
-  }, [open]);
+    if (panel) lastPanelRef.current = panel;
+  }, [panel]);
 
   useEffect(() => {
-    if (prevOpenRef.current && !open) toggleRef.current?.focus({ preventScroll: true });
+    if (!open || !panel) return;
+    sidebarBodyRef.current?.scrollTo({ top: 0 });
+  }, [open, panel]);
+
+  useEffect(() => {
+    if (prevOpenRef.current && !open) {
+      const lastId = lastPanelRef.current;
+      if (lastId) activityRefs.current[lastId]?.focus({ preventScroll: true });
+    }
     prevOpenRef.current = open;
   }, [open]);
 
-  const handleTabListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const idx = HELP_TABS.findIndex((t) => t.id === tab);
-    if (idx < 0) return;
+  const handleActivityKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const idx = SIDEBAR_ACTIVITY_ITEMS.findIndex((item) => item.id === panel);
+    const focusedIdx = SIDEBAR_ACTIVITY_ITEMS.findIndex(
+      (item) => activityRefs.current[item.id] === document.activeElement
+    );
+    const base = focusedIdx >= 0 ? focusedIdx : idx >= 0 ? idx : 0;
     let nextIdx: number | null = null;
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") nextIdx = (idx + 1) % HELP_TABS.length;
-    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") nextIdx = (idx - 1 + HELP_TABS.length) % HELP_TABS.length;
-    else if (e.key === "Home") nextIdx = 0;
-    else if (e.key === "End") nextIdx = HELP_TABS.length - 1;
+    if (e.key === "ArrowDown") nextIdx = (base + 1) % SIDEBAR_ACTIVITY_ITEMS.length;
+    else if (e.key === "ArrowUp") nextIdx = (base - 1 + SIDEBAR_ACTIVITY_ITEMS.length) % SIDEBAR_ACTIVITY_ITEMS.length;
     if (nextIdx === null) return;
     e.preventDefault();
-    const nextId = HELP_TABS[nextIdx].id;
-    setTab(nextId);
-    requestAnimationFrame(() => document.getElementById(`player-help-tab-${nextId}`)?.focus());
+    const nextId = SIDEBAR_ACTIVITY_ITEMS[nextIdx].id;
+    if (open) onPanelChange(nextId);
+    activityRefs.current[nextId]?.focus();
+  };
+
+  const selectActivity = (id: PlayerSidebarPanelId) => {
+    if (panel === id) onPanelChange(null);
+    else onPanelChange(id);
   };
 
   const emptyDynamicHint =
@@ -323,16 +359,17 @@ export const PlayerGameHelp: React.FC<Props> = ({
       ? "本局尚未发牌，开战后这里会显示你仍可投的项目"
       : "当前没有仍可投的项目";
 
-  const toggle = () => onOpenChange(!open);
-  const useDrawerOverlay = open && !isDesktopLayout;
-  const useDesktopOverlay = open && overlayWhenOpen && isDesktopLayout;
+  const useDrawerOverlay = open && !isDesktopLayout && !embedInTutorial;
+  const useDesktopOverlay = open && overlayWhenOpen && isDesktopLayout && !embedInTutorial;
   const isDrawerMode = useDrawerOverlay;
 
   const openSidebarWidthPx = useMemo(() => {
     if (!open) return null;
-    const base = openWidthPx ?? defaultOpenWidthPx(isDrawerMode);
+    const base =
+      openWidthPx ??
+      (embedInTutorial ? Math.min(420, Math.round(window.innerWidth * 0.42)) : defaultOpenWidthPx(isDrawerMode));
     return clampOpenWidthPx(base, isDrawerMode);
-  }, [open, openWidthPx, isDrawerMode]);
+  }, [open, openWidthPx, isDrawerMode, embedInTutorial]);
 
   useEffect(() => {
     if (!open) return;
@@ -349,6 +386,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
   const persistOpenWidth = (w: number) => {
     const clamped = clampOpenWidthPx(w, isDrawerMode);
     setOpenWidthPx(clamped);
+    if (embedInTutorial) return;
     try {
       localStorage.setItem(PLAYER_HELP_WIDTH_KEY, String(clamped));
     } catch {
@@ -499,54 +537,58 @@ export const PlayerGameHelp: React.FC<Props> = ({
     if (tabId === "buffs") {
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
-          {auctionWinsByPlayer.length > 0 && (
-            <div
-              role="region"
-              aria-label="拍卖所得"
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            {HELP_BUFF_GUIDE_SECTIONS.map((section) => (
+              <div key={section.title}>
+                <div
+                  style={{
+                    fontSize: uiRem(0.72),
+                    fontWeight: 800,
+                    color: "var(--color-text-muted)",
+                    marginBottom: "0.25rem",
+                  }}
+                >
+                  {section.title}
+                </div>
+                <ul className="player-guide-buff-rules" style={{ fontSize: uiRem(0.78) }}>
+                  {section.bullets.map((line, i) => (
+                    <li key={`${section.title}-${i}`}>
+                      <BuffDescText text={line} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+          {hasAuctionSessionWins && (
+            <p
               style={{
-                padding: "0.65rem 0.75rem",
-                borderRadius: "0.75rem",
-                border: "1px solid rgba(251,191,36,0.25)",
-                background: "rgba(251,191,36,0.06)",
+                margin: 0,
+                fontSize: uiRem(0.72),
+                color: "var(--color-text-muted)",
+                lineHeight: 1.4,
               }}
             >
-              <div style={{ fontWeight: 800, color: "#fbbf24", fontSize: uiRem(0.9), marginBottom: "0.2rem" }}>
-                拍卖所得
-              </div>
-              <p
-                style={{
-                  margin: "0 0 0.5rem",
-                  fontSize: uiRem(0.72),
-                  color: "var(--color-text-muted)",
-                  lineHeight: 1.4,
-                }}
-              >
-                仅统计拍得，不含是否已使用
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                {auctionWinsByPlayer.map((row) => {
-                  const isMe = row.playerId === me.id;
-                  return (
-                    <div
-                      key={row.playerId}
-                      style={{
-                        fontSize: uiRem(0.82),
-                        lineHeight: 1.45,
-                        color: isMe ? "#fbbf24" : "var(--color-text-secondary)",
-                      }}
-                    >
-                      <span style={{ fontWeight: isMe ? 800 : 700 }}>{row.playerName}</span>
-                      <span style={{ color: "var(--color-text-muted)" }}> · </span>
-                      <span>{row.cardNames.join("、")}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+              拍得标注仅统计拍卖成交，不代表仍在手牌（可能已使用或被烧毁）
+            </p>
           )}
-          {buffEntries.map((b) => (
+          {buffEntries.map((b, index) => {
+            const winners = auctionWinnersByCardId.get(b.cardId) ?? [];
+            const prev = buffEntries[index - 1];
+            const sectionBreak = !!prev?.everyAuction && !b.everyAuction;
+            return (
+            <React.Fragment key={b.cardId}>
+              {sectionBreak && (
+                <div
+                  role="presentation"
+                  style={{
+                    height: 0,
+                    borderTop: "1px solid rgba(255,255,255,0.08)",
+                    margin: "0.15rem 0",
+                  }}
+                />
+              )}
             <div
-              key={b.cardId}
               style={{
                 padding: "0.65rem 0.75rem",
                 borderRadius: "0.75rem",
@@ -568,43 +610,45 @@ export const PlayerGameHelp: React.FC<Props> = ({
                 </span>
                 <span style={{ fontWeight: 800, color: b.color, fontSize: uiRem(0.95) }}>{b.name}</span>
                 <span
+                  className="player-help-buff-chip player-help-buff-chip--pool"
                   title="该道具出现在第几场拍卖"
-                  style={{
-                    fontSize: uiRem(0.72),
-                    fontWeight: 700,
-                    color: "#fbbf24",
-                    background: "rgba(251,191,36,0.12)",
-                    padding: "0.15rem 0.45rem",
-                    borderRadius: "9999px",
-                  }}
+                  style={buffHelpChipBaseStyle}
                 >
                   {b.everyAuction ? "每场" : `第${b.auctionRound}场`}
                 </span>
+                {winners.map((row) => {
+                  const isMe = row.playerId === me.id;
+                  const label = row.count > 1 ? `${row.playerName} ×${row.count}` : row.playerName;
+                  const ariaLabel =
+                    row.count > 1
+                      ? `拍卖拍得 ${row.playerName} ${row.count} 张，不含是否已使用`
+                      : `拍卖拍得 ${row.playerName}，不含是否已使用`;
+                  return (
+                    <span
+                      key={row.playerId}
+                      className={`player-help-buff-chip player-help-buff-chip--winner${isMe ? " player-help-buff-chip--winner-me" : ""}`}
+                      title="本局拍卖拍得，不含是否已使用"
+                      aria-label={ariaLabel}
+                      style={buffHelpChipBaseStyle}
+                    >
+                      <span className="player-help-buff-chip-prefix" aria-hidden>拍得</span>
+                      {label}
+                    </span>
+                  );
+                })}
               </div>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: uiRem(0.82),
-                  color: "var(--color-text-secondary)",
-                  lineHeight: 1.45,
-                }}
-              >
-                {b.desc}
-              </p>
+              <BuffHelpCardBody entry={b} />
             </div>
-          ))}
+            </React.Fragment>
+            );
+          })}
         </div>
       );
     }
 
-    if (tabId === "projects_rules" || tabId === "flow") {
-      const overview =
-        tabId === "projects_rules"
-          ? "项目的总收益 = 基础收益 + 排名奖惩 + 时代奖励"
-          : HELP_FLOW_OVERVIEW;
-      const sections = tabId === "projects_rules" ? HELP_PROJECT_RULE_SECTIONS : HELP_FLOW_SECTIONS;
+    if (tabId === "projects_rules") {
       return (
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.1rem" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
           <p
             style={{
               margin: 0,
@@ -618,41 +662,62 @@ export const PlayerGameHelp: React.FC<Props> = ({
               lineHeight: 1.45,
             }}
           >
-            {overview}
+            项目的总收益 = 基础收益 + 排名奖惩 + 时代奖励
           </p>
-          {sections.map((section) => (
-            <section key={section.title}>
-              <h3
-                style={{
-                  margin: "0 0 0.35rem",
-                  fontSize: uiRem(0.95),
-                  fontWeight: 800,
-                  color: "white",
-                }}
-              >
-                {section.title}
-              </h3>
-              <div>
-                {section.lines.map((line, i) => (
-                  <HelpLine key={i} icon={line.icon}>
-                    {line.text}
-                  </HelpLine>
-                ))}
-              </div>
-            </section>
-          ))}
+          <ProjectTypesRulesTable
+            lineFont={uiRem(0.82)}
+            introLead={SIDEBAR_PROJECT_TYPES_RULE_LEAD}
+            boardRemindersSectionId="player-guide-project-board-reminders"
+          />
         </div>
       );
     }
 
-    const lines = tabId === "resources" ? HELP_RESOURCES : HELP_MISC;
+    if (tabId === "flow") {
+      return <GuideFlowBlock overview={HELP_FLOW_OVERVIEW} lineFont={uiRem(0.82)} />;
+    }
 
-    return lines.map((line, i) => (
-      <HelpLine key={i} icon={line.icon}>
-        {line.text}
-      </HelpLine>
-    ));
+    if (tabId === "resources") {
+      return <GuideResourcesBlock lineFont={uiRem(0.82)} />;
+    }
+
+    if (tabId === "misc") {
+      return <GuideChatBlock lineFont={uiRem(0.82)} />;
+    }
+
+    return null;
   };
+
+  const renderGuidePanel = () => (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+      {GUIDE_MERGED_TAB_IDS.map((tabId) => {
+        const def = HELP_TABS.find((t) => t.id === tabId);
+        return (
+          <section key={tabId} aria-labelledby={`player-guide-section-${tabId}`}>
+            <h3
+              id={`player-guide-section-${tabId}`}
+              style={{
+                margin: "0 0 0.5rem",
+                fontSize: uiRem(0.95),
+                fontWeight: 800,
+                color: "white",
+              }}
+            >
+              {def ? (
+                <>
+                  <span aria-hidden style={{ marginRight: "0.25rem" }}>{def.icon}</span>
+                  {def.title}
+                </>
+              ) : (
+                tabId
+              )}
+            </h3>
+            {renderTabBody(tabId)}
+          </section>
+        );
+      })}
+    </div>
+  );
 
   return (
     <>
@@ -660,8 +725,8 @@ export const PlayerGameHelp: React.FC<Props> = ({
         <button
           type="button"
           className="player-help-backdrop"
-          aria-label="关闭说明书"
-          onClick={() => onOpenChange(false)}
+          aria-label="关闭侧栏"
+          onClick={() => onPanelChange(null)}
         />
       )}
       {useDesktopOverlay && <div className="player-help-rail-spacer" aria-hidden />}
@@ -670,88 +735,77 @@ export const PlayerGameHelp: React.FC<Props> = ({
         className={`player-help-sidebar${open ? " player-help-sidebar--open" : ""}${
           useDrawerOverlay ? " player-help-sidebar--drawer" : ""
         }${useDesktopOverlay ? " player-help-sidebar--overlay" : ""}${
-          isResizing ? " player-help-sidebar--resizing" : ""
-        }`}
+          embedInTutorial ? " player-help-sidebar--tutorial-embed" : ""
+        }${isResizing ? " player-help-sidebar--resizing" : ""}`}
         style={openSidebarWidthPx != null ? { width: openSidebarWidthPx } : undefined}
-        aria-label="游戏说明书"
+        aria-label="玩家侧栏"
       >
-        <div className="player-help-sidebar-rail">
-          <button
-            ref={toggleRef}
-            type="button"
-            className="player-help-toggle"
-            aria-label={open ? "收起说明" : "展开说明"}
-            aria-expanded={open}
-            aria-controls="player-help-sidebar-panel"
-            title="游戏说明书"
-            onClick={toggle}
-          >
-            ?
-          </button>
+        <div
+          className="player-help-sidebar-rail"
+          role="tablist"
+          aria-orientation="vertical"
+          aria-label="侧栏入口"
+          onKeyDown={handleActivityKeyDown}
+        >
+          {SIDEBAR_ACTIVITY_ITEMS.map((item) => {
+            const active = panel === item.id;
+            return (
+              <button
+                key={item.id}
+                ref={(el) => {
+                  activityRefs.current[item.id] = el;
+                }}
+                type="button"
+                role="tab"
+                id={`player-sidebar-tab-${item.id}`}
+                className={`player-help-activity-item${active ? " player-help-activity-item--active" : ""}`}
+                aria-label={item.title}
+                aria-selected={open && active}
+                tabIndex={open ? (active ? 0 : -1) : 0}
+                aria-controls="player-help-sidebar-panel"
+                title={item.title}
+                onClick={() => selectActivity(item.id)}
+              >
+                <span className="player-help-activity-icon" aria-hidden>{item.icon}</span>
+                <span className="player-help-activity-label">{item.label}</span>
+              </button>
+            );
+          })}
         </div>
 
-        {open && (
-          <div id="player-help-sidebar-panel" className="player-help-sidebar-panel">
+        {open && panel && (
+          <div
+            id="player-help-sidebar-panel"
+            role="tabpanel"
+            aria-labelledby={`player-sidebar-tab-${panel}`}
+            className="player-help-sidebar-panel"
+          >
             <div className="player-help-sidebar-header">
               <h2 id="player-help-title" style={{ margin: 0, fontWeight: 800, fontSize: uiRem(1.05), color: "white" }}>
-                说明书
+                {PANEL_TITLE[panel]}
               </h2>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => onOpenChange(false)} aria-label="收起">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => onPanelChange(null)} aria-label="收起">
                 收起
               </button>
             </div>
 
-            <div
-              role="tablist"
-              aria-label="说明分类"
-              className="player-help-tabs"
-              onKeyDown={handleTabListKeyDown}
-            >
-              {HELP_TABS.map((t) => {
-                const active = tab === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    role="tab"
-                    id={`player-help-tab-${t.id}`}
-                    aria-selected={active}
-                    tabIndex={active ? 0 : -1}
-                    aria-controls={`player-help-panel-${t.id}`}
-                    className="player-help-tab"
-                    onClick={() => setTab(t.id)}
-                  >
-                    <span className="player-help-tab-icon" aria-hidden>{t.icon}</span>
-                    <span>{t.title}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {panel === "projects" && <ProjectSettlementLegend />}
 
-            {tab === "projects_table" && <ProjectSettlementLegend />}
-
-            <div className="player-help-sidebar-body">
-              {HELP_TABS.map((t) => (
-                <div
-                  key={t.id}
-                  role="tabpanel"
-                  id={`player-help-panel-${t.id}`}
-                  aria-labelledby={`player-help-tab-${t.id}`}
-                  hidden={tab !== t.id}
-                >
-                  {renderTabBody(t.id)}
-                </div>
-              ))}
+            <div ref={sidebarBodyRef} className="player-help-sidebar-body">
+              {panel === "projects" && renderTabBody("projects_table")}
+              {panel === "buffs" && renderTabBody("buffs")}
+              {panel === "guide" && renderGuidePanel()}
+              {panel === "history" && <PlayerSettlementHistory game={game} me={me} />}
             </div>
           </div>
         )}
 
-        {open && (
+        {open && isDesktopLayout && !embedInTutorial && (
           <div
             className="player-help-resize-handle"
             role="separator"
             aria-orientation="vertical"
-            aria-label="拖动调整说明栏宽度"
+            aria-label="拖动调整侧栏宽度"
             title="拖动调整宽度"
             onPointerDown={onResizeHandlePointerDown}
             onPointerMove={onResizeHandlePointerMove}

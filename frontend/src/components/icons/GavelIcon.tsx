@@ -1,30 +1,55 @@
 import React from "react";
 
-/** Outline paths from Lucide «gavel» — https://lucide.dev/icons/gavel (ISC License). */
+/**
+ * 拍卖统一法槌图标（Lucide gavel, ISC）
+ * @see https://lucide.dev/icons/gavel
+ * Vendored copy: frontend/public/icons/gavel-lucide.svg
+ */
+
+const DEFAULT_COLOR = "#c084fc";
 
 type Props = {
   size?: number;
-  color?: string;
   style?: React.CSSProperties;
+  /** 父级已有标题时用，避免重复读屏 */
+  decorative?: boolean;
 };
 
-export const GavelIcon: React.FC<Props> = ({ size = 56, color = "currentColor", style }) => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke={color}
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    style={style}
-  >
-    <path d="m14 13-8.381 8.38a1 1 0 0 1-3.001-3l8.384-8.381" />
-    <path d="m16 16 6-6" />
-    <path d="m21.5 10.5-8-8" />
-    <path d="m8 8 6-6" />
-    <path d="m8.5 7.5 8 8" />
-  </svg>
-);
+const GAVEL_PATHS = [
+  "m14.5 12.5-8 8a2.119 2.119 0 1 1-3-3l8-8",
+  "m16 16 6-6",
+  "m8 8 6-6",
+  "m9 7 8 8",
+  "m21 11-8-8",
+] as const;
+
+export const GavelIcon: React.FC<Props> = ({
+  size = 56,
+  style,
+  decorative = false,
+}) => {
+  const { color: styleColor, ...restStyle } = style ?? {};
+  const color = styleColor ?? DEFAULT_COLOR;
+  const strokeWidth = size <= 20 ? 1.75 : 2;
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role={decorative ? undefined : "img"}
+      aria-hidden={decorative ? true : undefined}
+      aria-label={decorative ? undefined : "拍卖"}
+      style={{ color, flexShrink: 0, ...restStyle }}
+    >
+      {GAVEL_PATHS.map((d) => (
+        <path key={d} d={d} />
+      ))}
+    </svg>
+  );
+};

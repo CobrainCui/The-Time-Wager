@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { GameState, SettlementProjectResult } from "./gameState.js";
+import { ActiveProject, GameState, SettlementProjectResult } from "./gameState.js";
 
 export type SessionEventType =
   | "phase_changed"
@@ -13,6 +13,8 @@ export type SessionEventType =
   | "coffee_refunded"
   | "transaction_created"
   | "transaction_resolved"
+  | "chat_group_created"
+  | "group_message"
   | "auction_offered"
   | "auction_resolved"
   | "auction_revoked"
@@ -22,6 +24,7 @@ export type SessionEventType =
   | "auction_lot_passed"
   | "auction_lot_changed"
   | "lottery_offered"
+  | "lottery_drawn"
   | "lottery_settled"
   | "lottery_offer_cancelled"
   | "lottery_revoked"
@@ -31,10 +34,15 @@ export type SessionEventType =
   | "admin_card_adjust"
   | "social_rated"
   | "settlement_round"
+  | "settlement_round_replaced"
+  | "admin_project_stake"
+  | "admin_project_withdrawn"
+  | "ai_action"
+  | "safety_crisis_detected"
   | "community_named";
 
-/** 投资提交来源：点击提交 / 倒计时到点 / 主持强制结算 */
-export type InvestmentSubmitSource = "player" | "deadline" | "admin_force";
+/** 投资提交来源：玩家点击 / 倒计时到点 / 主持强制结算 / AI 托管 */
+export type InvestmentSubmitSource = "player" | "deadline" | "admin_force" | "ai";
 
 export interface SessionEvent {
   id: string;
@@ -107,13 +115,75 @@ export function recordPhaseChange(
   });
 }
 
-export function appendSettlementRound(game: GameState, results: SettlementProjectResult[]): void {
+function findProjectOnTable(game: GameState, projectId: number): ActiveProject | undefined {
+  for (const list of [game.activeProjects, game.completedProjects, game.uncompletedProjects]) {
+    const found = list.find((p) => p.id === projectId);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** 历史战报「投入」列：长期非梯度行写入结算时刻的累计投入（与当场结算单一致） */
+export function enrichSettlementResultsForHistory(
+  game: GameState,
+  results: SettlementProjectResult[]
+): SettlementProjectResult[] {
+  return results.map((r) => {
+    if (r.type !== "long" || r.endGradient || r.shortSold) return r;
+    const proj = findProjectOnTable(game, r.projectId);
+    if (!proj?.investorRecords) return r;
+    const playerInvestments = { ...r.playerInvestments };
+    let changed = false;
+    const playerIds = new Set([
+      ...Object.keys(playerInvestments),
+      ...Object.keys(r.playerGains),
+    ]);
+    for (const pid of playerIds) {
+      const cumulative = proj.investorRecords[pid];
+      if (typeof cumulative !== "number" || cumulative <= 0) continue;
+      if (playerInvestments[pid] !== cumulative) {
+        playerInvestments[pid] = cumulative;
+        changed = true;
+      }
+    }
+    return changed ? { ...r, playerInvestments } : r;
+  });
+}
+
+export function replaceSettlementRound(
+  game: GameState,
+  results: SettlementProjectResult[]
+): void {
   const tel = ensureTelemetry(game);
+  const storedResults = enrichSettlementResultsForHistory(game, results);
   const entry: SettlementHistoryEntry = {
     round: game.globalRound,
     currentEra: game.currentEra,
     roundInEra: game.roundInEra,
-    results: JSON.parse(JSON.stringify(results)) as SettlementProjectResult[],
+    results: JSON.parse(JSON.stringify(storedResults)) as SettlementProjectResult[],
+  };
+  const idx = tel.settlementHistory.findIndex((h) => h.round === game.globalRound);
+  if (idx >= 0) {
+    tel.settlementHistory[idx] = entry;
+  } else {
+    tel.settlementHistory.push(entry);
+  }
+  appendSessionEvent(game, "settlement_round_replaced", {
+    round: entry.round,
+    currentEra: entry.currentEra,
+    roundInEra: entry.roundInEra,
+    projectCount: results.length,
+  });
+}
+
+export function appendSettlementRound(game: GameState, results: SettlementProjectResult[]): void {
+  const tel = ensureTelemetry(game);
+  const storedResults = enrichSettlementResultsForHistory(game, results);
+  const entry: SettlementHistoryEntry = {
+    round: game.globalRound,
+    currentEra: game.currentEra,
+    roundInEra: game.roundInEra,
+    results: JSON.parse(JSON.stringify(storedResults)) as SettlementProjectResult[],
   };
   tel.settlementHistory.push(entry);
   appendSessionEvent(game, "settlement_round", {

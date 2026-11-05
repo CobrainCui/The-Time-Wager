@@ -56,7 +56,7 @@ describe("tied rank helpers", () => {
 });
 
 describe("settleOneProject tied sharing", () => {
-  it("long completion: two tied for first share rankRewards and era +50", () => {
+  it("long completion: two tied for first share rankRewards and era +100", () => {
     const p1 = makePlayer("p1", { investment: { 101: 40 } });
     const p2 = makePlayer("p2", { investment: { 101: 40 } });
     const p3 = makePlayer("p3", { investment: { 101: 10 } });
@@ -85,17 +85,17 @@ describe("settleOneProject tied sharing", () => {
     assert.equal(result.isCompleted, true);
     // base: 40*15=600 each for p1/p2; 10*15=150 for p3
     // rank: floor((65+45)/2)=55 each for p1/p2; 35 for p3
-    // era: floor(50/2)=25 each for p1/p2
+    // era: floor(100/2)=50 each for p1/p2
     assert.equal(result.playerGains.p1?.base, 600);
     assert.equal(result.playerGains.p1?.rank, 55);
-    assert.equal(result.playerGains.p1?.era, 25);
+    assert.equal(result.playerGains.p1?.era, 50);
     assert.equal(result.playerGains.p2?.rank, 55);
-    assert.equal(result.playerGains.p2?.era, 25);
+    assert.equal(result.playerGains.p2?.era, 50);
     assert.equal(result.playerGains.p3?.base, 150);
     assert.equal(result.playerGains.p3?.rank, 35);
     assert.equal(result.playerGains.p3?.era, 0);
-    assert.equal(p1.wealth, 600 + 55 + 25);
-    assert.equal(p2.wealth, 600 + 55 + 25);
+    assert.equal(p1.wealth, 600 + 55 + 50);
+    assert.equal(p2.wealth, 600 + 55 + 50);
     assert.equal(p3.wealth, 150 + 35);
   });
 
@@ -207,7 +207,7 @@ describe("settleOneProject tied sharing", () => {
     assert.equal(result.playerGains.p?.base, -historyGain);
   });
 
-  it("short exact complete: tied first share rank and era +30", () => {
+  it("short exact complete: tied first share rank and era +50", () => {
     const p1 = makePlayer("p1", { investment: { 1: 10 } });
     const p2 = makePlayer("p2", { investment: { 1: 10 } });
     const project: ActiveProject = {
@@ -236,9 +236,9 @@ describe("settleOneProject tied sharing", () => {
     assert.equal(result.isCompleted, true);
     assert.equal(result.isExploded, false);
     assert.equal(result.playerGains.p1?.rank, 37); // floor((45+30)/2)
-    assert.equal(result.playerGains.p1?.era, 15); // floor(30/2)
+    assert.equal(result.playerGains.p1?.era, 25); // floor(50/2)
     assert.equal(result.playerGains.p2?.rank, 37);
-    assert.equal(result.playerGains.p2?.era, 15);
+    assert.equal(result.playerGains.p2?.era, 25);
     assert.deepEqual(project.investorRoundSlices?.p1, [10]);
     assert.deepEqual(project.investorRoundSlices?.p2, [10]);
   });

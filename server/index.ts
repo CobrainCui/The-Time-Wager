@@ -30,6 +30,10 @@ import {
   writeUploadedJpeg,
 } from "./config/uploadGuards.js";
 import { sweepRateLimits, allow } from "./util/rateLimit.js";
+import { runRuleAgentTurn, isRuleAgentConfigured, isRuleAgentEnabled } from "./logic/ruleAgent.js";
+import type { ChatTurn } from "./logic/ruleAgent.js";
+import { ensureAiProgress, pruneAiRooms } from "./ai/aiOrchestrator.js";
+import { ensureAutoHost, pruneAutoHostRooms } from "./host/autoHost.js";
 import {
   broadcastLeaderboardToAllRooms,
   getPublicCommunityLeaderboard,
@@ -72,7 +76,12 @@ function allowedOrigins(): string[] {
     .filter(Boolean);
   const list = fromEnv.length > 0 ? fromEnv : [...DEFAULT_ALLOWED_ORIGINS];
   if (process.env.NODE_ENV !== "production") {
-    for (const origin of ["http://localhost:5173", "http://127.0.0.1:5173"]) {
+    for (const origin of [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://localhost:3030",
+      "http://127.0.0.1:3030",
+    ]) {
       if (!list.includes(origin)) list.push(origin);
     }
   }
@@ -281,6 +290,46 @@ app.get("/api/community-leaderboard", (_req, res) => {
   res.json({ entries: getPublicCommunityLeaderboard() });
 });
 
+// --- 规则助手智能体（内嵌自 郑先隽-PBL/GameInstruction，功能与原智能体一致） ---
+// 代码开关：server/.env 中 RULE_AGENT_ENABLED=false 时，入口与接口整体关闭
+app.get("/api/rule-agent/health", (_req, res) => {
+  res.json({ configured: isRuleAgentConfigured(), enabled: isRuleAgentEnabled() });
+});
+
+const ruleAgentLimit = ipLimit(12, 60_000, "rule-agent");
+app.post("/api/rule-agent/chat", express.json(), ruleAgentLimit, async (req, res) => {
+  if (!isRuleAgentEnabled()) {
+    res.status(404).json({ error: "规则助手未开启" });
+    return;
+  }
+  const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
+  if (!question) {
+    res.status(400).json({ error: "缺少问题内容" });
+    return;
+  }
+  if (question.length > 500) {
+    res.status(400).json({ error: "问题过长（最多 500 字）" });
+    return;
+  }
+  const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
+  const history: ChatTurn[] = [];
+  for (const item of rawHistory) {
+    if (history.length >= 40) break;
+    const role = item?.role;
+    const content = typeof item?.content === "string" ? item.content : "";
+    if ((role === "user" || role === "assistant") && content) {
+      history.push({ role, content: content.slice(0, 4000) });
+    }
+  }
+  try {
+    const result = await runRuleAgentTurn(history, question);
+    res.json(result);
+  } catch (err) {
+    console.error("[ruleAgent] 对话失败：", err);
+    res.status(500).json({ error: "讲解员暂时无法回答，请稍后再试" });
+  }
+});
+
 app.get("/api/admin/sessions/stats", requireAdminToken, (_req, res) => {
   res.json(getSessionStats());
 });
@@ -443,7 +492,7 @@ const io = new Server(server, {
 
 setGameIo(io);
 
-const PORT = 3001;
+const PORT = Number(process.env.PORT) || 3001;
 
 io.on("connection", (socket) => {
   registerSocketHandlers(io, socket);
@@ -461,6 +510,17 @@ setInterval(() => {
   const now = Date.now();
   Object.values(rooms).forEach((game) => {
     if (handleActionTimeExpired(game)) {
+      investmentClockSyncAt.delete(game.roomId);
+      broadcastUpdate(io, game);
+      return;
+    }
+    // AI 看门狗：模型超时/失败时用本地策略兜底，绝不让 AI 卡住阶段
+    if (ensureAiProgress(game, io)) {
+      investmentClockSyncAt.delete(game.roomId);
+      return;
+    }
+    // 系统自动主持：开局、阶段推进、拍卖落槌、彩票开奖、命名兜底
+    if (ensureAutoHost(game, io)) {
       investmentClockSyncAt.delete(game.roomId);
       broadcastUpdate(io, game);
       return;
@@ -484,6 +544,8 @@ setInterval(() => {
     const created = game.roomCreatedAt ?? 0;
     if (now - created > EMPTY_ROOM_TTL_MS) {
       delete rooms[rid];
+      pruneAiRooms(new Set(Object.keys(rooms)));
+      pruneAutoHostRooms(new Set(Object.keys(rooms)));
     }
   }
 }, 1000);

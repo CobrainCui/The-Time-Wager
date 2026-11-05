@@ -10,6 +10,8 @@ export interface ChatMessage {
   note: string;
   status: "pending" | "accepted" | "rejected" | "failed";
   timestamp: number;
+  /** 群聊入站消息展示发送者 */
+  senderLabel?: string;
 }
 
 export interface ChatThread {
@@ -18,4 +20,8 @@ export interface ChatThread {
   messages: ChatMessage[];
   expanded: boolean;
   unread: number;
+  threadKind?: "peer" | "group";
+  groupId?: string;
+  groupKind?: "public" | "custom";
+  ownerId?: string;
 }

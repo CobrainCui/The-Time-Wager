@@ -1,4 +1,4 @@
-﻿export const ALL_PROJECTS = [
+export const ALL_PROJECTS = [
   {id: 1, name:'新能源汽车', type:'short', era:'气候'},
   {id: 2, name:'兴建巨型水坝', type:'short', era:'气候'},
   {id: 3, name:'视频会议', type:'short', era:'科技'},
@@ -11,7 +11,7 @@
   {id: 10, name:'EAP全面推行', type:'short', era:'心理'},
 
   {id:101, name:'植树造林', type:'long', era:'气候'},
-  {id:102, name:'城市海绵体改造', type:'long', era:'气候'},
+  {id:102, name:'海绵城市', type:'long', era:'气候'},
   {id:103, name:'数字图书馆', type:'long', era:'科技'},
   {id:104, name:'遗产保护基金', type:'long', era:'文化'},
   {id:105, name:'文化桥梁使者', type:'long', era:'文化'},

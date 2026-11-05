@@ -2,8 +2,10 @@ import React from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
+import { AutoHostCountdown } from "../components/AutoHostCountdown";
 import { getEraDefaultImageSrc, getEraImageDisplay } from "../utils/gameImageDisplay";
 import { useImageWithFallback } from "../hooks/useImageWithFallback";
+import { ERA_BONUS_LONG, ERA_BONUS_SHORT } from "../config/projectCatalog";
 
 interface Props {
   game: GameState;
@@ -144,7 +146,7 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {}, embed = fa
               </span>
               <span style={{ display: "block", fontWeight: 500, fontSize: uiRem(0.95) }}>
                 本时代 <span style={{ color: eraColor, fontWeight: 700 }}>【{card.era}】</span>
-                短期恰好满额 +30；长期满额或超上限 +50
+                短期恰好满额 +{ERA_BONUS_SHORT}；长期满额或超上限 +{ERA_BONUS_LONG}
               </span>
               <span style={{ display: "block", fontWeight: 500, fontSize: uiRem(0.9), color: "var(--color-text-muted)", marginTop: "0.25rem" }}>
                 短期爆掉与风险项目无时代加成
@@ -226,6 +228,9 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {}, embed = fa
           <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-muted)" }}>
             已准备 {readyCount} / {game.players.length} 人
           </div>
+          {!embed && game.autoHostEnabled && (
+            <AutoHostCountdown at={game.autoHostNextActionAt} label="自动进入投资" compact />
+          )}
         </div>
       </div>
     </div>

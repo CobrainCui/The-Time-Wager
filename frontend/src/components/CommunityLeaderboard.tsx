@@ -56,7 +56,7 @@ export const CommunityLeaderboard: React.FC<Props> = ({
           🌍 社区排行榜
         </h3>
         <p style={{ margin: "0.35rem 0 0", fontSize: uiRem(0.72), color: "var(--color-text-muted)" }}>
-          各社区玩家总财富之和（全服 Top 10）
+          各社区所有玩家总财富之和（含 AI · 全服 Top 10）
         </p>
       </div>
       <ol style={{ listStyle: "none", margin: 0, padding: "0.75rem 1rem" }}>

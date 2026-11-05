@@ -23,6 +23,28 @@ export interface Transaction {
   clientTempId?: string;
 }
 
+export type ChatGroupKind = "public" | "custom";
+
+export interface ChatGroup {
+  id: string;
+  kind: ChatGroupKind;
+  name: string;
+  memberIds: string[];
+  ownerId?: string;
+  createdById?: string;
+  createdAt: number;
+}
+
+export interface GroupMessage {
+  id: string;
+  groupId: string;
+  fromId: string;
+  fromName: string;
+  text: string;
+  timestamp: number;
+  clientTempId?: string;
+}
+
 export interface ActiveProject {
   id: number;
   name: string;
@@ -109,6 +131,18 @@ export interface SlackHitNotice {
   fromName: string;
   energyDelta: number;
   energyAfter: number;
+  investmentAutoUnlocked?: boolean;
+}
+
+export interface LighterBurnNotice {
+  id: string;
+  cardId: string;
+  cardName: string;
+  kind: "inventory" | "played";
+  casterName: string;
+  message: string;
+  energyRefund?: number;
+  wealthRefund?: number;
 }
 
 export interface BuffRoundNote {
@@ -127,6 +161,7 @@ export interface Player {
   rank: number;
   investment: Record<number, number>;
   investmentDraft?: Record<number, number>;
+  investmentDraftAdminRevision?: number;
   longTerm: Record<number, LongTermProgress>;
 
   inventory: string[]; 
@@ -139,11 +174,11 @@ export interface Player {
   slackedBy: string[];
   /** 被摸鱼后待本人确认（仅本人可见） */
   pendingSlackHits?: SlackHitNotice[];
+  /** 结算打火机命中后待本人确认 */
+  pendingLighterBurnNotices?: LighterBurnNotice[];
 
   /** 本轮已购咖啡杯数（服务端权威） */
   coffeePurchasesThisRound?: number;
-  /** 持打火机时可见：该玩家本局拍卖所得卡 id（不含打火机） */
-  burnableCardIds?: string[];
 
   totalEnergyConsumed: number; 
   wealthHistory: number[];     
@@ -155,6 +190,8 @@ export interface Player {
 
   isAI?: boolean;
   aiPersona?: string;
+  /** AI 难度（真人玩家为空） */
+  aiDifficulty?: "easy" | "normal" | "hard";
 }
 
 export interface EventOption {
@@ -192,6 +229,13 @@ export interface GainBreakdown {
   eraBeforeGold?: number;
 }
 
+export interface SettlementHistoryEntry {
+  round: number;
+  currentEra: number;
+  roundInEra: number;
+  results: SettlementProjectResult[];
+}
+
 export interface SettlementProjectResult {
   projectId: number;
   name: string;
@@ -208,8 +252,22 @@ export interface SettlementProjectResult {
   playerGains: Record<string, GainBreakdown>;
 }
 
+export type LotterySource = "random.org" | "server" | "manual";
+
+export interface LotteryOffer {
+  offerId: string;
+  playerId: string;
+  amount: number;
+  /** 线上随机骰子点数 1–6 */
+  roll?: number;
+  source?: LotterySource;
+  drawnAt?: number;
+}
+
 export interface GameState {
   roomId: string;
+  /** 本局 session id：新一局会变化，用于清空上一局的聊天/交易视图 */
+  sessionId?: string;
   players: Player[];
   phase: Phase;
 
@@ -217,6 +275,14 @@ export interface GameState {
   phaseFinished: string[];
 
   transactions: Transaction[];
+  chatGroups?: ChatGroup[];
+  groupMessages?: GroupMessage[];
+  /** 本场可见私信/转账归档元数据（热尾之外是否还有更早记录） */
+  transactionLog?: { total: number; hasMore: boolean };
+  /** 主持当前是否处于某玩家只读视角（仅管理端下发） */
+  adminPerspectivePlayerId?: string | null;
+  /** 上帝视角标记（仅管理端总览时下发） */
+  isGodView?: boolean;
 
   currentEra: number;
   roundInEra: number;
@@ -235,6 +301,13 @@ export interface GameState {
   serverNow?: number;
   tutorialStep?: number;
 
+  /** 系统自动主持开关 */
+  autoHostEnabled?: boolean;
+  /** 等待房自动开局时间 */
+  autoStartAt?: number;
+  /** 当前阶段下一次自动主持动作时间（时代介绍/结算/拍卖/命名倒计时） */
+  autoHostNextActionAt?: number;
+
   activeProjects: ActiveProject[];
   uncompletedProjects: ActiveProject[];
   completedProjects: ActiveProject[];
@@ -251,7 +324,16 @@ export interface GameState {
   lastSettlement?: {
     round: number;
     results: SettlementProjectResult[];
+    hostAdjusted?: boolean;
+    hostRevision?: number;
   };
+
+  hostRevision?: number;
+  /** 主持上帝视角：结算阶段牌面项目列表（来自结算快照） */
+  settlementBaselineActiveProjects?: ActiveProject[];
+
+  /** 本局各轮结算快照（不含 telemetry 事件） */
+  settlementHistory?: SettlementHistoryEntry[];
   
   communityName?: string;
   globalLeaderboard?: { name: string; score: number; recordedAt?: number }[];
@@ -259,6 +341,10 @@ export interface GameState {
   auctionDistributedCardIds?: string[];
   /** 正在拍的卡 */
   auctionFocusCardId?: string;
+  /** 当前焦点卡开始时间（自动落槌倒计时用） */
+  auctionFocusSetAt?: number;
+  /** 自动主持已跳过的卡（本场不再自动回到） */
+  auctionPassedCardIds?: string[];
   /** 本场拍卖已用过强买强卖的玩家 */
   forceBuyUsedPlayerIds?: string[];
   /** 本场拍卖成交明细（主持撤销发放用） */
@@ -280,7 +366,13 @@ export interface GameState {
   /** 至少要出到 */
   auctionMinimumNextBid?: number;
   /** 本场已成交（玩家可见：卡、得主、成交价；不含出价时的财富比例） */
-  auctionSoldLots?: { cardId: string; playerId: string; playerName: string; cost: number }[];
+  auctionSoldLots?: {
+    cardId: string;
+    playerId: string;
+    playerName: string;
+    cost: number;
+    source?: "hammer" | "force_buy";
+  }[];
   /** 本局已发放的全部拍卖成交（公开情报，不含是否已使用） */
   auctionSessionWins?: {
     cardId: string;
@@ -288,6 +380,7 @@ export interface GameState {
     playerName: string;
     cost: number;
     auctionRound?: number;
+    source?: "hammer" | "force_buy";
   }[];
   auctionBidHistory?: {
     bidId: string;
@@ -319,11 +412,18 @@ export interface GameState {
   /** @deprecated */
   myPendingAuctionOffers?: { offerId: string; playerId: string; cardId: string; cost: number }[];
   /** 仅管理端：待玩家确认的彩票开奖 */
-  pendingLotteryOffers?: { offerId: string; playerId: string; amount: number }[];
+  pendingLotteryOffers?: LotteryOffer[];
   /** 仅本人：待确认的彩票开奖（刷新/重连后仍显示弹窗） */
-  pendingLotteryOffer?: { offerId: string; playerId: string; amount: number };
+  pendingLotteryOffer?: LotteryOffer;
   /** 仅管理端：已确认彩票开奖 */
-  lotteryCompletedDeals?: { playerId: string; amount: number }[];
+  lotteryCompletedDeals?: {
+    playerId: string;
+    amount: number;
+    enteredAmount?: number;
+    goldApplied?: boolean;
+    roll?: number;
+    source?: LotterySource;
+  }[];
   /** 仅管理端：待玩家确认的财富调整 */
   pendingWealthAdjustments?: { offerId: string; playerId: string; delta: number }[];
   /** 仅本人：待确认的财富调整 */

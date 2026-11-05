@@ -4,6 +4,10 @@ import { TYPE_COLORS } from "../components/ProjectCard";
 import { TUTORIAL_SLIDES } from "../tutorialData";
 import { TutorialDemoShell } from "./TutorialDemoShell";
 import { TUTORIAL_DEMO_BY_KEY } from "./tutorialDemos";
+import { GavelIcon } from "../components/icons/GavelIcon";
+import { TutorialProjectTypesCopy } from "./TutorialProjectTypesCopy";
+import { EnergyScheduleMiniTable } from "../components/help/EnergyScheduleMiniTable";
+import { TUTORIAL_PROJECT_TYPES_PLAY_HINT } from "../config/playerHelpReference";
 
 const PROJECT_TYPE_LINE_KEY: Record<string, keyof typeof TYPE_COLORS> = {
   短期项目: "short",
@@ -167,14 +171,35 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
   const bulletFont = isIntro ? uiRem(1.12) : isFinale ? uiRem(1.05) : undefined;
   const heroCopyClass = isHero ? " tutorial-slide-panel__copy--hero" : "";
 
+  const gavelIconPx = (() => {
+    const rem = parseFloat(iconSize);
+    return Number.isFinite(rem) ? Math.round(rem * 16) : 56;
+  })();
+  const slideIcon =
+    slide.gavelIcon ? (
+      <span className="tutorial-slide-icon-gavel" style={{ display: "inline-flex", justifyContent: "center" }}>
+        <GavelIcon size={gavelIconPx} decorative />
+      </span>
+    ) : (
+      slide.icon
+    );
+
+  const isProjectTypesSlide = slide.demoKey === "projectTypes";
+  const isResourcesSlide = slide.demoKey === "resources";
+
+  const projectTypesLineFont =
+    isProjectTypesSlide && fitViewport ? uiRem(0.84) : isProjectTypesSlide ? uiRem(0.88) : lineFont;
+
   const copyBlock = (
     <div
       className={
         fitViewport
-          ? `tutorial-slide-panel__copy${heroCopyClass}`
+          ? `tutorial-slide-panel__copy${heroCopyClass}${isProjectTypesSlide ? " tutorial-slide-panel__copy--project-types" : ""}`
           : isHero
-            ? `tutorial-slide-panel__copy${heroCopyClass}`
-            : undefined
+            ? `tutorial-slide-panel__copy${heroCopyClass}${isProjectTypesSlide ? " tutorial-slide-panel__copy--project-types" : ""}`
+            : isProjectTypesSlide
+              ? "tutorial-slide-panel__copy tutorial-slide-panel__copy--project-types"
+              : undefined
       }
       style={{
         background: "rgba(0,0,0,0.25)",
@@ -185,16 +210,23 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
         marginBottom: fitViewport ? 0 : "0.5rem",
       }}
     >
-      {slide.content.map((line, i) => {
+      {isProjectTypesSlide ? (
+        <TutorialProjectTypesCopy lineFont={projectTypesLineFont} fitViewport={fitViewport} />
+      ) : null}
+      {!isProjectTypesSlide &&
+      slide.content.map((line, i) => {
         const rendered = renderTutorialLine(line);
+        const showEnergyTableAfter = isResourcesSlide && i === 0;
+        const isLastLine = i === slide.content.length - 1;
         return (
+          <React.Fragment key={i}>
           <div
-            key={i}
             style={{
               display: "flex",
               gap: fitViewport ? "0.5rem" : "0.75rem",
               padding: linePad,
-              borderBottom: i < slide.content.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
+              borderBottom:
+                showEnergyTableAfter || isLastLine ? "none" : "1px solid rgba(255,255,255,0.04)",
               alignItems: "flex-start",
             }}
           >
@@ -231,24 +263,41 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
                 rendered.body
               )}
             </span>
-          </div>
+            </div>
+            {showEnergyTableAfter && (
+              <div
+                style={{
+                  paddingLeft: fitViewport ? "1.25rem" : "1.5rem",
+                  borderBottom: isLastLine ? "none" : "1px solid rgba(255, 255, 255, 0.04)",
+                }}
+              >
+                <EnergyScheduleMiniTable lineFont={lineFont} fitViewport={fitViewport} />
+              </div>
+            )}
+          </React.Fragment>
         );
       })}
     </div>
   );
 
+  const demoPlayHint = slide.demoKey === "projectTypes" ? TUTORIAL_PROJECT_TYPES_PLAY_HINT : undefined;
+
   const demoBlock =
     DemoComponent &&
     (fitViewport ? (
       <div className="tutorial-slide-panel__demo">
-        <TutorialDemoShell dense onReset={() => setDemoResetKey((k) => k + 1)}>
+        <TutorialDemoShell
+          dense
+          playHint={demoPlayHint}
+          onReset={() => setDemoResetKey((k) => k + 1)}
+        >
           <div key={`${step}-${demoResetKey}`} className="tutorial-slide-panel__demo-inner">
             <DemoComponent playerName={playerName} />
           </div>
         </TutorialDemoShell>
       </div>
     ) : (
-      <TutorialDemoShell onReset={() => setDemoResetKey((k) => k + 1)}>
+      <TutorialDemoShell playHint={demoPlayHint} onReset={() => setDemoResetKey((k) => k + 1)}>
         <div key={`${step}-${demoResetKey}`}>
           <DemoComponent playerName={playerName} />
         </div>
@@ -334,7 +383,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
                   animation: "float 3s ease-in-out infinite",
                 }}
               >
-                {slide.icon}
+                {slideIcon}
               </div>
               <h1
                 style={{
@@ -364,7 +413,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
                 animation: "float 3s ease-in-out infinite",
               }}
             >
-              {slide.icon}
+              {slideIcon}
             </div>
 
             <h1

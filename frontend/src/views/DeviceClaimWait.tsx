@@ -1,6 +1,7 @@
 import React from "react";
 import { uiRem } from "../utils/typography";
 import { socket } from "../socket";
+import { clearGameSession } from "../gameSession";
 
 type Props = {
   roomId: string;
@@ -36,6 +37,7 @@ export const DeviceClaimWait: React.FC<Props> = ({ roomId, playerName, onCancel 
         className="btn btn-ghost"
         onClick={() => {
           socket.emit("cancelDeviceClaim");
+          clearGameSession();
           onCancel();
         }}
       >

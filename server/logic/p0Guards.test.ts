@@ -80,6 +80,8 @@ describe("investment visibility", () => {
     const selfView = mine.players.find((p) => p.id === "me");
     assert.equal(meView?.investmentDraft, undefined);
     assert.deepEqual(meView?.investment, {});
+    assert.equal("energy" in (meView ?? {}), false);
+    assert.equal(typeof selfView?.energy, "number");
     assert.deepEqual(selfView?.investmentDraft, { 1: 2 });
     assert.deepEqual(selfView?.investment, { 1: 3 });
     assert.equal("reconnectToken" in (selfView ?? {}), false);
@@ -89,6 +91,8 @@ describe("investment visibility", () => {
     assert.equal("pendingLotteryOffer" in mine, false);
     assert.equal("auctionCompletedDeals" in mine, false);
     assert.equal("auctionBids" in mine, false);
+    assert.equal("sessionTelemetry" in mine, false);
+    assert.equal(Array.isArray((mine as { settlementHistory?: unknown[] }).settlementHistory), true);
 
     game.auctionCompletedDeals = [
       { cardId: "buff_gold", playerId: "them", cost: 25, auctionRound: 1 },
@@ -131,7 +135,7 @@ describe("investment visibility", () => {
 });
 
 describe("community namer", () => {
-  it("skips offline players and AI", () => {
+  it("skips offline players but gives connected AI equal naming rights", () => {
     const game = createInitialGame("room", []);
     game.players = [
       player("rich-offline", { wealth: 500, connected: false }),
@@ -139,6 +143,6 @@ describe("community namer", () => {
       player("online", { wealth: 100 }),
       player("poorer", { wealth: 50 }),
     ];
-    assert.equal(getCommunityNamer(game)?.id, "online");
+    assert.equal(getCommunityNamer(game)?.id, "bot");
   });
 });

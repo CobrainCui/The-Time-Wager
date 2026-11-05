@@ -17,6 +17,6 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
+  "include": ["src", "../server/logic/forbiddenText.ts", "../server/data/forbiddenWords.ts"],
   "exclude": ["src/**/*.test.ts", "src/**/*.exploded.test.ts"]
 }

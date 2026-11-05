@@ -1,3 +1,4 @@
+import { ERA_BONUS_POOL_LONG, ERA_BONUS_POOL_SHORT } from "../config/eraBonus.js";
 import { GameState } from "../state/gameState.js";
 
 /**
@@ -25,8 +26,8 @@ export function applyEraBonus(
   const top = rankedInvestors[0];
 
   const bonus =
-    project.type === "short" ? 30 :
-    project.type === "long"  ? 50 : 0;
+    project.type === "short" ? ERA_BONUS_POOL_SHORT :
+    project.type === "long"  ? ERA_BONUS_POOL_LONG : 0;
 
   if (bonus > 0) {
     top.player.achievement += bonus;

@@ -2,9 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { BUFF_CARD_DEFS, getAuctionCardsForEra } from "../config/buffCards";
+import { AuctionResultsPanel } from "../components/AuctionResultsPanel";
 import { BuffCardArt } from "../components/BuffCardArt";
 import { GavelIcon } from "../components/icons/GavelIcon";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { socket } from "../socket";
+import { AutoHostCountdown } from "../components/AutoHostCountdown";
 import {
   formatWealthHoldNote,
   playerAvailableWealth,
@@ -15,6 +18,7 @@ import {
   normalizeDigitsNonNegativeInt,
   parseNormalizedNonNegativeInt,
 } from "../utils/nonNegativeIntInput";
+import { BuffDescText } from "../utils/buffDescEmphasis";
 
 interface Props {
   game: GameState;
@@ -22,6 +26,11 @@ interface Props {
   buffImages?: Record<string, number>;
   /** 主持公共预览：只展示牌面与出价记录，隐藏个人出价 */
   embed?: boolean;
+  /** 教程等本地试玩：出价走回调，不发 socket */
+  onPlaceBid?: (amount: number) => void;
+  onUseForceBuy?: () => void;
+  /** 嵌入教程下半区，去掉整页留白 */
+  layout?: "page" | "embedded";
 }
 
 function formatBidTime(ts: number): string {
@@ -36,7 +45,15 @@ function formatBidTime(ts: number): string {
   }
 }
 
-export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed = false }) => {
+export const AuctionView: React.FC<Props> = ({
+  game,
+  me,
+  buffImages = {},
+  embed = false,
+  onPlaceBid,
+  onUseForceBuy,
+  layout = "page",
+}) => {
   const distributed = new Set(game.auctionDistributedCardIds || []);
   const focusId = game.auctionFocusCardId;
   const hasForceBuy = me.inventory.includes("buff_force_buy");
@@ -59,6 +76,7 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
   const highBidderName = game.auctionHighBidderName ?? null;
   const history = game.auctionBidHistory ?? [];
   const soldLots = game.auctionSoldLots ?? [];
+  const isWideLayout = useMediaQuery("(min-width: 900px)", false);
   const forceBuyTargetsSelf = focusId === "buff_force_buy";
 
   const [amountText, setAmountText] = useState("");
@@ -145,60 +163,130 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
     }
     if (!focusId || sending) return;
     setSending(true);
+    if (onPlaceBid) {
+      onPlaceBid(value);
+      window.setTimeout(() => setSending(false), 400);
+      return;
+    }
     socket.emit("playerPlaceAuctionBid", { amount: value });
     window.setTimeout(() => setSending(false), 400);
   };
 
-  return (
-    <div
-      className="auction-page"
-      style={{
+  const compact = layout === "embedded" || embed;
+  const showResultsRail = isWideLayout && !compact;
+
+  const resultsPanel = (
+    <AuctionResultsPanel
+      lots={soldLots}
+      buffImages={buffImages}
+      meId={me.id}
+      variant={showResultsRail ? "rail" : "strip"}
+    />
+  );
+
+  const pageStyle = compact
+    ? {
+        minHeight: 0,
+        background: "transparent",
+        padding: embed ? "0.5rem 0.75rem 0.75rem" : "0.25rem 0 0.5rem",
+      }
+    : {
         minHeight: "100vh",
         background: `radial-gradient(ellipse at 50% 0%, rgba(168,85,247,0.14) 0%, transparent 55%), #070b14`,
         padding: "2.5rem 1rem 3rem",
         paddingTop: "3.25rem",
         paddingBottom: "calc(3rem + env(safe-area-inset-bottom, 0px))",
-      }}
+      };
+
+  return (
+    <div
+      className={compact ? "auction-page auction-page--embedded" : "auction-page"}
+      style={pageStyle}
     >
-      <div style={{ maxWidth: "1120px", margin: "0 auto" }}>
-        <div style={{ textAlign: "center", marginBottom: "1.75rem" }}>
-          <div
-            role="img"
-            aria-label="拍卖"
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              marginBottom: "0.75rem",
-              animation: "float 3s ease-in-out infinite",
-              filter: "drop-shadow(0 0 14px rgba(168,85,247,0.5))",
-            }}
-          >
-            <GavelIcon size={56} color="#c084fc" />
+      <div style={{ maxWidth: showResultsRail ? "1280px" : "1120px", margin: "0 auto" }}>
+        {!compact && (
+          <div style={{ textAlign: "center", marginBottom: "1.75rem" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginBottom: "0.75rem",
+                animation: "float 3s ease-in-out infinite",
+                filter: "drop-shadow(0 0 14px rgba(168,85,247,0.5))",
+              }}
+            >
+              <GavelIcon size={56} decorative />
+            </div>
+            <h1 style={{ fontSize: "2rem", fontWeight: 900, color: "#c084fc", margin: 0 }}>拍卖会</h1>
           </div>
-          <h1 style={{ fontSize: "2rem", fontWeight: 900, color: "#c084fc", margin: 0 }}>拍卖会</h1>
-        </div>
+        )}
+
+        {!embed && game.autoHostEnabled && (
+          <div style={{ textAlign: "center", marginBottom: "0.75rem" }}>
+            <AutoHostCountdown
+              at={game.autoHostNextActionAt}
+              label={focusId ? "自动落槌 / 跳过" : "自动选出下一张"}
+              compact
+            />
+          </div>
+        )}
+
+        {!showResultsRail && (
+          <div style={{ marginBottom: compact ? "0.75rem" : "1.25rem" }}>
+            {!compact && (
+              <div
+                style={{
+                  fontWeight: 800,
+                  color: "var(--color-text-secondary)",
+                  marginBottom: "0.5rem",
+                  fontSize: uiRem(0.85),
+                }}
+              >
+                本场成交
+              </div>
+            )}
+            {resultsPanel}
+          </div>
+        )}
 
         {!focusId ? (
           <div
+            className="auction-lot-layout"
             style={{
-              border: "2px dashed rgba(168,85,247,0.35)",
-              borderRadius: "1rem",
-              padding: "2.5rem 1rem",
-              textAlign: "center",
-              color: "var(--color-text-muted)",
-              fontSize: uiRem(0.9),
+              display: "grid",
+              gridTemplateColumns: showResultsRail ? "minmax(0, 1fr) minmax(200px, 0.88fr)" : "1fr",
+              gap: "1.25rem",
+              alignItems: "start",
             }}
           >
-            {pendingCards.length === 0
-              ? "本轮待拍道具已全部成交，请等待主持人结束拍卖。"
-              : "暂时没有正在拍的卡，请等待主持人选择。"}
+            <div
+              style={{
+                border: "2px dashed rgba(168,85,247,0.35)",
+                borderRadius: "1rem",
+                padding: "2.5rem 1rem",
+                textAlign: "center",
+                color: "var(--color-text-muted)",
+                fontSize: uiRem(0.9),
+              }}
+            >
+              {pendingCards.length === 0
+                ? game.autoHostEnabled
+                  ? "本轮待拍道具已全部成交，系统即将结束拍卖。"
+                  : "本轮待拍道具已全部成交，请等待主持人结束拍卖。"
+                : game.autoHostEnabled
+                  ? "系统正在选择下一张拍品…"
+                  : "暂时没有正在拍的卡，请等待主持人选择。"}
+            </div>
+            {showResultsRail && resultsPanel}
           </div>
         ) : (
           <div
             className="auction-lot-layout"
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.15fr)",
+              gridTemplateColumns: showResultsRail
+                ? "minmax(0, 1fr) minmax(0, 1.15fr) minmax(200px, 0.88fr)"
+                : "minmax(0, 1fr) minmax(0, 1.15fr)",
               gap: "1.25rem",
               alignItems: "start",
             }}
@@ -239,7 +327,7 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                     lineHeight: 1.55,
                   }}
                 >
-                  {focusDef?.desc || "—"}
+                  {focusDef?.desc ? <BuffDescText text={focusDef.desc} /> : "—"}
                 </div>
               </div>
               {!embed && hasForceBuy && (
@@ -252,16 +340,20 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                     const name = focusDef?.name || focusId;
                     if (
                       !window.confirm(
-                        `使用强买强卖？\n将免费拿走正在拍的【${name}】（本场拍卖只能用一次）。`
+                        `使用强买强卖？\n将免费拿走正在拍的【${name}】。该卡牌（强买强卖）只能用一次。`
                       )
                     ) {
+                      return;
+                    }
+                    if (onUseForceBuy) {
+                      onUseForceBuy();
                       return;
                     }
                     socket.emit("useBuffCard", { cardId: "buff_force_buy" });
                   }}
                 >
                   {forceBuyUsed
-                    ? "本场已用过强买强卖"
+                    ? "该卡牌（强买强卖）只能用一次"
                     : forceBuyTargetsSelf
                       ? "不能强买正在拍的强买强卖"
                       : "强买强卖：免费拿走正在拍的这张"}
@@ -271,6 +363,7 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
 
             {/* 右侧：加价过程 */}
             <div
+              className="auction-bid-panel"
               style={{
                 background: "rgba(168,85,247,0.06)",
                 border: "1px solid rgba(168,85,247,0.3)",
@@ -280,12 +373,14 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                 flexDirection: "column",
                 gap: "1rem",
                 minHeight: "320px",
+                minWidth: 0,
               }}
             >
               <div
+                className="auction-price-grid"
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                   gap: "0.65rem",
                   fontSize: uiRem(0.82),
                 }}
@@ -304,44 +399,41 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                 <PriceCell label="至少要出到" value={String(minNext)} accent />
               </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "0.5rem 1rem",
-                  alignItems: "center",
-                  fontSize: uiRem(0.8),
-                  color: "var(--color-text-secondary)",
-                }}
-              >
+              <div className="auction-my-bid-summary" style={{ fontSize: uiRem(0.8), color: "var(--color-text-secondary)" }}>
                 {!embed && (
                   <>
-                    <span>
-                      我的可用财富{" "}
-                      <strong style={{ color: "#86efac", fontFamily: "var(--font-mono)" }}>
+                    <div className="auction-my-wealth-row" aria-label={`可用财富 ${availableShown}`}>
+                      <span style={{ fontSize: uiRem(1.05) }} aria-hidden>💰</span>
+                      <strong className="auction-mono-amount auction-mono-amount--wealth">
                         {availableShown}
                       </strong>
-                      {holdShown && (
-                        <span style={{ color: "var(--color-text-muted)" }}> · {holdShown}</span>
-                      )}
-                    </span>
-                    <span
-                      style={{
-                        fontWeight: 700,
-                        color:
-                          myStatus === "leading"
-                            ? "#86efac"
-                            : myStatus === "outbid"
-                              ? "#fca5a5"
-                              : "var(--color-text-muted)",
-                      }}
-                    >
-                      {myStatus === "leading"
-                        ? "你暂时领先"
-                        : myStatus === "outbid"
-                          ? "有人出得比你高"
-                          : "你还没出过价"}
-                    </span>
+                      {holdShown ? (
+                        <span className="auction-wealth-hold">{holdShown}</span>
+                      ) : null}
+                    </div>
+                    {!iAmLeading && (
+                      <div className="auction-my-bid-status-row">
+                        <span
+                          style={{
+                            fontWeight: 700,
+                            color:
+                              myStatus === "outbid"
+                                ? "#fca5a5"
+                                : "var(--color-text-muted)",
+                          }}
+                        >
+                          {myStatus === "outbid" ? "有人出得比你高" : "你还没出过价"}
+                        </span>
+                        {myStatus === "outbid" && currentBid > 0 ? (
+                          <span className="auction-my-bid-amount-label">
+                            现在最高价
+                            <strong className="auction-mono-amount auction-mono-amount--bid">
+                              {currentBid}
+                            </strong>
+                          </span>
+                        ) : null}
+                      </div>
+                    )}
                   </>
                 )}
                 <span style={{ color: "var(--color-text-muted)" }}>
@@ -361,9 +453,10 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                   出价记录
                 </div>
                 <div
+                  className="auction-bid-history-list"
                   style={{
-                    maxHeight: "220px",
-                    overflowY: "auto",
+                    maxHeight: layout === "embedded" ? undefined : "220px",
+                    overflowY: layout === "embedded" ? undefined : "auto",
                     display: "flex",
                     flexDirection: "column",
                     gap: "0.4rem",
@@ -374,14 +467,13 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                       还没有出价。起拍价是 {startingBid}，第一手至少出 {startingBid}。
                     </div>
                   ) : (
-                    history.map((row, idx) => (
+                    history.map((row, idx) => {
+                      const isMine = row.playerId === me.id;
+                      return (
                       <div
                         key={row.bidId}
+                        className={`auction-bid-history-row${isMine ? " auction-bid-history-row--mine" : ""}`}
                         style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: "0.35rem 0.75rem",
-                          alignItems: "center",
                           padding: "0.45rem 0.65rem",
                           borderRadius: "0.65rem",
                           background:
@@ -391,18 +483,18 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                           border:
                             row.status === "leading"
                               ? "1px solid rgba(251,191,36,0.4)"
-                              : "1px solid transparent",
+                              : isMine
+                                ? "1px solid rgba(134,239,172,0.25)"
+                                : "1px solid transparent",
                           fontSize: uiRem(0.78),
                         }}
                       >
-                        <span style={{ color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+                        <span className="auction-bid-history-time">
                           {formatBidTime(row.timestamp)}
                         </span>
-                        <span style={{ fontWeight: 700, color: "white" }}>{row.playerName}</span>
-                        <span style={{ fontFamily: "var(--font-mono)", fontWeight: 800, color: "#fbbf24" }}>
-                          {row.amount}
-                        </span>
-                        <span style={{ color: "var(--color-text-muted)" }}>
+                        <span className="auction-bid-history-name">{row.playerName}</span>
+                        <span className="auction-bid-history-amount">{row.amount}</span>
+                        <span className="auction-bid-history-detail">
                           {idx === history.length - 1
                             ? row.amount === startingBid
                               ? "按起拍价出"
@@ -410,12 +502,15 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                             : `比上一手多了 ${row.incrementFromPrevious}`}
                         </span>
                         {row.status === "leading" ? (
-                          <span style={{ color: "#fbbf24", fontWeight: 800 }}>暂时领先</span>
+                          <span className="auction-bid-history-tag auction-bid-history-tag--leading">
+                            暂时领先
+                          </span>
                         ) : (
-                          <span style={{ color: "var(--color-text-muted)" }}>已被超过</span>
+                          <span className="auction-bid-history-tag">已被超过</span>
                         )}
                       </div>
-                    ))
+                    );
+                    })
                   )}
                 </div>
               </div>
@@ -423,19 +518,16 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
               {!embed && (
               <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                 {iAmLeading ? (
-                  <div
-                    style={{
-                      padding: "0.75rem 1rem",
-                      borderRadius: "0.75rem",
-                      background: "rgba(134,239,172,0.12)",
-                      border: "1px solid rgba(134,239,172,0.35)",
-                      color: "#86efac",
-                      fontWeight: 700,
-                      fontSize: uiRem(0.88),
-                      textAlign: "center",
-                    }}
-                  >
-                    你已暂时领先，无需再出。等主持人确认成交，或等有人出得比你高。
+                  <div className="auction-my-leading-panel">
+                    <div className="auction-my-leading-amount-wrap">
+                      <span className="auction-my-leading-label">你的出价</span>
+                      <span className="auction-mono-amount auction-mono-amount--bid-lg">
+                        {currentBid > 0 ? currentBid : "—"}
+                      </span>
+                    </div>
+                    <p className="auction-my-leading-hint">
+                      暂时领先，无需再加。等主持人确认成交，或等有人出得比你高。
+                    </p>
                   </div>
                 ) : (
                   <>
@@ -468,24 +560,26 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                         再加 10
                       </button>
                     </div>
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "stretch" }}>
+                    <div className="auction-bid-submit-row" style={{ display: "flex", gap: "0.5rem", alignItems: "stretch" }}>
                       <input
                         type="text"
                         inputMode="numeric"
                         pattern="[0-9]*"
                         autoComplete="off"
-                        className="input"
+                        className="input auction-bid-amount-input"
                         value={amountText}
                         onChange={(e) =>
                           setAmountText(normalizeDigitsNonNegativeInt(e.target.value))
                         }
                         aria-label="出价金额"
                         style={{
-                          flex: 1,
+                          flex: "1 1 8rem",
+                          minWidth: "7.5rem",
                           textAlign: "center",
                           fontFamily: "var(--font-mono)",
-                          fontSize: uiRem(1.1),
+                          fontSize: uiRem(1.15),
                           fontWeight: 800,
+                          fontVariantNumeric: "tabular-nums",
                         }}
                       />
                       <button
@@ -529,50 +623,8 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                 </div>
               )}
             </div>
-          </div>
-        )}
 
-        {soldLots.length > 0 && (
-          <div style={{ marginTop: "1.5rem" }}>
-            <div
-              style={{
-                fontWeight: 800,
-                color: "var(--color-text-secondary)",
-                marginBottom: "0.65rem",
-                fontSize: uiRem(0.9),
-              }}
-            >
-              已成交
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-              {soldLots.map((lot) => {
-                const def = BUFF_CARD_DEFS[lot.cardId];
-                return (
-                  <div
-                    key={lot.cardId}
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: "0.35rem 0.85rem",
-                      alignItems: "center",
-                      padding: "0.55rem 0.8rem",
-                      borderRadius: "0.75rem",
-                      background: "rgba(255,255,255,0.03)",
-                      border: "1px solid rgba(255,255,255,0.06)",
-                      fontSize: uiRem(0.82),
-                    }}
-                  >
-                    <span style={{ fontWeight: 800, color: def?.color || "#d8b4fe" }}>
-                      {def?.name || lot.cardId}
-                    </span>
-                    <span style={{ color: "white", fontWeight: 700 }}>{lot.playerName}</span>
-                    <span style={{ fontFamily: "var(--font-mono)", color: "#fbbf24", fontWeight: 800 }}>
-                      {lot.cost > 0 ? `${lot.cost}` : "强买 · 免费"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+            {showResultsRail && resultsPanel}
           </div>
         )}
 
@@ -632,7 +684,7 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
                         lineHeight: 1.55,
                       }}
                     >
-                      {def?.desc || "—"}
+                      {def?.desc ? <BuffDescText text={def.desc} /> : "—"}
                     </div>
                   </div>
                 );
@@ -643,13 +695,7 @@ export const AuctionView: React.FC<Props> = ({ game, me, buffImages = {}, embed 
       </div>
 
       <style>{`
-        .auction-page {
-          padding-right: max(1rem, min(18rem, 30vw));
-        }
-        @media (max-width: 820px) {
-          .auction-page {
-            padding-right: 1rem;
-          }
+        @media (max-width: 899px) {
           .auction-lot-layout {
             grid-template-columns: 1fr !important;
           }
@@ -671,6 +717,7 @@ const PriceCell: React.FC<{
       borderRadius: "0.75rem",
       padding: "0.55rem 0.7rem",
       border: "1px solid rgba(168,85,247,0.18)",
+      minWidth: 0,
     }}
   >
     <div style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.7), marginBottom: "0.2rem" }}>
@@ -683,7 +730,12 @@ const PriceCell: React.FC<{
         color: accent ? "#fbbf24" : "white",
         fontSize: uiRem(1),
         lineHeight: 1.2,
+        fontVariantNumeric: accent ? "tabular-nums" : undefined,
+        whiteSpace: accent ? "nowrap" : "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
       }}
+      title={value}
     >
       {value}
     </div>

@@ -8,6 +8,7 @@ import { AdminSessionHistory } from "./AdminSessionHistory";
 import { AdminLogin } from "./AdminLogin";
 import { clearAdminToken, getAdminToken, setAdminToken } from "./adminToken";
 import { ConnectionGate } from "../components/ConnectionGate";
+import { handleServerClientUpdateRequired } from "../bootstrapAppUpdate";
 import { useSocketConnection } from "../hooks/useSocketConnection";
 
 type AuthState = "connecting" | "login" | "authenticated";
@@ -33,6 +34,7 @@ export default function AdminApp() {
   const [buffImages, setBuffImages] = useState<Record<string, number>>({});
   const [personaImages, setPersonaImages] = useState<Record<string, number>>({});
   const [adminScreen, setAdminScreen] = useState<AdminScreen>("rooms");
+  const [aiPlayersEnabled, setAiPlayersEnabled] = useState(true);
 
   const spectatingRoomIdRef = useRef<string | null>(null);
   const authTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -91,13 +93,18 @@ export default function AdminApp() {
   useEffect(() => {
     const onAuthOk = () => finishAuthSuccess();
     const onAuthFailed = (payload: { message?: string }) => finishAuthFailed(payload.message);
+    const onFeatures = (payload: { aiPlayers?: boolean }) => {
+      if (typeof payload?.aiPlayers === "boolean") setAiPlayersEnabled(payload.aiPlayers);
+    };
 
     socket.on("adminAuthOk", onAuthOk);
     socket.on("adminAuthFailed", onAuthFailed);
+    socket.on("adminFeatures", onFeatures);
 
     return () => {
       socket.off("adminAuthOk", onAuthOk);
       socket.off("adminAuthFailed", onAuthFailed);
+      socket.off("adminFeatures", onFeatures);
     };
   }, [finishAuthSuccess, finishAuthFailed]);
 
@@ -162,6 +169,9 @@ export default function AdminApp() {
     const onSocketError = (msg: string) => {
       alert(typeof msg === "string" ? msg : "操作失败");
     };
+    const onClientUpdateRequired = () => {
+      handleServerClientUpdateRequired("admin");
+    };
     const onSyncImages = (images: Record<number, number>) => setProjectImages(images);
     const onSyncEraImages = (images: Record<string, number>) => setEraImages(images);
     const onSyncBuffImages = (images: Record<string, number>) => setBuffImages(images);
@@ -173,6 +183,7 @@ export default function AdminApp() {
     socket.on("adminRoomList", onAdminRoomList);
     socket.on("roomDissolved", onRoomDissolved);
     socket.on("error", onSocketError);
+    socket.on("clientUpdateRequired", onClientUpdateRequired);
     socket.on("syncProjectImages", onSyncImages);
     socket.on("syncEraImages", onSyncEraImages);
     socket.on("syncBuffImages", onSyncBuffImages);
@@ -188,6 +199,7 @@ export default function AdminApp() {
       socket.off("adminRoomList", onAdminRoomList);
       socket.off("roomDissolved", onRoomDissolved);
       socket.off("error", onSocketError);
+      socket.off("clientUpdateRequired", onClientUpdateRequired);
       socket.off("syncProjectImages", onSyncImages);
       socket.off("syncEraImages", onSyncEraImages);
       socket.off("syncBuffImages", onSyncBuffImages);
@@ -265,6 +277,7 @@ export default function AdminApp() {
           eraImages={eraImages}
           buffImages={buffImages}
           personaImages={personaImages}
+          aiPlayersEnabled={aiPlayersEnabled}
         />
       ) : adminScreen === "sessions" ? (
         <AdminSessionHistory onBack={() => setAdminScreen("rooms")} />

@@ -9,9 +9,13 @@ import {
   rankRewardRows,
   CatalogProjectType,
   SETTLEMENT_TIMING_DETAIL,
+  PROJECT_BOARD_PERSISTENCE_DETAIL,
   effectiveRankRewards,
+  ERA_BONUS_SHORT,
+  ERA_BONUS_LONG,
 } from "../config/projectCatalog";
 import { LONG_CONTINUE_MIN_ENERGY } from "../config/longTermRules";
+import { BUFF_UI_SNIPPETS } from "../config/buffCards";
 import { ProjectTypeLabel } from "./help/ProjectTypeLabel";
 import { TYPE_COLORS } from "./ProjectCard";
 import { useImageWithFallback } from "../hooks/useImageWithFallback";
@@ -113,9 +117,15 @@ function RulesSection({
   const settlementDetail = SETTLEMENT_TIMING_DETAIL[type] ?? SETTLEMENT_TIMING_DETAIL.short;
 
   const settlementBlock = (
-    <div>
-      <div style={ruleLabel}>结算时间</div>
-      <p style={ruleValue}>{settlementDetail}</p>
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      <div>
+        <div style={ruleLabel}>结算时间</div>
+        <p style={ruleValue}>{settlementDetail}</p>
+      </div>
+      <div>
+        <div style={ruleLabel}>牌面</div>
+        <p style={ruleValue}>{PROJECT_BOARD_PERSISTENCE_DETAIL}</p>
+      </div>
     </div>
   );
 
@@ -170,7 +180,7 @@ function RulesSection({
         )}
         <div>
           <div style={ruleLabel}>时代加成</div>
-          <p style={ruleValue}>主题契合且历史总投入第 1（并列则均分）：+30（仅恰好满额；超上限投爆则无）</p>
+          <p style={ruleValue}>主题契合且历史总投入第 1（并列则均分）：+{ERA_BONUS_SHORT}（仅恰好满额；超上限投爆则无）</p>
         </div>
       </div>
     );
@@ -213,7 +223,7 @@ function RulesSection({
         )}
         <div>
           <div style={ruleLabel}>时代加成</div>
-          <p style={ruleValue}>主题契合且历史总投入第 1（并列则均分）：+50（满额或超填）</p>
+          <p style={ruleValue}>主题契合且历史总投入第 1（并列则均分）：+{ERA_BONUS_LONG}（满额或超填）</p>
         </div>
       </div>
     );
@@ -426,7 +436,7 @@ export const ProjectDetailModal: React.FC<Props> = ({
           <RulesSection project={project} tierCount={playerCount} seatedCount={seatedPlayerCount} />
 
           <p style={{ margin: "1rem 0 0", fontSize: uiRem(0.68), color: "var(--color-text-muted)", lineHeight: 1.45 }}>
-            道具「点石成金」等对额外收益的乘算以实际结算为准。
+            {BUFF_UI_SNIPPETS.goldSettlementFootnote()}
           </p>
 
           <button

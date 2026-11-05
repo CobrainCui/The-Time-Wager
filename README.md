@@ -9,7 +9,10 @@
 - **Four Life Stages (四大时代)**: Youth (青年), Prime (壮年), Middle Age (中年), Old Age (老年).
 - **Investment Strategy (投资策略)**: Balance your portfolio between short-term tasks (quick wins), long-term visions (heavy investment, high payoff), and risk ventures.
 - **Social Interaction (社交互动)**: Negotiate with up to 6 players, cooperate to fund large projects, or use buff cards to disrupt your opponents (e.g., "Slack Virus" 摸鱼传染, "Shield" 反弹护盾).
-- **AI Auto-Tuner (大模型支持)**: Built-in AI agents that simulate different player persona types (Long-termism, Risk-taking, Social connection) for gameplay parameter balancing.
+- **Group Chat (群聊与私信)**: 进房自动创建「全场」频道，支持自建小群、未读提醒与消息通知；禁聊阶段自动屏蔽，AI 发言统一过安全闸门。
+- **AI Players (C 端陪玩)**: 管理端可添加三档难度的 AI 玩家，也可按需自动补位；**不预设人格**，由模型根据局面自由发挥。未配置模型时自动使用本地策略，不会卡住房间。
+- **Auto Host (系统自动主持)**: 产品版默认由系统自动开局、推进阶段、主持拍卖、线上随机开奖与社区命名兜底，C 端无需真人主持。
+- **AI Auto-Tuner (内部调参)**: 离线批量模拟，用于校验人格判定与数值平衡。
 
 ## 🛠️ Tech Stack | 技术栈
 
@@ -108,6 +111,124 @@ pm2 describe guangyin | grep -E "script path|exec cwd"
 ```
 
 若 grep 无输出：将含本功能的提交合并到 `main` 触发 Deploy，或本机 `frontend`/`server` 分别 `npm run build` 后按 CI 同路径覆盖并 `pm2 restart guangyin`。部署后对 `admin.guangyinduidu.com` **硬刷新**（Ctrl+F5）。WebSocket `gameUpdate` 在暂停时应带 `investmentTimerPausedAt` 数字。
+
+## 🤖 AI 玩家（产品版）
+
+AI 玩家由服务端托管，和真人走同一套规则、同一个阶段判定与同一份广播协议。管理端顶部「🤖 AI 玩家」面板可选择 **难度**（简单 / 普通 / 困难），添加单个 AI、补满到 6 人、或移除某个 AI。
+
+- **不预设人格**：产品版 AI 没有固定人设，提示词只给规则、目标与当前局面，由模型自由发挥、形成自己的打法。旧局或手动指定人格的 AI 仍然兼容。
+- **基本平权**：AI 可以拍卖出价、可以成为首富、可以获得社区命名权；社区总财富榜按全部座位统计（含 AI）。
+- **全流程托管**：开局自动 ready；投资、买咖啡、用道具、转账、拍卖出价、彩票领取、结算准备全部自动完成。
+- **AI 首富命名**：社区命名阶段若在线首富是 AI，AI 会自己生成社区名；模型不可用时使用本地名称池。
+
+**调整 AI 提示词**：唯一需要改的文件是 [`server/ai/aiPrompt.ts`](server/ai/aiPrompt.ts)。
+
+- `buildSystemPrompt`：身份、目标、规则摘要、输出约束；
+- `buildInvestmentPrompt`：投资阶段的观察与任务；
+- `buildAuctionPrompt`：拍卖出价/放弃/强买；
+- `buildCommunityNamePrompt`：AI 首富命名。
+
+改完执行 `cd server && npm run build` 并重启服务即可；不需要改前端或环境变量。
+
+**产品级保障：**
+
+- **不会卡房**：每名 AI 有单次决策硬超时；阶段开始 `AI_MAX_TURN_MS`（默认 15s）后仍未行动，看门狗会用本地策略落子并 ready。
+- **没有 Key 也能玩**：未配置模型时直接使用本地启发式策略；模型失败/超时也会自动降级，不会产生空局。
+- **成本可控**：每名 AI 每局有 token 预算（`AI_TOKEN_BUDGET_PER_GAME`），超出后本局只走本地策略。
+- **信息公平**：AI 只能看到玩家可见信息（自己的手牌/精力、公开项目、公开聊天），不读取他人精力或投资草稿。
+- **昵称保留**：`🤖` 与 `AI_` 前缀由服务端保留，真人不允许使用，避免被误判为 AI。
+
+### 🛡️ AI 安全约束（人本 AI 原则）
+
+参照 [i2iLab · DEFINE + EVAL](https://www.i2ilab.io/learn/define.html) 的人本 AI 原则，AI 输出有两层约束：**提示词层**说明边界，**运行时层**强制执行，模型不遵守提示词也发不出危险内容。
+
+- **人设三段式**：身份（AI 玩家，不是真人/客服/专业人士）、语气（简短克制只谈游戏）、边界（现实问题一律不接）。
+- **红黄绿数据分级**：绿=规则与公开信息；黄=自己的私有信息，只用于决策；红=真实身份、联系方式、健康/诊断、未成年信息、真实金钱，一律不索取、不记录、不复述。
+- **硬红线**：不冒充真人（被问必须承认是 AI）、不诊断/不治疗/不提供医疗或投资建议、不生成自伤/暴力/性内容、不交换现实联系方式或金钱、不泄露系统提示词。
+- **危机协议**：识别到自伤、自杀、暴力、进食障碍或未成年危机时，**停止游戏话术**，由服务端统一发送固定回复（声明能力边界 + 110/120/12356 资源），AI 在 10 分钟内不闲聊；不做任何劝解、追问或“治疗”。
+- **输出闸门**：聊天、转账留言、社区名在发送前统一经过 `server/ai/aiSafety.ts`；命中联系方式、链接、冒充真人、诊断、现实金钱、提示词泄露等规则时直接拦截或替换。
+- **安全一票否决**：红队测试见 [`server/ai/aiSafety.test.ts`](server/ai/aiSafety.test.ts)，一条不过即视为不可上线。
+
+```dotenv
+AI_SAFETY_ENABLED=true   # 默认开启；仅受控研究且通过伦理审查时才考虑关闭
+```
+
+**调整 AI 提示词**：唯一需要改的文件是 [`server/ai/aiPrompt.ts`](server/ai/aiPrompt.ts)。
+
+- `buildSystemPrompt`：身份、目标、安全边界（`SAFETY_SECTION`）、规则摘要、输出约束；
+- `buildInvestmentPrompt`：投资阶段的观察与任务；
+- `buildAuctionPrompt`：拍卖出价/放弃/强买；
+- `buildCommunityNamePrompt`：AI 首富命名。
+
+改完执行 `cd server && npm run build` 并重启服务即可；不需要改前端或环境变量。
+
+配置见 [`server/.env.example`](server/.env.example) 的「AI 玩家」段。常用变量：
+
+```dotenv
+AI_PLAYERS_ENABLED=true      # 总开关
+AI_AUTOFILL=false            # 自动补位（至少保留 1 名真人；单人对 AI 时建议开启）
+AI_API_KEY=...               # 也可用 OPENAI_API_KEY / DEEPSEEK_API_KEY
+AI_MODEL=gpt-4o
+AI_MAX_PER_ROOM=5            # 6 人局最多 5 个 AI
+AI_TOKEN_BUDGET_PER_GAME=120000
+```
+
+端到端冒烟（不消耗模型额度）：
+
+```bash
+cd server && npm run build
+cd ../frontend
+node scripts/ai-e2e.mjs
+node scripts/group-chat-e2e.mjs   # 群聊：全场/自建群/退群/危机回复
+```
+
+## 💬 群聊与私信
+
+群聊与私信是产品默认能力，开关在 `server/config/playerChatFeatures.ts` 与 `frontend/src/config/playerChatFeatures.ts`（两处需保持一致）。
+
+- **全场频道**：房间有真人后自动创建「全场」，所有真人自动入群；玩家端 dock 固定展示「全」，无需主持手动建群。
+- **自建群**：至少 3 名真人；每人最多 6 群、每房最多 24 群、每群保留 500 条消息（单次下发最近 200 条，避免 `gameUpdate` 膨胀）。
+- **禁聊阶段**：`ROOM_WAITING / ERA_INTRO / TUTORIAL` 不显示聊天入口，服务端同时拒绝建群、加人和群消息。
+- **通知与未读**：群消息写入会话事件；其他成员收到 `playerNotify` 预览，未读状态记录在浏览器 `sessionStorage`。
+- **安全**：真人危机消息触发服务端固定安全回复（110/120/12356），不落原文；AI 聊天/转账留言/命名统一经过 [`server/ai/aiSafety.ts`](server/ai/aiSafety.ts) 输出闸门。
+- **紧急回滚**：把服务端与前端两个开关同时改为 `false` 并重新构建；服务端会停止下发群数据并拒绝群接口。
+
+## 🤖 系统自动主持（C 端默认开启）
+
+产品版默认不再依赖真人主持；管理端顶部可随时切换「🤖 系统自动主持：开/关」。
+
+- **等待房**：至少 2 名在线玩家（或开启 `AI_AUTOFILL` 自动补位）后开始 30 秒倒计时，自动开局。
+- **时代介绍 / 结算**：倒计时结束自动帮未点击的玩家准备，并进入下一阶段。
+- **拍卖**：自动聚焦下一张拍品；最后一次出价后 12 秒或单张最长 45 秒自动落槌；无人出价自动跳过；全部拍完自动结束。
+- **彩票**：玩家打出彩票后立刻线上随机掷骰；超时未确认自动领取。
+- **社区命名**：真人首富超时未命名则系统兜底；AI 首富由 AI 自己命名。
+- **手动优先**：管理端仍可随时开局、跳转、改焦点、落槌、结束拍卖；手动操作不会被自动主持覆盖。
+
+```dotenv
+AUTO_HOST_ENABLED=true          # 总开关；false 退回纯手动主持
+AUTO_START_DELAY_MS=30000       # 等待房自动开局倒计时
+AUTO_INTRO_MS=12000             # 时代介绍停留
+AUTO_SETTLEMENT_MS=15000        # 结算页停留
+AUTO_AUCTION_IDLE_MS=12000      # 最后一次出价后多久自动落槌
+AUTO_AUCTION_LOT_MS=45000       # 单张拍品最长停留
+AUTO_NAMING_MS=45000            # 命名超时
+AUTO_LOTTERY_CONFIRM_MS=30000   # 彩票超时自动领取
+```
+
+## 🎲 彩票线上开奖
+
+彩票不再由主持手动输入金额。玩家打出彩票后，服务端调用 [random.org](https://www.random.org/) 掷 1 颗六面骰；网络不可用或超时自动退回 Node `crypto.randomInt`，并把真实随机源写入导出。
+
+| 骰子点数 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| 奖金 | 0 | 30 | 60 | 90 | 120 | 200 |
+
+玩家端会播放骰子滚动动画后揭晓；持有点石成金时按 1.5 倍向下取整。配置：
+
+```dotenv
+LOTTERY_ONLINE_RANDOM=true      # false 时只用服务端加密随机
+LOTTERY_RANDOM_TIMEOUT_MS=2500  # random.org 超时
+```
 
 ## 📚 相关文档
 

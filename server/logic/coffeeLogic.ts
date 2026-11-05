@@ -1,6 +1,6 @@
 import { GameState, Player } from "../state/gameState.js";
 import { appendSessionEvent } from "../state/sessionTelemetry.js";
-import { sanitizeInvestments } from "./investmentLogic.js";
+import { sanitizeInvestments, spendableEnergy } from "./investmentLogic.js";
 
 export const COFFEE_WEALTH_COST = 17;
 export const COFFEE_ENERGY_GAIN = 1;
@@ -71,15 +71,21 @@ export function refundCoffee(
 
   const draftSum = draftEnergySum(player);
   const energyAfter = player.energy - count * COFFEE_ENERGY_GAIN;
-  if (energyAfter < draftSum) {
+  if (draftSum > spendableEnergy({ energy: energyAfter })) {
     return {
       ok: false,
       message: "预填投资已超过可退订后的精力，请先调低投资",
     };
   }
+  if (player.energy >= 0 && energyAfter < 0) {
+    return {
+      ok: false,
+      message: "退订后精力不足，请先调低预填投资",
+    };
+  }
 
   player.wealth += COFFEE_WEALTH_COST * count;
-  player.energy = Math.max(0, player.energy - count * COFFEE_ENERGY_GAIN);
+  player.energy = energyAfter;
   player.totalEnergyConsumed = Math.max(
     0,
     player.totalEnergyConsumed - count * COFFEE_ENERGY_GAIN

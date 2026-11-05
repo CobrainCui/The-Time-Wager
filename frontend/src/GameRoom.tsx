@@ -13,10 +13,13 @@ import { AuctionConfirmModal } from "./components/AuctionConfirmModal";
 import { LotteryConfirmModal } from "./components/LotteryConfirmModal";
 import { WealthAdjustConfirmModal } from "./components/WealthAdjustConfirmModal";
 import { SlackHitConfirmModal } from "./components/SlackHitConfirmModal";
-import { PlayerGameHelp } from "./components/PlayerGameHelp";
+import { LighterBurnConfirmModal } from "./components/LighterBurnConfirmModal";
+import { PlayerGameHelp, PlayerSidebarPanel } from "./components/PlayerGameHelp";
 import { LeaveGameButton } from "./components/LeaveGameButton";
 import { BuffInvestmentSplit } from "./components/BuffInvestmentSplit";
+import { RuleAgentChat } from "./components/ruleAgent/RuleAgentChat";
 import { useMediaQuery } from "./hooks/useMediaQuery";
+import { setPlayerDeferAppReload } from "./bootstrapAppUpdate";
 import { PERSONA_IMAGE_SLUGS } from "./config/personaConfig";
 import {
   getPersonaDefaultImageSrc,
@@ -72,6 +75,10 @@ interface Props {
   personaImages?: Record<string, number>;
   /** 主持嵌入观战：空座位公共页，不跟真实玩家 */
   embed?: boolean;
+  /** 主持查看某玩家只读视角：真实玩家数据，禁止操作 */
+  readOnly?: boolean;
+  /** 嵌入/预览时不展示右下角玩家私信浮层（主持用独立私信面板） */
+  hidePlayerChat?: boolean;
 }
 
 export default function GameRoom({
@@ -83,8 +90,11 @@ export default function GameRoom({
   buffImages = {},
   personaImages = {},
   embed = false,
+  readOnly = false,
+  hidePlayerChat = false,
 }: Props) {
-  const [helpOpen, setHelpOpen] = useState(false);
+  const uiLocked = embed || readOnly;
+  const [sidebarPanel, setSidebarPanel] = useState<PlayerSidebarPanel>(null);
   const [investmentPrefill, setInvestmentPrefill] = useState<Record<number, number>>({});
   const prefillRoundRef = useRef(game.globalRound);
   const prevInvestmentReadyRef = useRef(false);
@@ -117,6 +127,20 @@ export default function GameRoom({
     }
   }, [embed, game.phase, me?.analysisResult?.primaryPersona, personaImages]);
 
+  useEffect(() => {
+    if (embed || readOnly) {
+      setPlayerDeferAppReload(false);
+      return;
+    }
+    const defer =
+      game.phase === "INVESTMENT" ||
+      game.phase === "TUTORIAL" ||
+      game.phase === "BUFF_USAGE" ||
+      game.phase === "AUCTION";
+    setPlayerDeferAppReload(defer);
+    return () => setPlayerDeferAppReload(false);
+  }, [embed, readOnly, game.phase]);
+
   /** 第二时代起：投资阶段内分段切换道具 / 投资（默认投资） */
   const useSplit =
     game.currentEra >= 2 &&
@@ -142,10 +166,18 @@ export default function GameRoom({
       return;
     }
     const player = game.players.find((p) => p.id === myPlayerId);
-    if (!player?.investmentDraft || Object.keys(player.investmentDraft).length === 0) return;
+    if (!player) return;
+    const book =
+      typeof player.energy === "number" && Number.isFinite(player.energy) ? player.energy : 0;
+    const serverDraft = player.investmentDraft;
+    const hasServerDraft = !!serverDraft && Object.keys(serverDraft).length > 0;
+    if (!hasServerDraft) {
+      if (book < 0) setInvestmentPrefill({});
+      return;
+    }
     setInvestmentPrefill((prev) => {
       if (Object.keys(prev).length > 0) return prev;
-      return { ...player.investmentDraft! };
+      return { ...serverDraft };
     });
   }, [embed, game.globalRound, game.players, myPlayerId]);
 
@@ -161,8 +193,16 @@ export default function GameRoom({
   useEffect(() => {
     if (embed) return;
     if (game.phase !== "INVESTMENT" || me?.ready) return;
-    const draft = game.players.find((p) => p.id === myPlayerId)?.investmentDraft;
-    if (!draft || Object.keys(draft).length === 0) return;
+    const player = game.players.find((p) => p.id === myPlayerId);
+    if (!player) return;
+    const book =
+      typeof player.energy === "number" && Number.isFinite(player.energy) ? player.energy : 0;
+    const draft = player.investmentDraft;
+    const hasServerDraft = !!draft && Object.keys(draft).length > 0;
+    if (!hasServerDraft) {
+      if (book < 0) setInvestmentPrefill({});
+      return;
+    }
     setInvestmentPrefill((prev) => {
       if (Object.keys(prev).length > 0) return prev;
       return { ...draft };
@@ -183,7 +223,8 @@ export default function GameRoom({
 
   const isIntro = game.phase === "ERA_INTRO";
   const isRoomWaiting = game.phase === "ROOM_WAITING";
-  const showTransactionOverlay = !isIntro && !isRoomWaiting && game.phase !== "TUTORIAL";
+  const showTransactionOverlay =
+    !embed && !hidePlayerChat && !isIntro && !isRoomWaiting && game.phase !== "TUTORIAL";
 
   const renderSplitView = () => (
     <BuffInvestmentSplit
@@ -194,7 +235,8 @@ export default function GameRoom({
           me={me}
           buffImages={buffImages}
           hideDock
-          readOnly={embed || !!me.ready}
+          readOnly={uiLocked || !!me.ready}
+          onOpenBuffHelp={(panel) => setSidebarPanel(panel)}
         />
       }
       right={
@@ -206,7 +248,7 @@ export default function GameRoom({
           draft={investmentPrefill}
           onDraftChange={setInvestmentPrefill}
           hideCountdown
-          embed={embed}
+          embed={uiLocked}
         />
       }
     />
@@ -216,8 +258,8 @@ export default function GameRoom({
     if (useSplit) return renderSplitView();
 
     switch (game.phase) {
-      case "ROOM_WAITING":  return <RoomWaiting game={game} me={me} embed={embed} />;
-      case "ERA_INTRO":       return <EraIntro game={game} me={me} eraImages={eraImages} embed={embed} />;
+      case "ROOM_WAITING":  return <RoomWaiting game={game} me={me} embed={uiLocked} />;
+      case "ERA_INTRO":       return <EraIntro game={game} me={me} eraImages={eraImages} embed={uiLocked} />;
       case "TUTORIAL":        return <TutorialView game={game} me={me} />;
       case "BUFF_USAGE":
         // 遗留阶段：无分屏时仍给投资页，避免卡在旧闸门
@@ -229,7 +271,7 @@ export default function GameRoom({
             projectImages={projectImages}
             draft={investmentPrefill}
             onDraftChange={setInvestmentPrefill}
-            embed={embed}
+            embed={uiLocked}
           />
         );
       case "INVESTMENT":      return (
@@ -240,15 +282,15 @@ export default function GameRoom({
           projectImages={projectImages}
           draft={investmentPrefill}
           onDraftChange={setInvestmentPrefill}
-          embed={embed}
+          embed={uiLocked}
         />
       );
-      case "SETTLEMENT":      return <Settlement game={game} me={me} embed={embed} />;
-      case "AUCTION":         return <AuctionView game={game} me={me} buffImages={buffImages} embed={embed} />;
-      case "COMMUNITY_NAMING":return <CommunityNaming game={game} me={me} embed={embed} />;
+      case "SETTLEMENT":      return <Settlement game={game} me={me} embed={uiLocked} />;
+      case "AUCTION":         return <AuctionView game={game} me={me} buffImages={buffImages} embed={uiLocked} />;
+      case "COMMUNITY_NAMING":return <CommunityNaming game={game} me={me} embed={uiLocked} />;
       case "GAME_OVER":       return (
         <Suspense fallback={<div className="page-center" style={{ minHeight: "40vh", color: "var(--color-text-muted)" }}>加载终局…</div>}>
-          <GameOver game={game} me={me} personaImages={personaImages} embed={embed} />
+          <GameOver game={game} me={me} personaImages={personaImages} embed={uiLocked} />
         </Suspense>
       );
       default:
@@ -260,7 +302,11 @@ export default function GameRoom({
     }
   };
 
-  const showHelpSidebar = !embed && game.phase !== "TUTORIAL" && game.phase !== "ROOM_WAITING";
+  const showHelpSidebar =
+    !embed &&
+    game.phase !== "TUTORIAL" &&
+    game.phase !== "ROOM_WAITING" &&
+    (!readOnly || sidebarPanel !== null);
   const helpOverlayOnOpen = isIntro && isDesktopLayout;
 
   return (
@@ -274,8 +320,8 @@ export default function GameRoom({
       {onExit && <LeaveGameButton phase={game.phase} onExit={onExit} />}
       {showHelpSidebar && (
         <PlayerGameHelp
-          open={helpOpen}
-          onOpenChange={setHelpOpen}
+          panel={sidebarPanel}
+          onPanelChange={setSidebarPanel}
           game={game}
           me={me}
           overlayWhenOpen={helpOverlayOnOpen}
@@ -290,7 +336,10 @@ export default function GameRoom({
         }}
       >
         {renderMainView()}
-        {!embed && showTransactionOverlay && <PlayerChatSystem game={game} me={me} />}
+        {!embed && !readOnly && <RuleAgentChat />}
+        {!embed && showTransactionOverlay && (
+          <PlayerChatSystem game={game} me={me} readOnly={readOnly} />
+        )}
         {!embed && (
           <>
             <AuctionConfirmModal
@@ -298,17 +347,21 @@ export default function GameRoom({
               pending={game.pendingAuctionOffer ?? null}
               pendingOffers={game.myPendingAuctionOffers ?? null}
               wealth={me?.wealth ?? 0}
+              readOnly={readOnly}
             />
             <LotteryConfirmModal
               pending={game.pendingLotteryOffer ?? null}
               wealth={me?.wealth ?? 0}
               hasGoldBuff={!!me?.activeBuffs?.some((b) => b.cardId === "buff_gold")}
+              readOnly={readOnly}
             />
             <WealthAdjustConfirmModal
               pending={game.pendingWealthAdjustment ?? null}
               wealth={me?.wealth ?? 0}
+              readOnly={readOnly}
             />
-            <SlackHitConfirmModal hits={me.pendingSlackHits} />
+            <SlackHitConfirmModal hits={me.pendingSlackHits} readOnly={readOnly} />
+            <LighterBurnConfirmModal notices={me.pendingLighterBurnNotices} readOnly={readOnly} />
           </>
         )}
       </div>

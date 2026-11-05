@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
+import { isAiPlayer } from "../utils/isAiPlayer";
 import { FATE_SKETCH_PERSONA_COLORS } from "../config/personaConfig";
 import {
   Chart as ChartJS, RadialLinearScale, PointElement, LineElement, BarElement,
@@ -55,6 +56,7 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
   const [personaModalName, setPersonaModalName] = useState<string | null>(null);
 
   const sortedPlayers = [...game.players].sort((a, b) => b.wealth - a.wealth);
+  // AI 与真人平权：社区总财富按全部座位统计，AI 也可以成为首富。
   const totalWealth = game.players.reduce((s, p) => s + p.wealth, 0);
   const myResult = me?.analysisResult;
   const personaColor = me ? resolveFateSketchAccent(me) : "#60a5fa";
@@ -223,6 +225,11 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
                   <span style={{ fontWeight: isMe ? 700 : 500, fontSize: uiRem(1), color: isMe ? "#fbbf24" : "white" }}>
                     {p.name}
                   </span>
+                  {isAiPlayer(p) && (
+                    <span style={{ fontSize: uiRem(0.62), fontWeight: 700, padding: "0.15rem 0.45rem", borderRadius: "9999px", background: "rgba(56,189,248,0.12)", color: "#7dd3fc", border: "1px solid rgba(56,189,248,0.3)" }}>
+                      AI
+                    </span>
+                  )}
                   {p.analysisResult && (
                     <span style={{ fontSize: uiRem(0.68), fontWeight: 700, padding: "0.2rem 0.55rem", borderRadius: "9999px", background: `${pColor}20`, color: pColor, border: `1px solid ${pColor}40` }}>
                       {p.analysisResult.primaryPersona}

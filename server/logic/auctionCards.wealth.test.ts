@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   beginAuctionSession,
+  formatAuctionSoldMessage,
   getMinimumNextBid,
   hammerAuctionLot,
   passAuctionLot,
@@ -319,6 +320,33 @@ describe("公开加价与确认成交", () => {
     assert.equal(game.auctionFocusCardId, "buff_force_buy");
   });
 
+  it("强买成交在玩家序列化中带 force_buy source", () => {
+    const game = createInitialGame("room", []);
+    game.phase = "AUCTION";
+    game.currentEra = 3;
+    const p = player("p1", { inventory: ["buff_force_buy"] });
+    game.players = [p];
+    beginAuctionSession(game);
+    game.auctionFocusCardId = "buff_short";
+    const res = useForceBuyCard(game, "p1");
+    assert.equal(res.success, true);
+    const view = serializeGameForClient(game, {}, "p1") as {
+      auctionSoldLots?: { cardId: string; source?: string; cost: number }[];
+    };
+    assert.equal(view.auctionSoldLots?.[0]?.cardId, "buff_short");
+    assert.equal(view.auctionSoldLots?.[0]?.source, "force_buy");
+    assert.equal(view.auctionSoldLots?.[0]?.cost, 0);
+    assert.match(
+      formatAuctionSoldMessage(game, {
+        cardId: "buff_short",
+        playerId: "p1",
+        cost: 0,
+        source: "force_buy",
+      }),
+      /强买强卖/
+    );
+  });
+
   it("玩家端序列化含公开出价、不含私有比例", () => {
     const game = createInitialGame("room", []);
     game.phase = "AUCTION";
@@ -342,12 +370,13 @@ describe("公开加价与确认成交", () => {
     const sold = hammerAuctionLot(game);
     assert.equal(sold.ok, true);
     const after = serializeGameForClient(game, {}, "me") as {
-      auctionSoldLots?: { playerName: string; cost: number; cardId: string }[];
+      auctionSoldLots?: { playerName: string; cost: number; cardId: string; source?: string }[];
       auctionSessionWins?: { playerId: string; cardId: string }[];
       auctionBids?: unknown;
     };
     assert.equal(after.auctionSoldLots?.[0]?.playerName, "me");
     assert.equal(after.auctionSoldLots?.[0]?.cost, 8);
+    assert.equal(after.auctionSoldLots?.[0]?.source, "hammer");
     assert.equal(after.auctionSessionWins?.length, 1);
     assert.equal(after.auctionSessionWins?.[0]?.playerId, "me");
     assert.equal("auctionBids" in after, false);

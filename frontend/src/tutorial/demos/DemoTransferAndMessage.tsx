@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { uiRem } from "../../utils/typography";
+import { PlayerResourceStatusBar } from "../../components/PlayerResourceStatusBar";
 
 const NOTE_MAX = 500;
 
@@ -268,11 +269,9 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
         对局时屏幕<strong>右侧</strong>每位玩家各有一个<strong>一对一</strong>对话框（默认折叠，可同时展开多个、自上而下排列）。消息只发给当前选中的那位；
         <strong>不填金额</strong>（或填 0）并留言即私信；对方仅在与你之间的会话里接收或退回。
       </p>
-      <div style={{ marginBottom: "0.5rem", fontFamily: "var(--font-mono)", color: "#fbbf24", fontWeight: 700 }}>
-        示例财富：{wealth} 💰
-      </div>
+      <PlayerResourceStatusBar remainingEnergy={10} energyTotal={10} wealth={wealth} />
       <div className="tutorial-chat-demo">
-        <div ref={dockRef} className="player-chat-dock tutorial-chat-demo__dock" aria-label="试玩对话框">
+        <div ref={dockRef} className="player-chat-dock tutorial-chat-demo__dock" aria-label="试玩一对一聊天">
           {displayOrder.map((playerId) => {
             const thread = threads[playerId];
             if (!thread) return null;
@@ -337,10 +336,7 @@ export const DemoTransferAndMessage: React.FC<{ playerName?: string }> = () => {
               );
             }
 
-            const pendingIn = thread.messages.filter(
-              (m) => m.direction === "in" && m.status === "pending" && m.amount > 0
-            ).length;
-            const badge = Math.max(thread.unread, pendingIn);
+            const badge = thread.unread;
 
             return (
               <button

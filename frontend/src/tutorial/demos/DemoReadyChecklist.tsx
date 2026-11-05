@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import { uiRem } from "../../utils/typography";
+import { STARTING_WEALTH } from "../../config/startingWealth";
 
 const ITEMS = [
+  { id: "wealth", label: `开局每人 ${STARTING_WEALTH} 财富，可买咖啡或留作拍卖/转账` },
   { id: "energy", label: "每轮精力会重置，鼓励花完" },
   { id: "long", label: "长期参投后断供（<3）会 1:1 结算累计投入并退出完成排名" },
   { id: "risk", label: "风险项目超上限会倒扣历史收益" },

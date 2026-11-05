@@ -3,6 +3,9 @@ import { GameState } from "./gameState.js";
 /** 投资阶段操作倒计时（10 分钟） */
 export const ACTION_DEADLINE_MS = 10 * 60 * 1000;
 
+/** 倒计时剩余不超过该时长时禁止发动道具卡 */
+export const BUFF_LOCKOUT_REMAINING_MS = 2 * 60 * 1000;
+
 /** 第 1 时代第 1 轮投资倒计时（12 分钟） */
 export const ACTION_DEADLINE_ERA1_R1_MS = 12 * 60 * 1000;
 
@@ -26,6 +29,13 @@ export function clearActionDeadline(game: GameState): void {
 }
 
 /** 投资倒计时剩余毫秒（暂停时冻结为 endsAt - pausedAt） */
+export function isInvestmentBuffLockoutActive(game: GameState, now = Date.now()): boolean {
+  if (game.phase !== "INVESTMENT") return false;
+  if (typeof game.investmentEndsAt !== "number") return false;
+  const remaining = getInvestmentRemainingMs(game, now);
+  return remaining > 0 && remaining <= BUFF_LOCKOUT_REMAINING_MS;
+}
+
 export function getInvestmentRemainingMs(game: GameState, now = Date.now()): number {
   if (typeof game.investmentEndsAt !== "number") return 0;
   const pausedAt = game.investmentTimerPausedAt;

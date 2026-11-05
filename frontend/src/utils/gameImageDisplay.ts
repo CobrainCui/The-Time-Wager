@@ -40,7 +40,7 @@ export function getProjectImageDisplay(
     };
   }
   return {
-    src: publicAssetUrl(`/images/projects/${projectId}.jpg?v=2`),
+    src: publicAssetUrl(`/images/projects/${projectId}.jpg?v=3`),
     source: "default",
   };
 }

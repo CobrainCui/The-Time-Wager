@@ -1,5 +1,6 @@
 // server/roomManager.ts
 import { Server, Socket } from "socket.io";
+import { STARTING_WEALTH } from "./config/startingWealth.js";
 import { createInitialGame, GameState, Player } from "./state/gameState.js";
 
 // 房间信息：包含游戏状态和基础玩家列表
@@ -40,14 +41,14 @@ export function joinRoom(io: Server, socket: Socket, playerId: string, roomId: s
         id: playerId,
         name: playerId,
         energy: 15,
-        wealth: 0,
+        wealth: STARTING_WEALTH,
         connected: true,
         ready: false,
         inventory: [],
         activeBuffs: [],
         usedCards: [],
         longTerm: {},
-        wealthHistory: [],
+        wealthHistory: [STARTING_WEALTH],
       } as any);
     }
   }
@@ -86,14 +87,14 @@ export function addAIPlayer(io: Server, roomId: string) {
     id: aiId,
     name: aiId,
     energy: 15,
-    wealth: 0,
+    wealth: STARTING_WEALTH,
     connected: true,
     ready: false,
     inventory: [],
     activeBuffs: [],
     usedCards: [],
     longTerm: {},
-    wealthHistory: [],
+    wealthHistory: [STARTING_WEALTH],
   } as any);
 
   // 检查是否可以开局
