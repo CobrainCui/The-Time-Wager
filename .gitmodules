@@ -1,0 +1,4 @@
+[submodule "agent-edition"]
+	path = agent-edition
+	url = https://github.com/CobrainCui/The-Time-Wager-Agent-version.git
+	branch = main
