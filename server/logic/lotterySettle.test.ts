@@ -44,12 +44,20 @@ describe("lottery settle propose/confirm/revoke", () => {
     game.players = [p];
     const first = proposeLotterySettle(game, "p1", 30);
     assert.equal(first.ok, true);
-    const second = proposeLotterySettle(game, "p1", -10);
+    const second = proposeLotterySettle(game, "p1", 10);
     assert.equal(second.ok, true);
     if (!second.ok) throw new Error("expected propose");
     assert.equal(second.replaced?.amount, 30);
     assert.equal(game.pendingLotteryOffers?.length, 1);
-    assert.equal(game.pendingLotteryOffers?.[0]?.amount, -10);
+    assert.equal(game.pendingLotteryOffers?.[0]?.amount, 10);
+  });
+
+  it("rejects negative lottery amounts (use wealth adjust instead)", () => {
+    const game = createInitialGame("room", []);
+    const p = player("p1");
+    game.players = [p];
+    const result = proposeLotterySettle(game, "p1", -10);
+    assert.equal(result.ok, false);
   });
 
   it("credits wealth and removes lottery buff on accept", () => {

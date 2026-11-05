@@ -165,11 +165,15 @@ function settleUnfinishedLongGradient(
   const paidIds = new Set<number>();
 
   for (const proj of candidates.values()) {
-    let totalProgress = 0;
-    for (const p of game.players) {
-      const lt = p.longTerm[proj.id];
-      if (!lt || lt.status === "abandoned") continue;
-      totalProgress += lt.totalInvested || 0;
+    // 与牌面/完成判定同源：使用项目累计投入（含已放弃玩家的历史投入），
+    // 避免界面显示 20/90、梯度却按 5/90 发放的两套口径。
+    let totalProgress = proj.accumulatedInvested ?? 0;
+    if (!totalProgress) {
+      for (const p of game.players) {
+        const lt = p.longTerm[proj.id];
+        if (!lt || lt.status === "abandoned") continue;
+        totalProgress += lt.totalInvested || 0;
+      }
     }
 
     let ratio = 1;

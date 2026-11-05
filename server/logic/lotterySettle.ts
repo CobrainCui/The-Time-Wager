@@ -9,7 +9,8 @@ export function playerHasLotteryBuff(player: Player | undefined): boolean {
 }
 
 export function isValidLotteryAmount(amount: unknown): amount is number {
-  return typeof amount === "number" && Number.isSafeInteger(amount);
+  // 彩票只发奖，不用于扣款；负财富调整请走 wealthAdjust（需要玩家确认）
+  return typeof amount === "number" && Number.isSafeInteger(amount) && amount >= 0;
 }
 
 export function removeLotteryBuff(player: Player): boolean {

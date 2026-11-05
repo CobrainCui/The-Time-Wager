@@ -1,9 +1,9 @@
 import type { Server } from "socket.io";
 import type { GameState } from "../state/gameState.js";
 import { getCommunityNamer } from "../state/gameState.js";
-import { AI_BOT_ENABLED, AI_AUTOFILL_ENABLED } from "../config/features.js";
+import { AI_BOT_ENABLED } from "../config/features.js";
 import { AUTO_HOST_CONFIG } from "./autoHostConfig.js";
-import { startGameNow } from "../state/gameStart.js";
+import { ensureAiSeatsFilled, startGameNow } from "../state/gameStart.js";
 import { isInvestmentComplete, togglePlayerReady } from "../state/gameActions.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
 import { recordPhaseChange, appendSessionEvent } from "../state/sessionTelemetry.js";
@@ -28,6 +28,8 @@ import {
 import { finalizeCommunityName } from "../state/communityNaming.js";
 import { sanitizeCommunityName } from "../state/communityLeaderboard.js";
 import { ensureAiCommunityNaming, handleAIPhase } from "../ai/aiOrchestrator.js";
+import { AI_CONFIG } from "../ai/aiConfig.js";
+import { canStartWithAi, verifyAiAgents } from "../ai/aiPreflight.js";
 import { broadcastUpdate } from "../network/broadcast.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 
@@ -55,14 +57,15 @@ function autoState(game: GameState, now: number): AutoRoomState {
   return prev;
 }
 
-/** 等待房是否具备自动开局条件（至少 1 名在线真人，凑够人数或可自动补 AI） */
+/** 等待房是否具备自动开局条件（1–6 名真人；AI 开启时固定补满 6 席） */
 function canAutoStart(game: GameState): boolean {
   const humans = game.players.filter((p) => p.connected && !isAiPlayer(p)).length;
-  if (humans < 1) return false;
+  const humansNeeded = Math.max(1, AUTO_HOST_CONFIG.minPlayersToStart);
+  if (humans < humansNeeded) return false;
   const connected = game.players.filter((p) => p.connected).length;
-  const canFill = AI_AUTOFILL_ENABLED && AI_BOT_ENABLED;
-  const projected = connected + (canFill ? Math.max(0, 6 - game.players.length) : 0);
-  return projected >= AUTO_HOST_CONFIG.minPlayersToStart;
+  // AI 开启时开局会补满 6 席；AI 关闭时必须已有 6 名真人
+  const projected = AI_BOT_ENABLED ? 6 : connected;
+  return projected >= 6;
 }
 
 /**
@@ -299,8 +302,27 @@ export function ensureAutoHost(
       return true;
     }
     if (game.autoStartAt != null && now >= game.autoStartAt) {
+      // 先补满 6 席，再做严格模式的模型连通性检测
+      const filled = ensureAiSeatsFilled(game);
+      if (!filled.ok) {
+        game.autoStartAt = now + 60_000;
+        game.logs.push(`⏱️ 系统自动开局被阻止：${filled.message}（60 秒后重试）`);
+        return true;
+      }
+      const gate = canStartWithAi(game);
+      if (!gate.ok) {
+        void verifyAiAgents(game);
+        game.autoStartAt = now + 5_000;
+        const note = "⏳ 系统自动主持：正在检测 AI 模型连接，通过后自动开局";
+        if (game.logs[game.logs.length - 1] !== note) game.logs.push(note);
+        return true;
+      }
       const result = startGameNow(io, game, "auto_host");
-      if (!result.ok) game.autoStartAt = undefined;
+      if (!result.ok) {
+        // 严格 Agent 模式下模型未就绪会拒绝开局；保留 60 秒后重试，并在日志里说明原因
+        game.autoStartAt = now + 60_000;
+        game.logs.push(`⏱️ 系统自动开局被阻止：${result.message}（60 秒后重试）`);
+      }
       return true;
     }
     return false;
@@ -383,6 +405,11 @@ export function ensureAutoHost(
         return true;
       }
       void ensureAiCommunityNaming(game, io);
+    }
+    if (aiNamer(game) && AI_CONFIG.strictAgent) {
+      // 严格模式：AI 命名失败时不用系统名兜底，等待管理员重试或人工命名
+      game.autoHostNextActionAt = undefined;
+      return false;
     }
     const fallback = sanitizeCommunityName(`社区-${game.roomId}`) || "未命名社区";
     game.logs.push("⏱️ 系统自动主持：命名超时，使用系统名称");

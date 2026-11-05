@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createInitialGame, type GameState, type Player } from "../state/gameState.js";
-import { addAiPlayer, countAiPlayers, fillAiPlayers } from "./aiRoster.js";
+import { addAiPlayer, countAiPlayers, fillAiPlayers, removeAiPlayer } from "./aiRoster.js";
 import { buildFallbackInvestmentPlan, chooseAuctionAction, sanitizeInvestmentPlan } from "./aiPolicy.js";
 import { handleAIPhase } from "./aiOrchestrator.js";
 import { profileFor, profileForPlayer } from "./aiPersona.js";
@@ -15,6 +15,9 @@ import {
   type ProjectCard,
 } from "../data/game_data.js";
 import type { ActiveProject } from "../state/gameState.js";
+
+// 这些用例验证本地策略/托管兜底路径；严格 Agent 模式单独在 aiStrict.test.ts 覆盖。
+process.env.AI_STRICT_AGENT = "false";
 
 function project(card: ProjectCard): ActiveProject {
   return {
@@ -166,7 +169,10 @@ test("handleAIPhase bids in an auction when a lot is focused", async () => {
 
 test("AI roster caps at five AI and six seats", () => {
   const { game } = makeGame();
+  const beforePhase = game.phase;
+  game.phase = "ROOM_WAITING";
   const added = fillAiPlayers(game, 6);
+  game.phase = beforePhase;
   assert.ok(added >= 0);
   assert.equal(game.players.length, 6);
   assert.equal(countAiPlayers(game), 5);
@@ -212,6 +218,22 @@ test("new AI players have no preset persona and get a freeform prompt", () => {
   const prompt = buildSystemPrompt(profile);
   assert.ok(prompt.includes("自由发挥"), "提示词应鼓励模型自行形成打法");
   assert.ok(!prompt.includes("你的性格倾向"), "自由发挥不应注入固定人格");
+});
+
+test("AI 座位号按添加顺序分配，移除后优先复用空位", () => {
+  const game = createInitialGame("ai-slot-room", []);
+  const first = addAiPlayer(game);
+  const second = addAiPlayer(game);
+  const third = addAiPlayer(game);
+  assert.ok(first.ok && second.ok && third.ok);
+  assert.deepEqual(
+    [first.player.aiSlot, second.player.aiSlot, third.player.aiSlot],
+    [1, 2, 3]
+  );
+  assert.equal(removeAiPlayer(game, second.player.id), true);
+  const reused = addAiPlayer(game);
+  assert.ok(reused.ok);
+  assert.equal(reused.player.aiSlot, 2, "空出的座位应被优先复用，保证配置映射稳定");
 });
 
 test("AI can become the community namer when it is the richest online player", () => {

@@ -7,12 +7,46 @@ import { applyRoundEnergy } from "../logic/energySchedule.js";
 import { ensureProjectsDrawnForEra } from "./gameEra.js";
 import { startInvestmentDeadline } from "./actionDeadline.js";
 import { broadcastUpdate } from "../network/broadcast.js";
-import { AI_BOT_ENABLED, AI_AUTOFILL_ENABLED } from "../config/features.js";
+import { AI_BOT_ENABLED } from "../config/features.js";
 import { fillAiPlayers } from "../ai/aiRoster.js";
 import { handleAIPhase } from "../ai/aiOrchestrator.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
+import { canStartWithAi } from "../ai/aiPreflight.js";
 
 export type StartGameResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * 正式开局固定 6 席：1–6 名真人，空位由 AI 补满。
+ * 必须在 AI 预检之前调用，确保预检覆盖补位后的全部 AI。
+ */
+export function ensureAiSeatsFilled(
+  game: GameState
+): { ok: true; added: number } | { ok: false; message: string } {
+  const humans = game.players.filter((p) => p.connected && !isAiPlayer(p));
+  if (humans.length === 0) {
+    return { ok: false, message: "至少需要 1 名在线真人玩家才能开局。" };
+  }
+  if (game.players.length >= 6) return { ok: true, added: 0 };
+  if (!AI_BOT_ENABLED) {
+    return {
+      ok: false,
+      message:
+        "正式开局需要 6 席；AI 玩家已关闭，请补足 6 名真人，或开启 AI_PLAYERS_ENABLED。",
+    };
+  }
+  const added = fillAiPlayers(game, 6);
+  if (added > 0) {
+    game.logs.push(`🤖 开局自动补入 ${added} 名 AI 玩家（补满 6 席）`);
+  }
+  if (game.players.length < 6) {
+    return {
+      ok: false,
+      message:
+        "AI 补位未完成：严格 Agent 模式下需要为所有空位配置模型 Key（AI_PLAYER_n_API_KEY 或共享 AI_API_KEY），且每房最多 5 名 AI。",
+    };
+  }
+  return { ok: true, added };
+}
 
 /**
  * 开局/进入投资阶段的唯一收口：
@@ -30,16 +64,11 @@ export function startGameNow(
     if (needsSessionReset(game)) {
       resetGameSession(game);
     }
-    // 在线真人不足 6 人时自动补 AI（可选；至少保留 1 名真人）
-    if (AI_AUTOFILL_ENABLED && AI_BOT_ENABLED) {
-      const hasHuman = game.players.some((p) => p.connected && !isAiPlayer(p));
-      if (hasHuman && game.players.length < 6) {
-        const added = fillAiPlayers(game, 6);
-        if (added > 0) {
-          game.logs.push(`🤖 开局自动补入 ${added} 名 AI 玩家`);
-        }
-      }
-    }
+    const filled = ensureAiSeatsFilled(game);
+    if (!filled.ok) return { ok: false, message: filled.message };
+    // 严格 Agent 模式：补位后的每个 AI 都必须通过模型连通性检测
+    const aiGate = canStartWithAi(game);
+    if (!aiGate.ok) return { ok: false, message: aiGate.message ?? "AI 未就绪，无法开局" };
     const online = game.players.filter((p) => p.connected);
     if (online.length === 0) {
       return { ok: false, message: "暂无在线玩家，无法开局" };
@@ -61,6 +90,8 @@ export function startGameNow(
   }
 
   if (game.phase === "ERA_INTRO" || game.phase === "TUTORIAL") {
+    const aiGate = canStartWithAi(game);
+    if (!aiGate.ok) return { ok: false, message: aiGate.message ?? "AI 未就绪，无法开局" };
     if (game.phase === "TUTORIAL") {
       finishTutorialExit(game);
     }
@@ -83,6 +114,15 @@ export function startGameNow(
       game.totalRiskEnergyAvailable = 0;
     }
     ensureProjectsDrawnForEra(game);
+    // 强制从时代介绍/教程进入投资时，必须清掉上一阶段的 ready 与草稿；
+    // 否则已点过「准备好了」的玩家会被当成已提交，整轮零投入。
+    resetAllReady(game);
+    for (const p of game.players) {
+      p.investment = {};
+      p.investmentDraft = undefined;
+      p.preSubmitInvestmentDraft = undefined;
+      p.coffeePurchasesThisRound = 0;
+    }
     game.phase = "INVESTMENT";
     game.autoHostNextActionAt = undefined;
     startInvestmentDeadline(game);

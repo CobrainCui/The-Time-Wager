@@ -4,6 +4,7 @@ import { GROUP_CHAT_ENABLED } from "../config/playerChatFeatures.js";
 import { SAFETY_NOTICE_FROM_ID } from "./aiSafety.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 import { spendableEnergy } from "../logic/investmentLogic.js";
+import { computeWealthRanks } from "../util/playerRank.js";
 
 /**
  * AI 视角观察：只包含玩家本来就能看到的信息。
@@ -72,6 +73,9 @@ function projectView(p: ActiveProject) {
 }
 
 export function buildAiObservation(game: GameState, ai: Player): AiObservation {
+  const ranks = computeWealthRanks(game.players);
+  // 同步写回，保证本地策略（如 chooseChat 的领跑判断）也拿到正确名次
+  for (const p of game.players) p.rank = ranks.get(p.id) ?? p.rank;
   const incoming = (game.transactions ?? [])
     .filter((t) => t.status === "pending" && t.toId === ai.id)
     .slice(-5)
@@ -119,7 +123,7 @@ export function buildAiObservation(game: GameState, ai: Player): AiObservation {
       name: ai.name,
       energy: spendableEnergy(ai),
       wealth: ai.wealth,
-      rank: ai.rank,
+      rank: ranks.get(ai.id) ?? ai.rank,
       inventory: ai.inventory ?? [],
       coffeePurchases: ai.coffeePurchasesThisRound ?? 0,
       slackedBy: ai.slackedBy?.length ?? 0,
@@ -128,7 +132,7 @@ export function buildAiObservation(game: GameState, ai: Player): AiObservation {
       id: p.id,
       name: p.name,
       wealth: p.wealth,
-      rank: p.rank,
+      rank: ranks.get(p.id) ?? p.rank,
       connected: p.connected,
       isAI: isAiPlayer(p),
     })),

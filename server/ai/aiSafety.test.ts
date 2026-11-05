@@ -18,9 +18,10 @@ import {
 } from "../logic/chatGroups.js";
 import type { AiInvestmentPlan } from "./aiTypes.js";
 
+process.env.AI_STRICT_AGENT = "false";
+
 function makeGame(): GameState {
   const game = createInitialGame("safety-room", []);
-  game.phase = "INVESTMENT";
   game.activeProjects = [];
   const human = {
     id: "human_1",
@@ -47,6 +48,7 @@ function makeGame(): GameState {
   game.players.push(human);
   const added = addAiPlayer(game);
   assert.equal(added.ok, true);
+  game.phase = "INVESTMENT";
   ensurePublicChatGroup(game);
   return game;
 }

@@ -10,6 +10,7 @@ import { chatGroupsForViewer, groupMessagesForViewer } from "../logic/chatGroups
 import { GROUP_CHAT_ENABLED } from "../config/playerChatFeatures.js";
 import { serializationForMemberSocket } from "./adminPerspective.js";
 import type { SettlementBaseline } from "../logic/settlementBaseline.js";
+import { computeWealthRanks } from "../util/playerRank.js";
 import type { Socket } from "socket.io";
 
 const HIDDEN_INVESTMENT_PHASES = new Set<GameState["phase"]>(["INVESTMENT", "BUFF_USAGE"]);
@@ -55,9 +56,12 @@ export function serializeGameForClient(
     settlementBaseline: _settlementBaseline,
     adminProjectAdjustments: _adminProjectAdjustments,
     hostRevision: _hostRevision,
+    aiFailures: _aiFailures,
+    logs: _logs,
     ...gamePublic
   } = game;
   const hideInvestments = HIDDEN_INVESTMENT_PHASES.has(game.phase);
+  const wealthRanks = computeWealthRanks(game.players);
   const ownLotteryOffer =
     !isGodView && viewerPlayerId
       ? (pendingLotteryOffers ?? []).find((o) => o.playerId === viewerPlayerId)
@@ -98,6 +102,9 @@ export function serializeGameForClient(
           pendingDeviceClaims: pendingDeviceClaimsForGodView(game),
           auctionCompletedDeals: game.auctionCompletedDeals ?? [],
           auctionBids: auctionBids ?? [],
+          aiFailures: game.aiFailures ?? {},
+          aiDeadlinePaused: game.aiDeadlinePaused ?? false,
+          logs: game.logs,
         }
       : {
           ...(ownLotteryOffer ? { pendingLotteryOffer: ownLotteryOffer } : {}),
@@ -137,6 +144,7 @@ export function serializeGameForClient(
         return {
           ...restWithoutEnergy,
           ...energyField,
+          rank: wealthRanks.get(p.id) ?? p.rank,
           ...slackAttribution,
           inventory,
           activeBuffs,
@@ -153,6 +161,7 @@ export function serializeGameForClient(
       return {
         ...restWithoutEnergy,
         ...energyField,
+        rank: wealthRanks.get(p.id) ?? p.rank,
         ...slackAttribution,
         // 他人手牌 / 已发动 / 已用对玩家隐藏
         buffRoundNotes: undefined,

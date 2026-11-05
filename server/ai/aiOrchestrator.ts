@@ -3,12 +3,19 @@ import type { GameState, Player } from "../state/gameState.js";
 import { getCommunityNamer } from "../state/gameState.js";
 import { AI_BOT_ENABLED, AI_SAFETY_ENABLED } from "../config/features.js";
 import { GROUP_CHAT_ENABLED } from "../config/playerChatFeatures.js";
-import { AI_CONFIG, isAiModelConfigured } from "./aiConfig.js";
+import {
+  AI_CONFIG,
+  isAiModelConfigured,
+  resolveAiModelConfigForSlot,
+  type AiModelConfig,
+} from "./aiConfig.js";
 import { profileForPlayer, type AiProfile } from "./aiPersona.js";
 import { buildAiObservation } from "./aiObservation.js";
 import {
   buildSystemPrompt,
   buildInvestmentPrompt,
+  buildAuctionPrompt,
+  buildTransferDecisionPrompt,
   buildCommunityNamePrompt,
 } from "./aiPrompt.js";
 import { askAiJson } from "./llmClient.js";
@@ -38,6 +45,7 @@ import { resolvePendingTransfer } from "../logic/transferResolve.js";
 import { sendGroupChatMessage } from "../logic/chatGroups.js";
 import { sanitizeTransactionNote } from "../logic/forbiddenText.js";
 import { appendSessionEvent } from "../state/sessionTelemetry.js";
+import { isInvestmentBuffLockoutActive } from "../state/actionDeadline.js";
 import { finalizeCommunityName } from "../state/communityNaming.js";
 import { sanitizeCommunityName } from "../state/communityLeaderboard.js";
 import { findPendingLotteryOffer } from "../logic/lotterySettle.js";
@@ -49,7 +57,8 @@ import {
 } from "../util/pruneTransactions.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 import { broadcastUpdate } from "../network/broadcast.js";
-import type { AiInvestmentPlan } from "./aiTypes.js";
+import { markAiPreflightOk } from "./aiPreflight.js";
+import type { AiInvestmentPlan, AiAuctionPlan } from "./aiTypes.js";
 import {
   CRISIS_REPLY,
   SAFETY_CRISIS_WINDOW_MS,
@@ -143,6 +152,16 @@ function getRoomState(game: GameState): AiRoomState {
     state.phaseKey = key;
     state.phaseStartedAt = now();
     state.forced.clear();
+    // 故障只阻断发生的那个阶段；进入新阶段后清理旧故障，避免 AI 整局装死
+    if (game.aiFailures) {
+      for (const [id, failure] of Object.entries(game.aiFailures)) {
+        if (failure.phase !== game.phase) delete game.aiFailures[id];
+      }
+      if (Object.keys(game.aiFailures).length === 0 && game.aiDeadlinePaused) {
+        game.aiDeadlinePaused = false;
+        if (game.phase !== "INVESTMENT") game.investmentTimerPausedAt = undefined;
+      }
+    }
   }
   return state;
 }
@@ -177,10 +196,89 @@ function sumInvestment(plan: Record<number, number>): number {
   return Object.values(plan).reduce((s, v) => s + (Number(v) || 0), 0);
 }
 
+/** 按 AI 座位解析模型配置：每个 AI 可用不同的 Key / 模型。 */
+function modelConfigFor(ai: Player): AiModelConfig | null {
+  return resolveAiModelConfigForSlot(ai.aiSlot);
+}
+
 function hasUsableBudget(state: AiRoomState, ai: Player): boolean {
-  if (!isAiModelConfigured()) return false;
+  if (!modelConfigFor(ai)) return false;
   if (AI_CONFIG.tokenBudgetPerGame <= 0) return true;
   return (state.tokens.get(ai.id) ?? 0) < AI_CONFIG.tokenBudgetPerGame;
+}
+
+/**
+ * 严格 Agent 模式下记录一次模型失败：
+ * - 不降级本地策略；
+ * - 投资阶段自动暂停倒计时，避免超时把 AI 当成「已空过」；
+ * - 通知管理端，等待重试/移除/人工接管。
+ */
+function recordAiFailure(
+  game: GameState,
+  ai: Player,
+  io: Server | null,
+  message: string,
+  kind: "model_error" | "invalid_output" | "not_configured" = "model_error"
+): void {
+  if (!AI_CONFIG.strictAgent) return;
+  const clean = message.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***").slice(0, 240);
+  const failures = (game.aiFailures ??= {});
+  const prev = failures[ai.id];
+  failures[ai.id] = {
+    playerId: ai.id,
+    name: ai.name,
+    phase: game.phase,
+    at: now(),
+    message: clean,
+    kind,
+  };
+  if (!prev || prev.phase !== game.phase) {
+    game.logs.push(`⚠️ AI「${ai.name}」模型失败，已暂停等待管理员处理（${clean}）`);
+  }
+  if (
+    game.phase === "INVESTMENT" &&
+    typeof game.investmentEndsAt === "number" &&
+    game.investmentTimerPausedAt == null
+  ) {
+    game.investmentTimerPausedAt = now();
+    game.aiDeadlinePaused = true;
+  }
+  if (io) {
+    broadcastUpdate(io, game);
+    io.to(game.roomId).emit("playerNotify", {
+      type: "ai_stalled",
+      message: "AI 玩家暂时离线，本局已暂停，等待管理员处理",
+    });
+  }
+}
+
+/** 管理端重试/移除后清除故障标记；若因 AI 故障暂停过倒计时，则自动继续。 */
+export function clearAiFailure(game: GameState, playerId: string, io: Server | null): void {
+  const failure = game.aiFailures?.[playerId];
+  if (failure) {
+    delete game.aiFailures![playerId];
+    const state = AI_ROOMS.get(game.roomId);
+    state?.forced.delete(playerId);
+    game.logs.push(`✅ AI「${failure.name}」故障已清除`);
+  }
+  const remaining = Object.keys(game.aiFailures ?? {}).length;
+  if (remaining === 0 && game.aiDeadlinePaused) {
+    if (
+      game.phase === "INVESTMENT" &&
+      typeof game.investmentEndsAt === "number" &&
+      typeof game.investmentTimerPausedAt === "number"
+    ) {
+      const remainingMs = Math.max(
+        0,
+        game.investmentEndsAt - game.investmentTimerPausedAt
+      );
+      game.investmentEndsAt = now() + remainingMs;
+      game.investmentTimerPausedAt = undefined;
+      game.logs.push("▶️ AI 故障已处理，投资倒计时继续");
+    }
+    game.aiDeadlinePaused = false;
+  }
+  if (io) broadcastUpdate(io, game);
 }
 
 function recordTokens(state: AiRoomState, ai: Player, totalTokens?: number): void {
@@ -189,37 +287,120 @@ function recordTokens(state: AiRoomState, ai: Player, totalTokens?: number): voi
 }
 
 function isDone(game: GameState, ai: Player, state: AiRoomState): boolean {
+  // 回合在 await 期间 AI 可能已被移除：立即结束，避免幽灵回合继续操作
+  if (!game.players.some((p) => p.id === ai.id)) return true;
+  // 严格模式：已记录模型故障的 AI 在当前阶段暂停，等待管理员重试/移除；
+  // 进入下一阶段后自动恢复（故障记录仍保留给管理端参考）。
+  const failure = game.aiFailures?.[ai.id];
+  if (AI_CONFIG.strictAgent && failure && failure.phase === game.phase) return true;
   if (game.phase === "ROOM_WAITING" || game.phase === "TUTORIAL" || game.phase === "GAME_OVER") {
     return true;
   }
   if (game.phase === "AUCTION") {
+    if (AI_CONFIG.verboseLogging) {
+      const lotDiag = state.auction.get(ai.id);
+      console.log(
+        `[ai] auction diag ai=${ai.name} enabled=${AI_CONFIG.auctionEnabled} focus=${game.auctionFocusCardId ?? "null"} lot=${lotDiag ? `${lotDiag.lotKey}/${lotDiag.passed}/${lotDiag.decisions}` : "none"}`
+      );
+    }
     if (!AI_CONFIG.auctionEnabled) return true;
     const focus = game.auctionFocusCardId;
     if (!focus) return true;
     const lot = state.auction.get(ai.id);
-    if (!lot) return false;
+    // 焦点可能已经切到下一张卡；旧卡的 passed/done 不能套用到新卡
+    if (!lot || lot.lotKey !== `${game.currentEra}:${focus}`) return false;
     if (lot.passed) return true;
-    return lot.doneSignature === auctionSignature(game);
+    const done = lot.doneSignature === auctionSignature(game);
+    if (AI_CONFIG.verboseLogging) {
+      console.log(
+        `[ai] auction isDone ai=${ai.name} focus=${focus} passed=${lot.passed} decided=${lot.decisions} sig=${auctionSignature(game)} lotSig=${lot.doneSignature} done=${done}`
+      );
+    }
+    return done;
   }
   if (game.phase === "COMMUNITY_NAMING") return true;
   return ai.ready;
 }
 
-/** 把一笔收到的转账按 AI 策略处理掉。 */
-function resolveAiIncomingTransfers(game: GameState, ai: Player): boolean {
+/** 防止同一条转账被重复并发处理 */
+const AI_TRANSFER_IN_FLIGHT = new Set<string>();
+/** 转账决策失败后的重试退避（按 AI） */
+const AI_TRANSFER_NEXT_TRY = new Map<string, number>();
+const AI_TRANSFER_RETRY_MS = 30_000;
+
+/**
+ * 把收到的转账处理掉。
+ * 严格 Agent 模式：接受/拒绝必须由模型判断；模型失败则挂起并通知管理员，不本地代决。
+ */
+async function resolveAiIncomingTransfers(
+  game: GameState,
+  ai: Player,
+  state: AiRoomState,
+  io: Server | null
+): Promise<boolean> {
   let acted = false;
+  if (AI_CONFIG.strictAgent && now() < (AI_TRANSFER_NEXT_TRY.get(ai.id) ?? 0)) {
+    return false;
+  }
   for (const tx of game.transactions) {
     if (tx.status !== "pending" || tx.toId !== ai.id) continue;
-    const decision = decideIncomingTransfer(game, ai, tx);
-    const result = resolvePendingTransfer(game, tx.id, ai.id, decision.accept);
-    if (!result.ok) continue;
-    acted = true;
-    appendSessionEvent(
-      game,
-      "transaction_resolved",
-      { txId: tx.id, accept: decision.accept, status: result.status, amount: result.amount, source: "ai" },
-      ai.id
-    );
+    if (AI_TRANSFER_IN_FLIGHT.has(tx.id)) continue;
+    AI_TRANSFER_IN_FLIGHT.add(tx.id);
+    try {
+      let accept: boolean;
+      if (AI_CONFIG.strictAgent) {
+        const modelConfig = modelConfigFor(ai);
+        if (!modelConfig || !hasUsableBudget(state, ai)) {
+          AI_TRANSFER_NEXT_TRY.set(ai.id, now() + AI_TRANSFER_RETRY_MS);
+          game.logs.push(
+            `⚠️ AI「${ai.name}」暂时无法处理转账（${
+              modelConfig ? "token 预算已用尽" : "未配置模型"
+            }），保留待处理`
+          );
+          break;
+        }
+        const observation = buildAiObservation(game, ai);
+        const result = await askAiJson(
+          buildSystemPrompt(profileForPlayer(ai)),
+          buildTransferDecisionPrompt(observation, tx),
+          { label: "transfer-decision", maxOutputTokens: 200, config: modelConfig }
+        );
+        if (!result.ok || !result.data) {
+          // 转账是旁路操作：失败只退避重试，不暂停整局、不把 AI 标成全局故障
+          AI_TRANSFER_NEXT_TRY.set(ai.id, now() + AI_TRANSFER_RETRY_MS);
+          game.logs.push(
+            `⚠️ AI「${ai.name}」转账决策失败：${(result.error ?? "无有效返回").slice(0, 120)}（30 秒后重试）`
+          );
+          break;
+        }
+        const raw = (result.data as { accept?: unknown }).accept;
+        if (typeof raw !== "boolean") {
+          AI_TRANSFER_NEXT_TRY.set(ai.id, now() + AI_TRANSFER_RETRY_MS);
+          game.logs.push(`⚠️ AI「${ai.name}」转账决策缺少 accept，30 秒后重试`);
+          break;
+        }
+        markAiPreflightOk(ai);
+        recordTokens(state, ai, result.usage?.totalTokens);
+        accept = raw;
+        // 一个 AI 每秒最多处理一笔转账，避免一次性打满模型额度
+        AI_TRANSFER_NEXT_TRY.set(ai.id, now() + 1_200);
+      } else {
+        accept = decideIncomingTransfer(game, ai, tx).accept;
+      }
+
+      if (!game.players.some((p) => p.id === ai.id)) break;
+      const result = resolvePendingTransfer(game, tx.id, ai.id, accept);
+      if (!result.ok) continue;
+      acted = true;
+      appendSessionEvent(
+        game,
+        "transaction_resolved",
+        { txId: tx.id, accept, status: result.status, amount: result.amount, source: "ai" },
+        ai.id
+      );
+    } finally {
+      AI_TRANSFER_IN_FLIGHT.delete(tx.id);
+    }
   }
   if (acted) pruneSettledTransactions(game);
   return acted;
@@ -390,7 +571,7 @@ function applyInvestmentPlan(
   }
 
   // 2) 道具：每轮最多一张，且失败不阻塞
-  if (plan.useCard && AI_CONFIG.buffEnabled) {
+  if (plan.useCard && AI_CONFIG.buffEnabled && !isInvestmentBuffLockoutActive(game)) {
     const lastRound = state.buffRound.get(ai.id);
     if (lastRound !== game.globalRound) {
       const result = useBuffCard(game, ai.id, plan.useCard.cardId, {
@@ -491,14 +672,21 @@ async function decideInvestmentPlan(
   ai: Player,
   profile: AiProfile,
   state: AiRoomState
-): Promise<{ plan: AiInvestmentPlan; usedLlm: boolean }> {  if (hasUsableBudget(state, ai)) {
+): Promise<{ plan: AiInvestmentPlan | null; usedLlm: boolean; failure?: string }> {
+  const modelConfig = modelConfigFor(ai);
+  if (!modelConfig) {
+    if (AI_CONFIG.strictAgent) {
+      return { plan: null, usedLlm: false, failure: "该座位未配置可用模型" };
+    }
+  } else if (hasUsableBudget(state, ai)) {
     const observation = buildAiObservation(game, ai);
     const result = await askAiJson(
       buildSystemPrompt(profile),
       buildInvestmentPrompt(observation, profile),
-      { label: `invest-r${game.globalRound}` }
+      { label: `invest-r${game.globalRound}`, config: modelConfig }
     );
     if (result.ok && result.data) {
+      markAiPreflightOk(ai);
       recordTokens(state, ai, result.usage?.totalTokens);
       const sanitized = sanitizeInvestmentPlan(
         game,
@@ -506,15 +694,25 @@ async function decideInvestmentPlan(
         result.data as Partial<AiInvestmentPlan>,
         profile
       );
-      // 模型没给出有效投资时，用本地策略补齐，避免整轮空过
+      // 模型没给出有效投资时：严格模式视为失败，不再用本地策略补齐
       if (sumInvestment(sanitized.investment) <= 0 && spendableEnergy(ai) > 0) {
+        if (AI_CONFIG.strictAgent) {
+          return { plan: null, usedLlm: true, failure: "模型没有给出有效投资方案" };
+        }
         const fallback = buildFallbackInvestmentPlan(game, ai, profile);
         sanitized.investment = fallback.investment;
         if (sanitized.coffee <= 0) sanitized.coffee = fallback.coffee;
       }
       return { plan: sanitized, usedLlm: true };
     }
-    if (result.error) logWarn(state, `${ai.name} 模型失败，改用本地策略：${result.error}`);
+    const reason = result.error ?? "模型未返回有效 JSON";
+    if (AI_CONFIG.strictAgent) {
+      return { plan: null, usedLlm: false, failure: reason };
+    }
+    logWarn(state, `${ai.name} 模型失败，改用本地策略：${reason}`);
+  }
+  if (AI_CONFIG.strictAgent) {
+    return { plan: null, usedLlm: false, failure: "本局 token 预算已用尽或模型不可用" };
   }
   return { plan: buildFallbackInvestmentPlan(game, ai, profile), usedLlm: false };
 }
@@ -528,8 +726,15 @@ async function runInvestmentTurn(
 ): Promise<boolean> {
   await politeDelay(1);
   if (!INVEST_PHASES.has(game.phase) || ai.ready) return false;
+  if (!game.players.some((p) => p.id === ai.id)) return false;
 
-  const { plan, usedLlm } = await decideInvestmentPlan(game, ai, profile, state);
+  const { plan, usedLlm, failure } = await decideInvestmentPlan(game, ai, profile, state);
+  if (!game.players.some((p) => p.id === ai.id)) return false;
+  if (!plan) {
+    state.forced.add(ai.id);
+    recordAiFailure(game, ai, io, failure ?? "模型决策失败", "model_error");
+    return false;
+  }
   applyCrisisProtocol(game, plan);
   if (!INVEST_PHASES.has(game.phase) || ai.ready) return false;
 
@@ -552,6 +757,60 @@ async function runInvestmentTurn(
   }
   if (io) broadcastUpdate(io, game);
   return acted;
+}
+
+function normalizeAuctionPlan(raw: unknown): AiAuctionPlan | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Partial<AiAuctionPlan>;
+  const action = data.action;
+  if (action !== "bid" && action !== "pass" && action !== "force_buy") return null;
+  const amount = Number(data.amount);
+  if (action === "bid" && (!Number.isFinite(amount) || amount <= 0)) return null;
+  return {
+    action,
+    ...(action === "bid" ? { amount } : {}),
+    reasoning: typeof data.reasoning === "string" ? data.reasoning.slice(0, 200) : "",
+  };
+}
+
+async function decideAuctionPlan(
+  game: GameState,
+  ai: Player,
+  profile: AiProfile,
+  state: AiRoomState
+): Promise<{ plan: AiAuctionPlan | null; usedLlm: boolean; failure?: string }> {
+  const modelConfig = modelConfigFor(ai);
+  if (modelConfig && hasUsableBudget(state, ai)) {
+    const observation = buildAiObservation(game, ai);
+    const result = await askAiJson(
+      buildSystemPrompt(profile),
+      buildAuctionPrompt(observation, profile),
+      { label: `auction-e${game.currentEra}`, config: modelConfig }
+    );
+    if (result.ok && result.data) {
+      const plan = normalizeAuctionPlan(result.data);
+      if (plan) {
+        markAiPreflightOk(ai);
+        recordTokens(state, ai, result.usage?.totalTokens);
+        return { plan, usedLlm: true };
+      }
+      if (AI_CONFIG.strictAgent) {
+        return { plan: null, usedLlm: true, failure: "模型返回了不合法的拍卖动作" };
+      }
+    } else if (AI_CONFIG.strictAgent) {
+      return { plan: null, usedLlm: false, failure: result.error ?? "拍卖模型调用失败" };
+    }
+  } else if (AI_CONFIG.strictAgent) {
+    return {
+      plan: null,
+      usedLlm: false,
+      failure: modelConfig ? "本局 token 预算已用尽" : "该座位未配置可用模型",
+    };
+  }
+  if (AI_CONFIG.strictAgent) {
+    return { plan: null, usedLlm: false, failure: "严格模式下不允许本地拍卖策略" };
+  }
+  return { plan: chooseAuctionAction(game, ai, profile, 0), usedLlm: false };
 }
 
 async function runAuctionTurn(
@@ -597,7 +856,24 @@ async function runAuctionTurn(
     return false;
   }
 
-  const plan = chooseAuctionAction(game, ai, profile, lot.decisions);
+  const decided = await decideAuctionPlan(game, ai, profile, state);
+  if (!game.players.some((p) => p.id === ai.id)) return false;
+  if (game.phase !== "AUCTION" || game.auctionFocusCardId !== focus) {
+    logDebug(`auction ${ai.name}: focus changed during model call`);
+    return false;
+  }
+  if (!decided.plan) {
+    state.forced.add(ai.id);
+    recordAiFailure(
+      game,
+      ai,
+      io,
+      decided.failure ?? "拍卖模型决策失败",
+      "model_error"
+    );
+    return false;
+  }
+  const plan = decided.plan;
   lot.decisions += 1;
   logDebug(
     `auction ${ai.name} ${focus} action=${plan.action} amount=${plan.amount ?? "-"} decisions=${lot.decisions}`
@@ -617,6 +893,17 @@ async function runAuctionTurn(
   } else if (plan.action === "bid" && typeof plan.amount === "number" && Number.isFinite(plan.amount)) {
     const result = placeAuctionBid(game, ai.id, plan.amount);
     if (!result.ok) {
+      if (AI_CONFIG.strictAgent) {
+        state.forced.add(ai.id);
+        recordAiFailure(
+          game,
+          ai,
+          io,
+          `模型出价 ${plan.amount} 无效：${result.message ?? "低于最低加价或超过可用财富"}`,
+          "invalid_output"
+        );
+        return false;
+      }
       lot.passed = true;
     } else {
       acted = true;
@@ -647,11 +934,18 @@ async function runAiTurn(
   io: Server | null
 ): Promise<boolean> {
   const profile = profileForPlayer(ai);
+  const startPhase = game.phase;
   try {
     // 转账回执与彩票开奖随时处理
-    const resolved = resolveAiIncomingTransfers(game, ai) || resolveAiLottery(game, ai);
+    const resolved =
+      (await resolveAiIncomingTransfers(game, ai, state, io)) ||
+      resolveAiLottery(game, ai);
+    // 转账处理期间阶段可能已经推进：不要把这回合“变形”成新阶段的决策
+    if (game.phase !== startPhase) return resolved;
+    if (AI_CONFIG.verboseLogging) console.log(`[ai] turn resolved ${ai.name} phase=${game.phase}`);
 
     if (game.phase === "AUCTION") {
+      if (AI_CONFIG.verboseLogging) console.log(`[ai] turn -> auction ${ai.name}`);
       const acted = await runAuctionTurn(game, ai, profile, state, io);
       return acted || resolved;
     }
@@ -661,7 +955,8 @@ async function runAiTurn(
     }
     if (READY_PHASES.has(game.phase)) {
       if (ai.ready) return resolved;
-      await politeDelay(0.5);
+      // 准备是机械动作，不加拟人延迟：避免阶段切换时旧回合拖住 inFlight，
+      // 让下一阶段（尤其是拍卖）误以为 AI 还在忙。
       if (!READY_PHASES.has(game.phase) || ai.ready) return resolved;
       togglePlayerReady(game, ai.id);
       appendSessionEvent(
@@ -675,8 +970,20 @@ async function runAiTurn(
     }
     return resolved;
   } catch (error) {
-    logWarn(state, `${ai.name} 回合异常：${error instanceof Error ? error.message : String(error)}`);
-    // 兜底：绝不让 AI 卡住阶段
+    const message = error instanceof Error ? error.message : String(error);
+    logWarn(state, `${ai.name} 回合异常：${message}`);
+    if (AI_CONFIG.strictAgent) {
+      // 严格模式：投资/拍卖失败不降级；仅「准备」这类机械动作可以直接完成。
+      if (READY_PHASES.has(game.phase) && !INVEST_PHASES.has(game.phase) && !ai.ready) {
+        togglePlayerReady(game, ai.id);
+        if (io) broadcastUpdate(io, game);
+      } else {
+        state.forced.add(ai.id);
+        recordAiFailure(game, ai, io, `回合异常：${message}`, "model_error");
+      }
+      return false;
+    }
+    // 非严格模式：兜底 ready，绝不让 AI 卡住阶段
     try {
       if (READY_PHASES.has(game.phase) && !ai.ready) {
         togglePlayerReady(game, ai.id);
@@ -701,6 +1008,8 @@ export async function ensureAiCommunityNaming(
   if (game.phase !== "COMMUNITY_NAMING" || game.communityName) return false;
   const namer = getCommunityNamer(game);
   if (!namer || !isAiPlayer(namer)) return false;
+  // 严格模式：已记录故障就先等待管理员处理，避免每秒重试刷额度
+  if (AI_CONFIG.strictAgent && game.aiFailures?.[namer.id]) return false;
   const key = `${game.roomId}:${game.sessionId ?? ""}`;
   if (AI_NAMING_IN_FLIGHT.has(key)) return false;
   AI_NAMING_IN_FLIGHT.add(key);
@@ -708,14 +1017,16 @@ export async function ensureAiCommunityNaming(
   try {
     const profile = profileForPlayer(namer);
     let name = "";
-    if (hasUsableBudget(state, namer)) {
+    const modelConfig = modelConfigFor(namer);
+    if (modelConfig && hasUsableBudget(state, namer)) {
       const observation = buildAiObservation(game, namer);
       const result = await askAiJson(
         buildSystemPrompt(profile),
         buildCommunityNamePrompt(observation),
-        { label: "community-name", maxOutputTokens: 120 }
+        { label: "community-name", maxOutputTokens: 120, config: modelConfig }
       );
       if (result.ok) {
+        markAiPreflightOk(namer);
         recordTokens(state, namer, result.usage?.totalTokens);
         const raw = (result.data as { name?: unknown } | null)?.name;
         name = sanitizeCommunityName(raw);
@@ -733,7 +1044,20 @@ export async function ensureAiCommunityNaming(
         }
       }
     }
-    if (!name) name = sanitizeCommunityName(chooseCommunityName(game, namer));
+    if (!name) {
+      if (AI_CONFIG.strictAgent) {
+        state.forced.add(namer.id);
+        recordAiFailure(
+          game,
+          namer,
+          io,
+          modelConfig ? "模型没有返回合法社区名" : "该座位未配置可用模型",
+          "invalid_output"
+        );
+        return false;
+      }
+      name = sanitizeCommunityName(chooseCommunityName(game, namer));
+    }
     if (!name) name = sanitizeCommunityName(`社区-${game.roomId}`) || "未命名社区";
     if (game.phase === "COMMUNITY_NAMING" && !game.communityName) {
       game.logs.push(`🤖 ${namer.name} 为社区命名：${name}`);
@@ -790,14 +1114,27 @@ async function handleAIPhaseInner(game: GameState, io: Server | null): Promise<v
       if (state.inFlight.has(ai.id)) continue;
       if (state.inFlight.size >= AI_CONFIG.maxConcurrentPerRoom) break;
       state.inFlight.set(ai.id, now());
+      if (AI_CONFIG.verboseLogging) {
+        const pendingTx = game.transactions.filter(
+          (t) => t.status === "pending" && t.toId === ai.id
+        ).length;
+        console.log(
+          `[ai] turn start ${ai.name} phase=${game.phase} pendingTx=${pendingTx}`
+        );
+      }
       turns.push(
         runAiTurn(game, ai, state, io).finally(() => {
           state.inFlight.delete(ai.id);
+          if (AI_CONFIG.verboseLogging) {
+            console.log(`[ai] turn end ${ai.name} phase=${game.phase}`);
+          }
         })
       );
     }
     if (turns.length === 0) {
-      logDebug(`no more turns in phase=${game.phase}`);
+      logDebug(
+        `no more turns in phase=${game.phase} inFlight=${[...state.inFlight.keys()].join(",") || "-"}`
+      );
       break;
     }
     await Promise.allSettled(turns);
@@ -814,7 +1151,7 @@ async function handleAIPhaseInner(game: GameState, io: Server | null): Promise<v
 
 /**
  * 看门狗：每秒由 server/index.ts 调用。
- * 超过宽限时间仍未行动的 AI 会被本地策略强制落子并 ready。
+ * 超过宽限时间仍未行动的 AI：严格模式标记故障并暂停，非严格模式才用本地策略兜底。
  */
 export function ensureAiProgress(game: GameState, io: Server | null): boolean {
   if (!AI_BOT_ENABLED) return false;
@@ -845,7 +1182,9 @@ function ensureAiProgressInner(game: GameState, io: Server | null): boolean {
 
   // 转账回执 / 彩票开奖不依赖阶段：AI 收到后最多 1 秒内处理，不让真人干等。
   for (const ai of ais) {
-    if (resolveAiIncomingTransfers(game, ai)) changed = true;
+    void resolveAiIncomingTransfers(game, ai, state, io).then((resolved) => {
+      if (resolved && io) broadcastUpdate(io, game);
+    });
     if (resolveAiLottery(game, ai)) changed = true;
   }
 
@@ -856,7 +1195,15 @@ function ensureAiProgressInner(game: GameState, io: Server | null): boolean {
       const startedAt = state.inFlight.get(ai.id);
       if (startedAt != null) continue;
       if (!overdue) continue;
-      // 拍卖不阻塞阶段；超时就让本地策略出一次手
+      if (AI_CONFIG.strictAgent) {
+        if (!state.forced.has(ai.id)) {
+          state.forced.add(ai.id);
+          recordAiFailure(game, ai, io, "拍卖模型在宽限时间内没有返回", "model_error");
+          changed = true;
+        }
+        continue;
+      }
+      // 非严格模式：拍卖不阻塞阶段；超时就让本地策略出一次手
       const profile = profileForPlayer(ai);
       const lotKey = `${game.currentEra}:${game.auctionFocusCardId ?? "-"}`;
       let lot = state.auction.get(ai.id);
@@ -891,6 +1238,15 @@ function ensureAiProgressInner(game: GameState, io: Server | null): boolean {
     const startedAt = state.inFlight.get(ai.id);
     const hardTimeout = startedAt != null && now() - startedAt > AI_CONFIG.maxTurnMs + 5_000;
     if (!overdue && !hardTimeout) continue;
+    if (AI_CONFIG.strictAgent && INVEST_PHASES.has(game.phase)) {
+      // 严格模式：模型没在宽限时间内完成，就暂停等待管理员，不用本地策略落子
+      if (!state.forced.has(ai.id)) {
+        state.forced.add(ai.id);
+        recordAiFailure(game, ai, io, "模型在宽限时间内没有完成投资决策", "model_error");
+        changed = true;
+      }
+      continue;
+    }
     if (state.forced.has(ai.id)) {
       if (!ai.ready) {
         togglePlayerReady(game, ai.id);
@@ -935,6 +1291,18 @@ export function forgetAiRoom(roomId: string): void {
   AI_ROOMS.delete(roomId);
 }
 
+/** 移除单个 AI 时清理它的回合/拍卖/聊天状态，避免幽灵回合继续。 */
+export function forgetAiPlayer(roomId: string, playerId: string): void {
+  const state = AI_ROOMS.get(roomId);
+  if (!state) return;
+  state.inFlight.delete(playerId);
+  state.forced.delete(playerId);
+  state.auction.delete(playerId);
+  state.buffRound.delete(playerId);
+  state.chatRound.delete(playerId);
+  state.tokens.delete(playerId);
+}
+
 /** 由 index.ts 的全局 tick 定期调用，避免房间删除后状态泄漏。 */
 export function pruneAiRooms(activeRoomIds: Set<string>): void {
   for (const roomId of AI_ROOMS.keys()) {
@@ -945,9 +1313,19 @@ export function pruneAiRooms(activeRoomIds: Set<string>): void {
 /** 管理端/诊断用：当前房间 AI 的运行状态。 */
 export function aiRoomDiagnostics(game: GameState) {
   const state = AI_ROOMS.get(game.roomId);
+  const aiModels = game.players
+    .filter((p) => isAiPlayer(p))
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      slot: p.aiSlot ?? null,
+      model: modelConfigFor(p)?.model ?? null,
+      source: modelConfigFor(p)?.source ?? null,
+    }));
   return {
     enabled: AI_BOT_ENABLED,
-    llmConfigured: isAiModelConfigured(),
+    llmConfigured: isAiModelConfigured() || aiModels.some((m) => m.model !== null),
+    aiModels,
     phase: game.phase,
     phaseStartedAt: state?.phaseStartedAt ?? null,
     inFlight: state ? [...state.inFlight.keys()] : [],

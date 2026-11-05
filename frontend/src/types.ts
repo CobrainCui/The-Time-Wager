@@ -192,6 +192,10 @@ export interface Player {
   aiPersona?: string;
   /** AI 难度（真人玩家为空） */
   aiDifficulty?: "easy" | "normal" | "hard";
+  /** AI 座位号 1..5（对应 AI_PLAYER_<n>_* 配置） */
+  aiSlot?: number;
+  /** 管理端展示用：该 AI 实际使用的模型（不含 Key） */
+  aiModelLabel?: string;
 }
 
 export interface EventOption {
@@ -264,6 +268,15 @@ export interface LotteryOffer {
   drawnAt?: number;
 }
 
+export interface AiAgentFailure {
+  playerId: string;
+  name: string;
+  phase: string;
+  at: number;
+  message: string;
+  kind: "preflight" | "model_error" | "invalid_output" | "not_configured";
+}
+
 export interface GameState {
   roomId: string;
   /** 本局 session id：新一局会变化，用于清空上一局的聊天/交易视图 */
@@ -308,6 +321,11 @@ export interface GameState {
   /** 当前阶段下一次自动主持动作时间（时代介绍/结算/拍卖/命名倒计时） */
   autoHostNextActionAt?: number;
 
+  /** 严格 Agent 模式：AI 模型故障（仅管理端上帝视图下发） */
+  aiFailures?: Record<string, AiAgentFailure>;
+  /** 投资倒计时是否因 AI 故障被系统暂停 */
+  aiDeadlinePaused?: boolean;
+
   activeProjects: ActiveProject[];
   uncompletedProjects: ActiveProject[];
   completedProjects: ActiveProject[];
@@ -319,7 +337,8 @@ export interface GameState {
   currentEraCard?: EraCard;
   pendingEvents?: Record<string, EventCard>; 
 
-  logs: string[];
+  /** 仅管理端上帝视图下发，玩家端不再接收（避免泄露隐藏信息） */
+  logs?: string[];
 
   lastSettlement?: {
     round: number;

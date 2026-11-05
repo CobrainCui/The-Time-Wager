@@ -5,6 +5,7 @@ import { emptySessionTelemetry } from "../state/sessionTelemetry.js";
 import { getCommunityLeaderboard } from "../state/communityLeaderboard.js";
 import { eraCards } from "../data/game_data.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
+import { computeWealthRanks } from "../util/playerRank.js";
 
 type ProjectListKind = "active" | "completed" | "uncompleted";
 
@@ -56,6 +57,9 @@ function playerExportRow(p: Player) {
 }
 
 export function buildSessionExport(game: GameState) {
+  // 导出前按当前财富补一次名次；生产路径此前从未写入 player.rank
+  const ranks = computeWealthRanks(game.players);
+  for (const p of game.players) p.rank = ranks.get(p.id) ?? p.rank;
   const tel = game.sessionTelemetry ?? emptySessionTelemetry();
   const exportedAt = Date.now();
 

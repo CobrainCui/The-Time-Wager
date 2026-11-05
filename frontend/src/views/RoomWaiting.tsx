@@ -62,7 +62,7 @@ export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
                     color: "var(--color-text-muted)",
                   }}
                 >
-                  至少 2 名在线玩家（或开启 AI 自动补位）后开始倒计时
+                  至少 1 名在线真人后开始倒计时；开局自动补满 6 席
                 </div>
               )}
             </div>

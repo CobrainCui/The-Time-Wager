@@ -82,6 +82,7 @@ export const AdminView: React.FC<Props> = ({
   const clockSkewRef = useServerClockSkewRef(game.serverNow);
   const [communityNameDraft, setCommunityNameDraft] = useState("");
   const [aiDifficulty, setAiDifficulty] = useState<"easy" | "normal" | "hard">("normal");
+  const [aiPreflightNote, setAiPreflightNote] = useState<string>("");
   const aiAddDisabled =
     game.players.length >= 6 ||
     game.phase === "GAME_OVER" ||
@@ -189,6 +190,31 @@ export const AdminView: React.FC<Props> = ({
       socket.off("error", onError);
     };
   }, [game.roomId]);
+
+  useEffect(() => {
+    const onPreflight = (payload: {
+      ok?: boolean;
+      failures?: Array<{ name?: string; message?: string }>;
+    }) => {
+      if (payload?.ok) {
+        setAiPreflightNote("✅ AI 模型连接检测通过");
+      } else {
+        const detail = (payload?.failures ?? [])
+          .map((f) => `${f.name ?? "AI"}：${f.message ?? "连接失败"}`)
+          .join("；");
+        setAiPreflightNote(`❌ ${detail || "AI 模型连接检测失败"}`);
+      }
+    };
+    const onRetry = (payload: { message?: string }) => {
+      setAiPreflightNote(payload?.message ?? "已开始重试 AI");
+    };
+    socket.on("adminAiPreflight", onPreflight);
+    socket.on("adminAiRetry", onRetry);
+    return () => {
+      socket.off("adminAiPreflight", onPreflight);
+      socket.off("adminAiRetry", onRetry);
+    };
+  }, []);
 
   useEffect(() => {
     if (!adminTxLoadingOlder) return;
@@ -882,7 +908,7 @@ export const AdminView: React.FC<Props> = ({
           <button className="btn btn-ghost btn-sm" onClick={onExit}>← 返回</button>
         </div>
 
-        {/* AI 玩家：主持可添加/补位/移除。AI 由服务端托管，缺模型时自动用本地策略。 */}
+        {/* AI 玩家：严格 Agent 模式。必须模型可用才能开局；失败会暂停并等待人工处理。 */}
         <div
           style={{
             marginTop: "1rem",
@@ -945,6 +971,43 @@ export const AdminView: React.FC<Props> = ({
           >
             补满到 6 人
           </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ background: "rgba(16,185,129,0.14)", border: "1px solid rgba(16,185,129,0.4)", color: "#6ee7b7" }}
+            onClick={() => emit("adminAiPreflight")}
+          >
+            🔌 检测 AI 连接
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ background: "rgba(245,158,11,0.14)", border: "1px solid rgba(245,158,11,0.4)", color: "#fcd34d" }}
+            onClick={() => emit("adminRetryAI")}
+            disabled={!Object.keys(game.aiFailures ?? {}).length}
+          >
+            ↻ 重试故障 AI
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.35)", color: "#cbd5e1" }}
+            onClick={() => {
+              if (confirm("移除当前所有 AI？真人座位会保留。")) emit("adminRemoveAllAI");
+            }}
+          >
+            清空 AI
+          </button>
+          {(game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ background: "rgba(168,85,247,0.14)", border: "1px solid rgba(168,85,247,0.4)", color: "#d8b4fe" }}
+              onClick={() => emit("adminExtendDeadline", { minutes: 2 })}
+            >
+              ⏱ 延长 2 分钟
+            </button>
+          )}
           <span style={{ fontSize: uiRem(0.72), color: "var(--color-text-muted)" }}>
             {game.players.filter((p) => isAiPlayer(p)).length} 名 AI 在座
           </span>
@@ -967,6 +1030,8 @@ export const AdminView: React.FC<Props> = ({
               >
                 {p.name}
                 {p.aiDifficulty ? ` · ${aiDifficultyLabel(p.aiDifficulty)}` : ""}
+                {p.aiSlot ? ` · 座位${p.aiSlot}` : ""}
+                {p.aiModelLabel ? ` · ${p.aiModelLabel}` : ""}
                 <button
                   type="button"
                   title="移除该 AI"
@@ -988,6 +1053,60 @@ export const AdminView: React.FC<Props> = ({
           )}
         </div>
       </div>
+
+      {(Object.keys(game.aiFailures ?? {}).length > 0 || aiPreflightNote) && (
+        <div
+          style={{
+            margin: "0.75rem 1.5rem 0",
+            padding: "0.75rem 1rem",
+            borderRadius: "0.9rem",
+            background: "rgba(248,113,113,0.08)",
+            border: "1px solid rgba(248,113,113,0.35)",
+            color: "#fecaca",
+            fontSize: uiRem(0.8),
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.45rem",
+          }}
+        >
+          <div style={{ fontWeight: 800 }}>
+            ⚠️ 严格 Agent 模式：AI 故障会暂停本局，不会自动改用规则策略
+            {game.aiDeadlinePaused ? "（投资倒计时已暂停）" : ""}
+          </div>
+          {aiPreflightNote && <div>{aiPreflightNote}</div>}
+          {Object.values(game.aiFailures ?? {}).map((f) => (
+            <div
+              key={f.playerId}
+              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
+            >
+              <span>
+                {f.name} · {f.phase} · {f.message}
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => emit("adminRetryAI", { targetPlayerId: f.playerId })}
+              >
+                重试
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => emit("adminForceAiReady", { targetPlayerId: f.playerId })}
+              >
+                强制准备
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-danger"
+                onClick={() => emit("adminRemoveAI", { targetPlayerId: f.playerId })}
+              >
+                移除
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ padding: "1.5rem", maxWidth: "1400px", margin: "0 auto" }}>
 
@@ -1881,7 +2000,7 @@ export const AdminView: React.FC<Props> = ({
               <h2 style={{ fontWeight: 700, fontSize: uiRem(1) }}>📜 游戏日志</h2>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "0.875rem" }}>
-              {[...game.logs].reverse().map((log, i) => (
+              {[...(game.logs ?? [])].reverse().map((log, i) => (
                 <div
                   key={i}
                   style={{

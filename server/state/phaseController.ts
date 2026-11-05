@@ -119,6 +119,13 @@ function advanceRound(game: GameState) {
   clearActionDeadline(game);
   // 清理临时 Buff 与本轮道具短记录
   game.players.forEach((p) => {
+    // 打火机命中手牌必须强制执行：不能靠目标点「确认」来逃避烧毁
+    for (const notice of p.pendingLighterBurnNotices ?? []) {
+      if (notice.kind === "inventory") {
+        const idx = p.inventory.indexOf(notice.cardId);
+        if (idx !== -1) p.inventory.splice(idx, 1);
+      }
+    }
     p.activeBuffs = [];
     p.buffRoundNotes = [];
     p.slackedBy = [];

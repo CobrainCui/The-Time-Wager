@@ -74,7 +74,7 @@ function pushAiPlayer(game: GameState, persona: string, index: number) {
     usedCards: [],
     activeBuffs: [],
     slackedBy: [],
-    totalEnergyConsumed: 15,
+    totalEnergyConsumed: 0,
     wealthHistory: [STARTING_WEALTH],
     investedRiskEnergy: 0,
     investedLongEnergy: 0,

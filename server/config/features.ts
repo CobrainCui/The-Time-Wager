@@ -4,8 +4,8 @@
  * AI_PLAYERS_ENABLED=true 时，服务端可以托管 AI 玩家（由 server/ai 驱动）。
  * 关闭后 adminAddAI / adminFillAI 会被拒绝，AI 座位也不会参与阶段判定。
  *
- * AI_AUTOFILL=true 时，主持开局若在线人数不足 6，会自动补入 AI。
- * 默认关闭：C 端默认由主持显式添加 AI，避免玩家不知情。
+ * 产品版开局固定补满 6 席：1–6 名真人，空位由 AI 补入。
+ * 旧的 AI_AUTOFILL 开关已不再控制开局补位，保留仅为兼容旧 .env。
  */
 function envFlag(name: string, fallback: boolean): boolean {
   const raw = (process.env[name] ?? "").trim().toLowerCase();
@@ -14,7 +14,6 @@ function envFlag(name: string, fallback: boolean): boolean {
 }
 
 export const AI_BOT_ENABLED = envFlag("AI_PLAYERS_ENABLED", true);
-export const AI_AUTOFILL_ENABLED = envFlag("AI_AUTOFILL", false);
 
 /**
  * AI 输出安全约束（人本 AI 原则，默认开启）：

@@ -188,6 +188,12 @@ export interface RoundBuffPlayRecord {
   energyDeltas: { playerId: string; delta: number }[];
   wealthCredited?: number;
   voided: boolean;
+  /** 本张【摸鱼传染】已被哪张【劳逸结合】改判；打火机作废时据此回滚改判 */
+  convertedByPlayId?: string;
+  /** 本张摸鱼打出时目标已带有哪张【劳逸结合】被动（含实例 id） */
+  passiveWorkRestInstanceId?: string;
+  /** 本张【劳逸结合】追溯改判了哪些摸鱼（按 playId） */
+  convertedSlackPlayIds?: string[];
 }
 
 /** 投资阶段打火机声明，结算时统一判定 */
@@ -258,6 +264,8 @@ export interface SlackHitNotice {
   energyAfter: number;
   /** 摸鱼后精力为负且已自动解锁锁定投资 */
   investmentAutoUnlocked?: boolean;
+  /** 对应的本轮摸鱼流水；打火机作废该次摸鱼时按此精确移除提示 */
+  sourcePlayId?: string;
 }
 
 export interface Player {
@@ -324,6 +332,10 @@ export interface Player {
   aiPersona?: string; // e.g. "时荫植者", "瞬刻炼金士"
   /** AI 难度：easy / normal / hard（真人玩家为空） */
   aiDifficulty?: "easy" | "normal" | "hard";
+  /** AI 座位号 1..5：决定使用哪一组 AI_PLAYER_<n>_* 模型配置 */
+  aiSlot?: number;
+  /** 管理端展示用：该 AI 实际使用的模型名（不含 Key） */
+  aiModelLabel?: string;
 }
 
 export interface GainBreakdown {
@@ -496,6 +508,26 @@ export interface GameState {
   sessionStartedAt?: number;
   /** 行为流水与结算历史（不广播给玩家客户端） */
   sessionTelemetry?: SessionTelemetry;
+
+  // === 严格 Agent 模式 ===
+  /**
+   * AI 模型失败记录（仅管理端上帝视图可见）。
+   * 严格模式下失败不会降级为本地策略，而是暂停本局等待管理员处理。
+   */
+  aiFailures?: Record<string, AiAgentFailure>;
+  /** 投资倒计时是否因 AI 故障被系统暂停（管理员恢复后自动继续） */
+  aiDeadlinePaused?: boolean;
+}
+
+export interface AiAgentFailure {
+  playerId: string;
+  name: string;
+  /** 发生失败时所在阶段 */
+  phase: string;
+  at: number;
+  /** 面向管理员的可读原因（不含 Key） */
+  message: string;
+  kind: "preflight" | "model_error" | "invalid_output" | "not_configured";
 }
 
 export function createInitialGame(roomId: string, _playerNames: string[]): GameState {
@@ -548,7 +580,10 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
 }
 
 function freshPlayerFromIdentity(
-  meta: Pick<Player, "id" | "name" | "socketId" | "reconnectToken" | "connected" | "isAI" | "aiPersona" | "aiDifficulty">
+  meta: Pick<
+    Player,
+    "id" | "name" | "socketId" | "reconnectToken" | "connected" | "isAI" | "aiPersona" | "aiDifficulty" | "aiSlot" | "aiModelLabel"
+  >
 ): Player {
   return {
     id: meta.id,
@@ -559,6 +594,8 @@ function freshPlayerFromIdentity(
     isAI: meta.isAI,
     aiPersona: meta.aiPersona,
     aiDifficulty: meta.aiDifficulty,
+    aiSlot: meta.aiSlot,
+    aiModelLabel: meta.aiModelLabel,
     ready: false,
     energy: 15,
     wealth: STARTING_WEALTH,
@@ -572,7 +609,7 @@ function freshPlayerFromIdentity(
     buffRoundNotes: [],
     slackedBy: [],
     coffeePurchasesThisRound: 0,
-    totalEnergyConsumed: 15,
+    totalEnergyConsumed: 0,
     wealthHistory: [STARTING_WEALTH],
     investedRiskEnergy: 0,
     investedLongEnergy: 0,
@@ -592,6 +629,8 @@ export function resetGameSession(game: GameState): void {
     isAI: p.isAI,
     aiPersona: p.aiPersona,
     aiDifficulty: p.aiDifficulty,
+    aiSlot: p.aiSlot,
+    aiModelLabel: p.aiModelLabel,
   }));
 
   const fresh = createInitialGame(game.roomId, []);
@@ -605,6 +644,8 @@ export function resetGameSession(game: GameState): void {
   game.transactions = fresh.transactions;
   game.chatGroups = fresh.chatGroups;
   game.groupMessages = fresh.groupMessages;
+  game.aiFailures = {};
+  game.aiDeadlinePaused = false;
   // 新一局重建「全场」频道（群聊开启时），避免重置后聊天入口消失
   syncChatGroupsOnRosterChange(game);
   game.currentEra = fresh.currentEra;
@@ -631,6 +672,11 @@ export function resetGameSession(game: GameState): void {
   game.tutorialStep = 0;
   game.tutorialEntryPhase = undefined;
   game.lastSettlement = undefined;
+  game.settlementBaseline = undefined;
+  game.adminProjectAdjustments = undefined;
+  game.hostRevision = undefined;
+  game.lighterBurnDeclarations = undefined;
+  game.roundBuffPlays = undefined;
   game.communityName = undefined;
   game.globalLeaderboard = undefined;
   game.auctionDistributedCardIds = undefined;

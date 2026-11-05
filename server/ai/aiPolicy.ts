@@ -405,7 +405,6 @@ export function chooseAuctionAction(
   const minNext = getMinimumNextBid(game);
   const canForceBuy =
     (ai.inventory ?? []).includes("buff_force_buy") &&
-    !(game.forceBuyUsedPlayerIds ?? []).includes(ai.id) &&
     focusId !== "buff_force_buy";
 
   // 高价值卡：高难度 AI 会用强买强卖

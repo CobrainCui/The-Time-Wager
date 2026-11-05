@@ -32,8 +32,8 @@ import {
 import { sweepRateLimits, allow } from "./util/rateLimit.js";
 import { runRuleAgentTurn, isRuleAgentConfigured, isRuleAgentEnabled } from "./logic/ruleAgent.js";
 import type { ChatTurn } from "./logic/ruleAgent.js";
-import { ensureAiProgress, pruneAiRooms } from "./ai/aiOrchestrator.js";
-import { ensureAutoHost, pruneAutoHostRooms } from "./host/autoHost.js";
+import { ensureAiProgress, pruneAiRooms, forgetAiRoom } from "./ai/aiOrchestrator.js";
+import { ensureAutoHost, pruneAutoHostRooms, resetAutoHostState } from "./host/autoHost.js";
 import {
   broadcastLeaderboardToAllRooms,
   getPublicCommunityLeaderboard,
@@ -509,43 +509,62 @@ const investmentClockSyncAt = new Map<string, number>();
 setInterval(() => {
   const now = Date.now();
   Object.values(rooms).forEach((game) => {
-    if (handleActionTimeExpired(game)) {
-      investmentClockSyncAt.delete(game.roomId);
-      broadcastUpdate(io, game);
-      return;
-    }
-    // AI 看门狗：模型超时/失败时用本地策略兜底，绝不让 AI 卡住阶段
-    if (ensureAiProgress(game, io)) {
-      investmentClockSyncAt.delete(game.roomId);
-      return;
-    }
-    // 系统自动主持：开局、阶段推进、拍卖落槌、彩票开奖、命名兜底
-    if (ensureAutoHost(game, io)) {
-      investmentClockSyncAt.delete(game.roomId);
-      broadcastUpdate(io, game);
-      return;
-    }
-    if (game.phase === "INVESTMENT" && game.investmentEndsAt != null) {
-      const last = investmentClockSyncAt.get(game.roomId) ?? 0;
-      if (now - last >= INVESTMENT_CLOCK_SYNC_MS) {
-        investmentClockSyncAt.set(game.roomId, now);
+    // 单个房间异常不能拖垮整个进程（所有房间都在内存里）
+    try {
+      if (handleActionTimeExpired(game)) {
+        investmentClockSyncAt.delete(game.roomId);
         broadcastUpdate(io, game);
+        return;
       }
-    } else {
-      investmentClockSyncAt.delete(game.roomId);
+      // AI 看门狗：严格模式下失败会暂停并通知管理端，不会偷偷降级本地策略
+      if (ensureAiProgress(game, io)) {
+        investmentClockSyncAt.delete(game.roomId);
+        return;
+      }
+      // 系统自动主持：开局、阶段推进、拍卖落槌、彩票开奖、命名兜底
+      if (ensureAutoHost(game, io)) {
+        investmentClockSyncAt.delete(game.roomId);
+        broadcastUpdate(io, game);
+        return;
+      }
+      if (game.phase === "INVESTMENT" && game.investmentEndsAt != null) {
+        const last = investmentClockSyncAt.get(game.roomId) ?? 0;
+        if (now - last >= INVESTMENT_CLOCK_SYNC_MS) {
+          investmentClockSyncAt.set(game.roomId, now);
+          broadcastUpdate(io, game);
+        }
+      } else {
+        investmentClockSyncAt.delete(game.roomId);
+      }
+    } catch (error) {
+      console.error(
+        `[tick] room ${game.roomId} phase ${game.phase} failed:`,
+        error instanceof Error ? error.stack ?? error.message : error
+      );
     }
   });
   if (now - lastRoomSweepAt < 60_000) return;
   lastRoomSweepAt = now;
   sweepRateLimits(60_000, now);
   for (const [rid, game] of Object.entries(rooms)) {
-    if (game.phase !== "ROOM_WAITING") continue;
-    if (game.players.some((p) => p.connected)) continue;
+    // AI 不算「有人在线」；没有在线真人的房间按阶段 TTL 回收
+    const hasOnlineHuman = game.players.some((p) => p.connected && !p.isAI);
+    if (hasOnlineHuman) continue;
+    const ttl =
+      game.phase === "GAME_OVER"
+        ? 30 * 60_000
+        : game.phase === "ROOM_WAITING"
+          ? EMPTY_ROOM_TTL_MS
+          : 6 * 60 * 60_000;
     const created = game.roomCreatedAt ?? 0;
-    if (now - created > EMPTY_ROOM_TTL_MS) {
+    if (now - created > ttl) {
       delete rooms[rid];
+      forgetAiRoom(rid);
+      resetAutoHostState(rid);
+      investmentClockSyncAt.delete(rid);
       pruneAiRooms(new Set(Object.keys(rooms)));
       pruneAutoHostRooms(new Set(Object.keys(rooms)));
+      console.log(`[room] removed idle room ${rid} (phase=${game.phase})`);
     }
   }
 }, 1000);

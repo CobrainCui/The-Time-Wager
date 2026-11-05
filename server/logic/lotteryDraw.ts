@@ -13,12 +13,13 @@ import { drawLotteryRoll, type LotteryDraw } from "./lotteryRandom.js";
 const DRAWING = new Set<string>();
 
 function drawKey(game: GameState, playerId: string): string {
-  return `${game.roomId}:${playerId}`;
+  // 带房间长度前缀，避免 roomId "a" 与 "a:1" 互相前缀匹配
+  return `${game.roomId.length}:${game.roomId}:${playerId}`;
 }
 
 /** 抽奖请求仍在等待随机源：此时不能结算，否则彩票会被清掉 */
 export function hasLotteryDrawInFlight(roomId: string): boolean {
-  const prefix = `${roomId}:`;
+  const prefix = `${roomId.length}:${roomId}:`;
   for (const key of DRAWING) {
     if (key.startsWith(prefix)) return true;
   }

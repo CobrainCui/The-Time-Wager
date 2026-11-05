@@ -1,13 +1,16 @@
 /**
- * AI 玩家端到端冒烟（产品版）。
+ * AI 玩家端到端冒烟（产品版，严格 Agent 模式）。
  *
- * 启动一个临时服务端（不配置任何模型 Key，走本地启发式），
- * 用 socket 模拟「主持 + 1 名真人 + 5 名 AI」跑完开局与一轮投资。
+ * 启动一个本地 OpenAI 兼容 mock（不消耗真实额度），再用 socket 模拟
+ * 「主持 + 1 名真人 + 5 名 AI」跑完开局、投资、结算、拍卖与移除。
+ * 严格模式下 AI 不允许本地策略兜底，因此这里也验证了：
+ * 开局前模型连通性检测、投资/拍卖走模型、失败不静默降级。
  *
  * 用法：node scripts/ai-e2e.mjs
  * 依赖：server/dist 已构建；frontend/node_modules 内有 socket.io-client。
  */
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { io } from "socket.io-client";
@@ -16,9 +19,71 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
 const serverDir = path.join(repoRoot, "server");
 const PORT = Number(process.env.AI_E2E_PORT || 3101);
+const MOCK_PORT = PORT + 100;
 const URL = `http://127.0.0.1:${PORT}`;
 const ROOM = `ai-e2e-${Date.now().toString(36)}`;
 const TOKEN = "ai-e2e-token";
+
+/** 最小 OpenAI 兼容 mock：按提示词类型返回合法的 JSON 决策。 */
+function startMockLlm() {
+  const server = createServer((req, res) => {
+    if (req.method !== "POST") {
+      res.writeHead(404).end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      let prompt = "";
+      try {
+        const parsed = JSON.parse(body);
+        prompt = String(parsed.messages?.map((m) => m.content).join("\n") ?? "");
+      } catch {
+        /* ignore */
+      }
+
+      let content = "ok";
+      if (prompt.includes("拍卖会")) {
+        const min = Number(prompt.match(/最低下一口：(\d+)/)?.[1] ?? 5);
+        content = JSON.stringify({ reasoning: "mock bid", action: "bid", amount: Math.max(5, min) });
+      } else if (prompt.includes("收到一笔转账")) {
+        content = JSON.stringify({ reasoning: "mock accept", accept: true });
+      } else if (prompt.includes("为社区命名")) {
+        content = JSON.stringify({ reasoning: "mock", name: "测试社区" });
+      } else if (prompt.includes("## 输出 JSON") || prompt.includes("分配精力")) {
+        const projectId = prompt.match(/"id":(\d+)/)?.[1];
+        content = JSON.stringify({
+          reasoning: "mock invest",
+          messages: [],
+          transfer: null,
+          coffee: 0,
+          useCard: null,
+          investment: projectId ? { [projectId]: 15 } : {},
+        });
+      }
+
+      const payload = {
+        id: "mock",
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: "mock-model",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(payload));
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(MOCK_PORT, "127.0.0.1", () => resolve(server));
+  });
+}
 
 function log(msg) {
   console.log(`[ai-e2e] ${msg}`);
@@ -59,6 +124,8 @@ function connect() {
 }
 
 async function main() {
+  const mock = await startMockLlm();
+  log(`本地 mock 模型已启动 ${MOCK_PORT}`);
   log(`启动服务端 ${URL}`);
   const child = spawn(process.execPath, [path.join(serverDir, "dist", "index.js")], {
     cwd: serverDir,
@@ -69,10 +136,14 @@ async function main() {
       ADMIN_TOKEN: TOKEN,
       NODE_ENV: "test",
       AI_PLAYERS_ENABLED: "true",
-      AI_AUTOFILL: "false",
+      AI_STRICT_AGENT: "true",
+      AI_VERBOSE_LOG: "true",
       AUTO_HOST_ENABLED: "false",
       LOTTERY_ONLINE_RANDOM: "false",
-      AI_API_KEY: "",
+      AI_API_KEY: "mock-key",
+      AI_BASE_URL: `http://127.0.0.1:${MOCK_PORT}/v1`,
+      AI_MODEL: "mock-model",
+      AI_PROVIDER: "mock",
       OPENAI_API_KEY: "",
       DEEPSEEK_API_KEY: "",
       RULE_AGENT_ENABLED: "false",
@@ -94,7 +165,11 @@ async function main() {
     }
 
     const admin = connect();
-    admin.on("error", (message) => log(`admin error: ${String(message)}`));
+    const adminErrors = [];
+    admin.on("error", (message) => {
+      adminErrors.push(String(message));
+      log(`admin error: ${String(message)}`);
+    });
     admin.on("info", (message) => log(`admin info: ${String(message)}`));
     await waitFor(admin, "connect", () => true, 5_000);
     admin.emit("adminAuthenticate", { token: TOKEN });
@@ -205,6 +280,16 @@ async function main() {
     admin.emit("adminSkipPhase", { roomId: ROOM, targetPhase: "AUCTION" });
     await waitUntil(() => latest?.phase === "AUCTION", "进入 AUCTION", 12_000);
     admin.emit("adminSetAuctionFocus", { roomId: ROOM, cardId: "buff_gold" });
+    const focusOk = await waitUntil(
+      () => latest?.auctionFocusCardId === "buff_gold",
+      "拍卖焦点设为 buff_gold",
+      5_000
+    ).catch(() => null);
+    if (!focusOk) {
+      fail(
+        `拍卖焦点未生效（focus=${latest?.auctionFocusCardId ?? "无"}；adminErrors=${adminErrors.join(" | ") || "无"}）`
+      );
+    }
     admin.emit("requestGameState");
     await waitUntil(
       () =>
@@ -236,6 +321,7 @@ async function main() {
     console.error(serverLog.slice(-4000));
   } finally {
     child.kill();
+    mock.close();
     await new Promise((r) => setTimeout(r, 300));
   }
 

@@ -15,7 +15,7 @@
 - **AI 运行时**（`server/ai/`）
   - `aiRoster.ts`：添加/移除/补位 AI，最多 5 名 AI，至少保留 1 个真人座位；**不预设人格**，使用中性昵称。
   - `aiPersona.ts`：自由发挥画像（均衡兜底权重）+ 三档难度（easy/normal/hard）；旧局显式人格仍兼容。
-  - `aiPolicy.ts`：本地启发式策略（投资、咖啡、道具、转账、聊天、拍卖、转账回执）。
+  - `aiPolicy.ts`：本地启发式策略（投资、咖啡、道具、转账、聊天、拍卖、转账回执）。**严格模式下不参与决策**，仅在显式关闭 `AI_STRICT_AGENT` 或旧局兼容路径中使用。
   - `aiOrchestrator.ts`：全阶段驱动 + 并发分批 + 看门狗兜底 + AI 彩票领取 + AI 首富命名。
   - `llmClient.ts`：OpenAI 兼容客户端，带硬超时、重试、token 预算、错误脱敏。
   - `aiObservation.ts` / `aiPrompt.ts`：只注入玩家可见信息；聊天是数据不是指令。**`aiPrompt.ts` 是调整 AI 提示词的唯一入口**，`SAFETY_SECTION` 定义人设三段式、红黄绿数据分级、硬红线与危机协议。
@@ -41,7 +41,7 @@
 - **服务端接入**
   - `phaseController` 在阶段变化时触发 AI；`index.ts` 每秒看门狗 + 自动主持。
   - `adminAddAI / adminRemoveAI / adminFillAI / adminGetAiRoster / adminSetAutoHost / adminDrawLottery`。
-  - `AI_AUTOFILL` 可选：开局真人不足 6 人时自动补 AI。
+  - 开局固定补满 6 席：支持 1–6 名真人，空位自动补 AI（至少保留 1 名真人；严格模式需要对应模型 Key）。
   - 拍卖允许 AI 出价/强买强卖；AI 会在投资阶段买咖啡、用道具、转账、发言、领取彩票。
   - AI 昵称前缀 `🤖` / `AI_` 保留，真人不可使用。
   - **AI 与真人平权**：社区财富榜按全部座位统计；AI 可以成为首富并获得社区命名权。
@@ -50,23 +50,23 @@
   - 等候页 / 时代介绍 / 结算 / 拍卖 / 命名页显示自动主持倒计时。
   - 终局页与社区榜显示全部玩家总财富（含 AI）；AI 有标识。
 - **测试**
-  - `server/ai/aiPlayers.test.ts`：自由发挥提示词、投资合法性、方案裁剪、拍卖出价、座位上限、无模型时自动 ready。
+  - `server/ai/aiPlayers.test.ts`：自由发挥提示词、投资合法性、方案裁剪、拍卖出价、座位上限、严格模式拒绝无模型 AI。
   - `server/state/sessionArchive.wealth.test.ts`：AI 与真人同等计入社区榜、AI 可成为首富。
   - `server/logic/lotteryRandom.test.ts`：骰子查表、random.org 成功/异常/超时兜底。
   - `server/host/autoHost.test.ts`：等待房自动开局、时代推进、拍卖跳过/落槌、命名兜底。
   - `server/ai/aiSafety.test.ts`：危机识别四项、硬红线拦截、危机窗口只发一条固定回复、AI 公开发言放行路径。
   - `server/logic/chatGroups.test.ts`：全场频道自动创建、重置后重建、消息广播上限、自建群创建/解散、禁聊阶段。
   - `frontend/scripts/ai-e2e.mjs`：主持 + 1 真人 + 5 AI 的 socket 端到端（含全场群聊创建、群消息广播、危机固定安全回复）。
-  - `frontend/scripts/group-chat-e2e.mjs`：4 真人端到端（全场频道、自建群成员隔离、退群解散、危机安全回复）。
+  - `frontend/scripts/group-chat-e2e.mjs`：6 真人端到端（全场频道、自建群成员隔离、退群解散、危机安全回复）。
 
 ### 1.3 产品级保障
 
 | 风险 | 处理 |
 |------|------|
-| 没有模型 Key | 直接用本地策略，不报错、不空局 |
-| 模型超时/失败 | 单次硬超时；失败自动降级；不会阻塞阶段 |
-| 模型卡住真人 | 阶段开始 `AI_MAX_TURN_MS`（默认 15s）后看门狗强制落子并 ready |
-| 成本失控 | 每名 AI 每局 token 预算；超限只走本地策略 |
+| 没有模型 Key | 严格模式下拒绝添加 AI、拒绝补位/开局，并明确提示该填哪个变量；只有 6 名真人同桌时不需要 Key |
+| 模型超时/失败 | 单次硬超时 + 重试；失败不降级本地策略，暂停本局并在管理端显示故障，由主持重试/强制准备/移除 |
+| 模型卡住真人 | 阶段开始 `AI_MAX_TURN_MS`（默认 15s）后进入管理端故障面板，不会静默用规则代打 |
+| 成本失控 | 每名 AI 每局 token 预算；超限停止模型调用并提示管理员 |
 | 信息作弊 | AI 只读玩家可见信息，不读他人精力/手牌/草稿 |
 | AI 被歧视 | AI 与真人同样计入社区财富、可成为首富、可获得命名权 |
 | 昵称冒名 | `🤖` / `AI_` 前缀由服务端保留 |
@@ -84,12 +84,13 @@
 
 ```dotenv
 AI_PLAYERS_ENABLED=true
-AI_AUTOFILL=false
+AI_AUTOFILL_TARGET=6
 AI_API_KEY=...
 AI_MODEL=gpt-4o
 AI_MAX_PER_ROOM=5
 AI_TOKEN_BUDGET_PER_GAME=120000
 AI_SAFETY_ENABLED=true
+AI_STRICT_AGENT=true
 
 AUTO_HOST_ENABLED=true
 AUTO_START_DELAY_MS=30000
@@ -143,15 +144,13 @@ npm run analyze -- --run <runId> --out analysis/<date>
 
 | 项目 | 结果 |
 |------|------|
-| 产品版服务端测试 | 284 / 284 通过 |
+| 产品版服务端测试 | 304 / 304 通过 |
 | 产品版前端构建 | 通过 |
-| 产品版 AI 端到端（1 真人 + 5 AI，无模型 Key） | 通过：AI 自动 ready、各投 15 精力、结算正常、拍卖出价与结束正常、可移除 |
-| 产品版群聊端到端（同一脚本） | 通过：自动创建「全场」、群消息广播、危机固定安全回复 |
-| 产品版群聊端到端（4 真人） | 通过：全场频道全员可见、自建群成员隔离、退群自动解散、危机固定安全回复 |
-| 产品版无模型全 AI 长局 | 通过：8 轮后进入社区命名，`globalRound=8` |
-| 实验室版服务端测试 | 262 / 262 通过 |
+| 产品版 AI 端到端（1 真人 + 5 AI，本地 mock + 严格模式） | 通过：开局预检、AI 自动 ready、各投 15 精力、结算、拍卖出价与结束、移除 AI |
+| 产品版群聊端到端（6 真人） | 通过：全场频道全员可见、自建群成员隔离、退群自动解散、危机固定安全回复、私信危机原文不投递 |
+| 实验室版服务端测试 | 273 / 273 通过 |
 | 实验室版三端构建 | 通过 |
-| 实验室版 mock 端到端 | 通过：24 预测、48 公开、24 私聊、12 出价/成交、223 决策、QC 0 失败 |
+| 实验室版 mock 端到端 | 通过：1 局 8 轮，QC 0 失败 |
 
 ---
 
@@ -159,10 +158,11 @@ npm run analyze -- --run <runId> --out analysis/<date>
 
 - 产品版群聊已默认开启（`server/config/playerChatFeatures.ts` 与 `frontend/src/config/playerChatFeatures.ts` 均为 `true`）。紧急回滚需两处同时改为 `false` 并重新构建；AI 聊天、危机识别与系统安全提示也会随之停用。
 - 群聊单次广播只下发每个群最近 200 条（服务端保留 500 条用于导出）；更早的聊天不在玩家端持久展示。
+- 产品版开局固定补满 6 席（1–6 名真人）；不足 6 人时必须有可用 AI Key，否则拒绝开局。
 - 产品版与实验室版都**只支持单实例 Node**（状态在内存、归档单文件）。
 - 产品版自动主持默认开启；若线下活动需要真人主持控场，设置 `AUTO_HOST_ENABLED=false`，或在管理端按房间关闭。
 - 社区榜改为「全部座位」统计后，服务启动时会按存档 snapshot 重算历史社区财富（含旧局的 AI 财富）；这是有意的口径统一，升级前请知会运营。
-- 产品版 AI 的拍卖决策走本地策略（不出模型调用）；投资/聊天/转账的文案与方案可走模型。若希望拍卖也走模型，可在 `aiOrchestrator` 的 `runAuctionTurn` 中接入 `askAiJson`。
+- 产品版 AI 的拍卖、投资、聊天、转账、社区命名均走模型（严格模式）；若显式设 `AI_STRICT_AGENT=false`，才保留旧的本地启发式兜底。
 - 线上随机依赖 random.org；网络受限时会退回服务端随机，导出里的 `source` 可用于数据质控。
 - 实验室版固定 n=6，不适合做角色聚类强结论；固定种子只复现结构随机，不复制模型采样。
 - 聊天中的承诺/威胁/欺骗/联盟仍需人工编码；正式分析前固定编码规则。

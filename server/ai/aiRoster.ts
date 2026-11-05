@@ -4,7 +4,7 @@ import { syncEnergyAfterRosterChange } from "../logic/energySchedule.js";
 import { syncChatGroupsOnRosterChange } from "../logic/chatGroups.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 import { AI_BOT_ENABLED } from "../config/features.js";
-import { AI_CONFIG } from "./aiConfig.js";
+import { AI_CONFIG, MAX_AI_PLAYER_SLOTS, resolveAiModelConfigForSlot } from "./aiConfig.js";
 import {
   aiPersonaCatalog,
   normalizeDifficulty,
@@ -48,7 +48,24 @@ function uniqueAiName(game: GameState, base: string): string {
   return `${trimmed}${Date.now().toString(36).slice(-4)}`;
 }
 
-function newAiPlayer(id: string, name: string, difficulty: AiDifficulty): Player {
+function nextAiSlot(game: GameState): number {
+  const used = new Set(
+    game.players
+      .filter((p) => isAiPlayer(p) && typeof p.aiSlot === "number")
+      .map((p) => p.aiSlot as number)
+  );
+  for (let slot = 1; slot <= MAX_AI_PLAYER_SLOTS; slot++) {
+    if (!used.has(slot)) return slot;
+  }
+  return (countAiPlayers(game) % MAX_AI_PLAYER_SLOTS) + 1;
+}
+
+function aiModelLabelForSlot(slot: number): string {
+  const cfg = resolveAiModelConfigForSlot(slot);
+  return cfg ? `${cfg.provider}:${cfg.model}` : "未配置模型";
+}
+
+function newAiPlayer(id: string, name: string, difficulty: AiDifficulty, slot: number): Player {
   return {
     id,
     name,
@@ -67,7 +84,7 @@ function newAiPlayer(id: string, name: string, difficulty: AiDifficulty): Player
     buffRoundNotes: [],
     slackedBy: [],
     coffeePurchasesThisRound: 0,
-    totalEnergyConsumed: 15,
+    totalEnergyConsumed: 0,
     wealthHistory: [STARTING_WEALTH],
     investedRiskEnergy: 0,
     investedLongEnergy: 0,
@@ -75,6 +92,8 @@ function newAiPlayer(id: string, name: string, difficulty: AiDifficulty): Player
     socialRank: null,
     isAI: true,
     aiDifficulty: difficulty,
+    aiSlot: slot,
+    aiModelLabel: aiModelLabelForSlot(slot),
   };
 }
 
@@ -93,6 +112,10 @@ export function addAiPlayer(game: GameState, options: AddAiOptions = {}): AddAiR
   if (game.phase === "GAME_OVER" || game.phase === "COMMUNITY_NAMING") {
     return { ok: false, error: "本局已结束，不能加入 AI" };
   }
+  // 开局后加座会改变精力桌与排名奖档位，破坏规则一致性；只允许等待房/教程加入。
+  if (game.phase !== "ROOM_WAITING" && game.phase !== "TUTORIAL") {
+    return { ok: false, error: "本局已开始，不能中途加入 AI；请等下一局" };
+  }
   if (game.players.length >= 6) return { ok: false, error: "房间已满（最多 6 人）" };
   if (countAiPlayers(game) >= AI_CONFIG.maxAiPerRoom) {
     return { ok: false, error: `AI 玩家已达上限（${AI_CONFIG.maxAiPerRoom} 名）` };
@@ -100,17 +123,26 @@ export function addAiPlayer(game: GameState, options: AddAiOptions = {}): AddAiR
 
   const index = countAiPlayers(game);
   const difficulty = normalizeDifficulty(options.difficulty);
+  const slot = nextAiSlot(game);
+  if (AI_CONFIG.strictAgent && !resolveAiModelConfigForSlot(slot)) {
+    return {
+      ok: false,
+      error:
+        `严格 Agent 模式：AI 座位 ${slot} 未配置可用模型。` +
+        `请在 server/.env 填写 AI_PLAYER_${slot}_API_KEY（或共享 AI_API_KEY）并重启。`,
+    };
+  }
   const base = options.name?.trim()
     ? options.name.trim()
     : FREEFORM_NAMES[index % FREEFORM_NAMES.length];
   const name = uniqueAiName(game, base);
   const id = `ai_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
-  const player = newAiPlayer(id, name, difficulty);
+  const player = newAiPlayer(id, name, difficulty, slot);
   game.players.push(player);
   syncEnergyAfterRosterChange(game, player);
   syncChatGroupsOnRosterChange(game);
-  game.logs.push(`🤖 AI 玩家「${name}」加入（自由发挥 · ${difficulty}）`);
+  game.logs.push(`🤖 AI 玩家「${name}」加入（自由发挥 · ${difficulty} · 座位${slot}）`);
   return { ok: true, player };
 }
 
@@ -120,6 +152,7 @@ export function removeAiPlayer(game: GameState, playerId: string): boolean {
   const [removed] = game.players.splice(index, 1);
   game.readyPlayers.delete(removed.id);
   game.phaseFinished.delete(removed.id);
+  if (game.aiFailures) delete game.aiFailures[removed.id];
   syncEnergyAfterRosterChange(game);
   syncChatGroupsOnRosterChange(game);
   game.logs.push(`🤖 AI 玩家「${removed.name}」已离开`);
@@ -162,6 +195,9 @@ export function aiRosterSummary(game: GameState) {
         persona: p.aiPersona ?? null,
         freeform: !p.aiPersona,
         difficulty: p.aiDifficulty ?? "normal",
+        slot: p.aiSlot ?? null,
+        /** 该座位实际使用的模型；未配置 Key 时显示「未配置模型」 */
+        model: p.aiModelLabel ?? "本地策略",
         wealth: p.wealth,
         ready: p.ready,
       })),

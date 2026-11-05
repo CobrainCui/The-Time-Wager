@@ -18,7 +18,8 @@ let client: OpenAI | null = null;
 let clientSignature = "";
 
 function getClient(cfg: AiModelConfig): OpenAI {
-  const signature = `${cfg.baseURL ?? "default"}|${cfg.apiKey.slice(0, 6)}|${cfg.apiKey.length}`;
+  // Key 参与签名（只在内存里比较）：不同座位即使前缀/长度相同，也不会复用错客户端。
+  const signature = `${cfg.baseURL ?? "default"}|${cfg.apiKey}`;
   if (!client || signature !== clientSignature) {
     client = new OpenAI({
       apiKey: cfg.apiKey,
@@ -49,6 +50,8 @@ export interface AiLlmOptions {
   timeoutMs?: number;
   maxRetries?: number;
   maxOutputTokens?: number;
+  /** 指定模型配置（按 AI 座位）；不传则使用共享配置 */
+  config?: AiModelConfig | null;
   /** 用于日志；不要包含敏感信息 */
   label?: string;
 }
@@ -148,7 +151,7 @@ export async function askAiJson(
   options: AiLlmOptions = {}
 ): Promise<AiLlmResult> {
   const startedAt = Date.now();
-  const cfg = resolveAiModelConfig();
+  const cfg = options.config !== undefined ? options.config : resolveAiModelConfig();
   if (!cfg) {
     return {
       ok: false,

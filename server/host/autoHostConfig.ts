@@ -14,8 +14,8 @@ function envInt(name: string, fallback: number, min = 0): number {
 export const AUTO_HOST_CONFIG = {
   /** 等待房凑够人后，多少毫秒自动开局 */
   startDelayMs: envInt("AUTO_START_DELAY_MS", 30_000, 5_000),
-  /** 自动开局至少需要的在线座位数（AI 计入；开启 AI 自动补位时按补位后计算） */
-  minPlayersToStart: envInt("AUTO_START_MIN_PLAYERS", 2, 1),
+  /** 自动开局至少需要的在线真人座位数；产品版允许 1 名真人 + AI 补满 6 席 */
+  minPlayersToStart: envInt("AUTO_START_MIN_PLAYERS", 1, 1),
   /** 时代介绍停留时间 */
   introMs: envInt("AUTO_INTRO_MS", 12_000, 3_000),
   /** 结算页停留时间 */

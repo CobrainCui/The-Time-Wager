@@ -43,7 +43,15 @@ function roomId(suffix: string): string {
 test("auto host starts a ready waiting room and advances era intro", () => {
   const game = createInitialGame(roomId("start"), []);
   game.autoHostEnabled = true;
-  game.players = [player("h1"), player("h2")];
+  // 产品版正式开局固定 6 席；本用例用 6 名真人避免依赖 AI Key
+  game.players = [
+    player("h1"),
+    player("h2"),
+    player("h3"),
+    player("h4"),
+    player("h5"),
+    player("h6"),
+  ];
 
   const t0 = 1_000_000;
   assert.equal(armAutoHostStart(game, t0), true);
@@ -142,6 +150,39 @@ test("auto host falls back to a system community name after timeout", () => {
   resetAutoHostState(game.roomId);
 });
 
+test("严格模式：AI 首富没有模型时拒绝用本地名称兜底，并记录故障", async () => {
+  const saved = {
+    AI_API_KEY: process.env.AI_API_KEY,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+    AI_STRICT_AGENT: process.env.AI_STRICT_AGENT,
+  };
+  delete process.env.AI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  process.env.AI_STRICT_AGENT = "true";
+  try {
+    const game = createInitialGame(roomId("ai-naming-strict"), []);
+    game.sessionId = `ai-naming-strict-${Date.now()}`;
+    game.phase = "COMMUNITY_NAMING";
+    game.players = [
+      player("human", { wealth: 80 }),
+      player("ai-boss", { wealth: 900, isAI: true, aiDifficulty: "normal" }),
+    ];
+    const { ensureAiCommunityNaming } = await import("../ai/aiOrchestrator.js");
+    const named = await ensureAiCommunityNaming(game, null);
+    assert.equal(named, false, "严格模式不能用本地名称池代替模型");
+    assert.equal(game.communityName, undefined);
+    assert.ok(game.aiFailures?.["ai-boss"], "应记录 AI 故障供管理端处理");
+    resetAutoHostState(game.roomId);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 test("turning auto host off clears pending timers", () => {
   const game: GameState = createInitialGame(roomId("off"), []);
   game.autoHostEnabled = false;
@@ -152,15 +193,17 @@ test("turning auto host off clears pending timers", () => {
   assert.equal(game.autoHostNextActionAt, undefined);
 });
 
-test("AI richest player names the community when no model is configured", async () => {
+test("AI richest player names the community when no model is configured (non-strict legacy)", async () => {
   const saved = {
     AI_API_KEY: process.env.AI_API_KEY,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+    AI_STRICT_AGENT: process.env.AI_STRICT_AGENT,
   };
   delete process.env.AI_API_KEY;
   delete process.env.OPENAI_API_KEY;
   delete process.env.DEEPSEEK_API_KEY;
+  process.env.AI_STRICT_AGENT = "false";
   try {
     const game = createInitialGame(roomId("ai-naming"), []);
     game.sessionId = `ai-naming-${Date.now()}`;

@@ -98,8 +98,26 @@ async function main() {
     await waitFor(admin, "adminAuthOk", () => true, 5_000);
     log("管理员已鉴权");
 
+    // AI 保留昵称必须被服务端拒绝（含 AI1 这种纯编号写法）
+    const probe = connect();
+    await waitFor(probe, "connect", () => true, 5_000);
+    const reservedError = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), 3_000);
+      probe.once("error", (message) => {
+        clearTimeout(timer);
+        resolve(String(message));
+      });
+      probe.emit("joinGame", { roomId: ROOM, name: "AI1" });
+    });
+    probe.close();
+    if (!reservedError || !reservedError.includes("保留")) {
+      fail("AI1 昵称未被拒绝，真人可能被误判为 AI");
+    } else {
+      log("PASS：AI 保留昵称被拒绝");
+    }
+
     const humans = [];
-    for (const name of ["甲", "乙", "丙", "丁"]) {
+    for (const name of ["甲", "乙", "丙", "丁", "戊", "己"]) {
       const socket = connect();
       socket.on("error", (message) => log(`${name} error: ${String(message)}`));
       await waitFor(socket, "connect", () => true, 5_000);
@@ -113,7 +131,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 80));
     }
     if (humans.some((h) => !h.playerId)) throw new Error("真人入房失败");
-    log(`4 名真人已入房：${humans.map((h) => h.name).join("、")}`);
+    log(`6 名真人已入房：${humans.map((h) => h.name).join("、")}`);
 
     admin.emit("adminSpectate", { targetRoomId: ROOM });
     let adminLatest = null;
@@ -204,6 +222,32 @@ async function main() {
       ).catch(() => null);
       if (!safety) fail("全场危机消息未触发固定安全回复");
       else log("PASS：全场危机消息触发固定安全回复");
+
+      // 私信/转账留言同样要过危机闸门：原文不投递、发送者收到固定安全回复
+      const privateSafety = new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), 4_000);
+        d.socket.on("playerNotify", (payload) => {
+          if (payload?.type !== "safety") return;
+          clearTimeout(timer);
+          resolve(String(payload.message ?? ""));
+        });
+      });
+      d.socket.emit("createTransaction", {
+        toId: a.playerId,
+        amount: 0,
+        note: "我不想活了，想结束这一切。",
+        clientTempId: "private-crisis",
+      });
+      const privateReply = await privateSafety;
+      if (!privateReply || !privateReply.includes("12356")) {
+        fail("私信危机未触发固定安全回复");
+      } else {
+        const leaked = (d.latest?.transactions ?? []).some((t) =>
+          String(t.note ?? "").includes("不想活")
+        );
+        if (leaked) fail("私信危机原文仍被存储/投递");
+        else log("PASS：私信危机原文不投递，发送者收到固定安全回复");
+      }
     }
 
     admin.emit("adminDissolveRoom", { roomId: ROOM });
