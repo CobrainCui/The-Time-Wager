@@ -138,7 +138,8 @@ export interface LighterBurnNotice {
   id: string;
   cardId: string;
   cardName: string;
-  kind: "inventory" | "played";
+  /** played/inventory=命中；miss=被指定但没烧掉任何卡 */
+  kind: "inventory" | "played" | "miss";
   casterName: string;
   message: string;
   energyRefund?: number;
@@ -339,10 +340,18 @@ export interface GameState {
 
   /** 仅管理端上帝视图下发，玩家端不再接收（避免泄露隐藏信息） */
   logs?: string[];
+  /** 仅上帝视图：本轮道具流水（玩家视图不下发） */
+  roundBuffPlays?: Record<string, unknown>[];
+  /** 仅上帝视图：本轮打火机声明（玩家视图不下发） */
+  lighterBurnDeclarations?: Record<string, unknown>[];
+  /** 仅上帝视图：玩家个人日志（玩家视图不下发） */
+  playerLogs?: Record<string, string[]>;
 
   lastSettlement?: {
     round: number;
     results: SettlementProjectResult[];
+    /** 仅上帝视图：本轮打火机命中/未命中摘要 */
+    lighterResolve?: { hits: number; misses: number };
     hostAdjusted?: boolean;
     hostRevision?: number;
   };

@@ -1680,7 +1680,7 @@ export const AdminView: React.FC<Props> = ({
                     const pendingWealth = (game.pendingWealthAdjustments ?? []).find((o) => o.playerId === p.id);
                     const pendingAmountLabel =
                       pendingLottery && hasGold && pendingLottery.amount > 0
-                        ? `（${pendingLottery.amount}）×1.5`
+                        ? `（${pendingLottery.amount}）的 1.5 倍`
                         : pendingLottery
                           ? String(pendingLottery.amount)
                           : "";

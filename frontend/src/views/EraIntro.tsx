@@ -170,7 +170,7 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {}, embed = fa
                 color: "#34d399",
               }}
             >
-              ⚡ 本轮精力 {me.energy}
+              本轮精力 {me.energy}
             </div>
             {!embed && (
               <div

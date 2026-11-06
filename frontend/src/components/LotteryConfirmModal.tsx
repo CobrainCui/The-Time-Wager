@@ -178,7 +178,7 @@ export const LotteryConfirmModal: React.FC<Props> = ({
             : isLoss
               ? "本局开奖结果为扣减财富"
               : goldApplied
-                ? "你获得了彩票奖金（点石成金：正向收益 ×1.5）"
+                ? "你获得了彩票奖金（点石成金：正向收益按 1.5 倍结算）"
                 : "你获得了彩票奖金"}
         </p>
         <div
@@ -215,7 +215,7 @@ export const LotteryConfirmModal: React.FC<Props> = ({
                   lineHeight: 1.15,
                 }}
               >
-                {rolling ? "?" : `（${faceAmount}）×1.5`}
+                {rolling ? "?" : `（${faceAmount}）的 1.5 倍`}
               </div>
               <div
                 style={{
