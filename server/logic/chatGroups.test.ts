@@ -79,6 +79,60 @@ describe("chatGroups", () => {
     }
   });
 
+  it("allows AI members in custom groups and keeps them on roster sync", () => {
+    const game = createInitialGame("r1", []);
+    game.phase = "INVESTMENT";
+    game.players = [
+      human("a", "甲"),
+      human("b", "乙"),
+      { ...human("ai", "Bot"), isAI: true },
+    ];
+    syncChatGroupsOnRosterChange(game);
+    const created = createCustomChatGroup(game, "a", ["b", "ai"], "人机小队");
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    assert.deepEqual(created.group.memberIds.sort(), ["a", "ai", "b"]);
+    syncChatGroupsOnRosterChange(game);
+    const kept = game.chatGroups!.find((g) => g.id === created.group.id);
+    assert.ok(kept);
+    assert.ok(kept!.memberIds.includes("ai"));
+  });
+
+  it("lets an AI player create a custom group like a human", () => {
+    const game = createInitialGame("r1", []);
+    game.phase = "INVESTMENT";
+    game.players = [
+      human("a", "甲"),
+      human("b", "乙"),
+      { ...human("ai", "Bot"), isAI: true },
+    ];
+    syncChatGroupsOnRosterChange(game);
+    const created = createCustomChatGroup(game, "ai", ["a", "b"], "AI 拉的群");
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    assert.equal(created.group.ownerId, "ai");
+    assert.deepEqual(created.group.memberIds.sort(), ["a", "ai", "b"]);
+  });
+
+  it("reassigns a custom group when its AI owner is removed", () => {
+    const game = createInitialGame("r1", []);
+    game.phase = "INVESTMENT";
+    game.players = [
+      human("a", "甲"),
+      human("b", "乙"),
+      { ...human("ai", "Bot"), isAI: true },
+    ];
+    syncChatGroupsOnRosterChange(game);
+    const created = createCustomChatGroup(game, "ai", ["a", "b"], "AI 拉的群");
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    game.players = game.players.filter((p) => p.id !== "ai");
+    syncChatGroupsOnRosterChange(game);
+    const kept = game.chatGroups!.find((g) => g.id === created.group.id);
+    assert.ok(kept);
+    assert.equal(kept!.ownerId, "a");
+  });
+
   it("sends masked group message", () => {
     const game = createInitialGame("r1", []);
     game.phase = "INVESTMENT";

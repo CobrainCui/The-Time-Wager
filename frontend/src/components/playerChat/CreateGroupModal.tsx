@@ -1,7 +1,6 @@
 import React, { memo, useMemo, useState } from "react";
 import { uiRem } from "../../utils/typography";
 import type { Player } from "../../types";
-import { isAiPlayer } from "../../utils/isAiPlayer";
 
 type Props = {
   open: boolean;
@@ -22,7 +21,7 @@ export const CreateGroupModal = memo<Props>(function CreateGroupModal({
   const [name, setName] = useState("");
 
   const candidates = useMemo(
-    () => players.filter((p) => p.id !== meId && !isAiPlayer(p)),
+    () => players.filter((p) => p.id !== meId && p.connected),
     [players, meId]
   );
 
@@ -51,7 +50,7 @@ export const CreateGroupModal = memo<Props>(function CreateGroupModal({
           建群聊
         </h3>
         <p style={{ margin: "0 0 0.65rem", fontSize: uiRem(0.78), color: "var(--color-text-muted)" }}>
-          至少再选 2 名玩家（群内不可转账，仅文字）
+          至少再选 2 名玩家（真人或 AI；群内不可转账，仅文字）
         </p>
         <input
           className="input"
@@ -73,7 +72,7 @@ export const CreateGroupModal = memo<Props>(function CreateGroupModal({
         </ul>
         {candidates.length < 2 && (
           <p style={{ fontSize: uiRem(0.75), color: "var(--color-text-muted)" }}>
-            至少需要 3 名真人玩家才能建群
+            至少需要 3 名在线玩家（真人或 AI）才能建群
           </p>
         )}
         <div className="player-chat-modal-actions">

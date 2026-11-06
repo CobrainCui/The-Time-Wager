@@ -185,7 +185,9 @@ export interface Player {
   wealthHistory: number[];     
   investedRiskEnergy: number;  
   investedLongEnergy: number;  
-  socialRank: 'A' | 'B' | 'C' | 'D' | 'E' | null; 
+  socialRank: 'A' | 'B' | 'C' | 'D' | 'E' | null;
+  socialRankSource?: "auto" | "admin";
+  socialRankReason?: string;
   
   analysisResult?: PersonaAnalysis; 
 

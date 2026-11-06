@@ -11,7 +11,7 @@
 - **Four Life Stages (四大时代)**: Youth (青年), Prime (壮年), Middle Age (中年), Old Age (老年).
 - **Investment Strategy (投资策略)**: Balance your portfolio between short-term tasks (quick wins), long-term visions (heavy investment, high payoff), and risk ventures.
 - **Social Interaction (社交互动)**: Negotiate with up to 6 players, cooperate to fund large projects, or use buff cards to disrupt your opponents (e.g., "Slack Virus" 摸鱼传染, "Shield" 反弹护盾).
-- **Group Chat (群聊与私信)**: 进房自动创建「全场」频道，支持自建小群、未读提醒与消息通知；禁聊阶段自动屏蔽，AI 发言统一过安全闸门。
+- **Group Chat (群聊与私信)**: 进房自动创建「全场」频道，支持自建小群、未读提醒与消息通知；**真人和 AI 都可以自己拉群**；禁聊阶段自动屏蔽，AI 发言统一过安全闸门。
 - **AI Players (C 端陪玩)**: 管理端可添加三档难度的 AI 玩家，开局自动补满 6 席；**不预设人格**，由模型根据局面自由发挥。**严格 Agent 模式**下 AI 全程走模型；未配置或未连通模型时拒绝补位/开局，并明确提示原因。
 - **Auto Host (系统自动主持)**: 产品版默认由系统自动开局、推进阶段、主持拍卖、线上随机开奖与社区命名兜底，C 端无需真人主持。
 - **AI Auto-Tuner (内部调参)**: 离线批量模拟，用于校验人格判定与数值平衡。
@@ -122,6 +122,9 @@ AI 玩家由服务端托管，和真人走同一套规则、同一个阶段判�
 - **基本平权**：AI 可以拍卖出价、可以成为首富、可以获得社区命名权；社区总财富榜按全部座位统计（含 AI）。
 - **全流程托管**：开局固定补满 6 席（支持 1–6 名真人，空位自动补 AI）；AI 自动 ready，投资、买咖啡、用道具、转账、拍卖出价、彩票领取、结算准备全部自动完成。
 - **AI 首富命名**：社区命名阶段若在线首富是 AI，AI 会自己生成社区名；严格模式下如果模型失败，不会改用本地名称池，而是等待主持处理。
+- **AI 也可以拉群**：AI 在投资阶段可以像真人一样创建自定义群、邀请至少 2 名其他玩家，并在自己所在的群里发言；群聊只对成员可见。
+- **不暴露对手身份**：AI 的观察里没有其他座位的 `isAI / isAgent / agentModel / agentProvider`，玩家昵称与 ID 也不带 AI 标记；AI 只能从行为和聊天内容推断对手。真人玩家端仍可在管理/玩家界面看到 AI 标识。
+- **终局社交自动评定**：`GAME_OVER` 时按每名玩家**自己发出**的群聊 + 私信（含 0 元转账留言）内容评 A–E（A=100 … E=20），结果写入会话归档与导出；主持人在后台手工评定的玩家优先，模型失败或没发言回退 C。开关：`SOCIAL_AUTO_SCORE`（默认 `true`）。
 
 **每个 AI 可以用不同的 Key / 模型**（研究者常用）：在 `server/.env` 填写 `AI_PLAYER_1_API_KEY` … `AI_PLAYER_5_API_KEY`（以及对应的 `_BASE_URL` / `_MODEL` / `_PROVIDER`）。座位号 = 管理端添加 AI 的顺序；某座位留空则回退到共享 `AI_API_KEY`。改完执行：
 
@@ -133,7 +136,7 @@ cd server && npm run build && npm run check-ai -- --ping
 
 **严格 Agent 模式（默认开启，`AI_STRICT_AGENT=true`）：**
 
-- **全程模型决策**：投资、道具、聊天、转账、拍卖出价、社区命名都走模型；不再用本地启发式策略代打。
+- **全程模型决策**：投资、道具、聊天、拉群、转账、拍卖出价、社区命名都走模型；不再用本地启发式策略代打。
 - **不联网不能开局**：添加 AI 或点击开局前会做一次模型连通性检测（管理端「🔌 检测 AI 连接」），检测不通过时拒绝开局，并明确显示是哪个 AI、什么原因。
 - **失败不静默降级**：局内模型失败会暂停投资倒计时、在管理端弹出故障横幅，由主持选择「重试 / 强制准备 / 移除」；不会偷偷换成本地策略。
 - **纯真人局不受影响**：6 名真人同桌时不需要任何 Key；不足 6 人时由 AI 补位，严格模式下需要对应模型 Key。

@@ -2,7 +2,6 @@ import type { ActiveProject, GameState, Player } from "../state/gameState.js";
 import { getLeadingBidOnFocus, getLotCurrentBid, getMinimumNextBid } from "../logic/auctionCards.js";
 import { GROUP_CHAT_ENABLED } from "../config/playerChatFeatures.js";
 import { SAFETY_NOTICE_FROM_ID } from "./aiSafety.js";
-import { isAiPlayer } from "../util/isAiPlayer.js";
 import { spendableEnergy } from "../logic/investmentLogic.js";
 import { computeWealthRanks } from "../util/playerRank.js";
 
@@ -31,7 +30,6 @@ export interface AiObservation {
     wealth: number;
     rank: number;
     connected: boolean;
-    isAI: boolean;
   }>;
   projects: Array<{
     id: number;
@@ -55,6 +53,13 @@ export interface AiObservation {
   } | null;
   incoming: Array<{ id: string; fromName: string; amount: number; note: string }>;
   publicChat: Array<{ fromName: string; text: string }>;
+  /** AI 被拉进的自定义群（仅成员可见） */
+  groupChats: Array<{
+    id: string;
+    name: string;
+    memberNames: string[];
+    messages: Array<{ fromName: string; text: string }>;
+  }>;
 }
 
 function projectView(p: ActiveProject) {
@@ -134,7 +139,6 @@ export function buildAiObservation(game: GameState, ai: Player): AiObservation {
       wealth: p.wealth,
       rank: ranks.get(p.id) ?? p.rank,
       connected: p.connected,
-      isAI: isAiPlayer(p),
     })),
     projects: (game.activeProjects ?? []).map(projectView),
     eraCard: game.currentEraCard
@@ -143,5 +147,21 @@ export function buildAiObservation(game: GameState, ai: Player): AiObservation {
     auction,
     incoming,
     publicChat: GROUP_CHAT_ENABLED ? publicChat : [],
+    groupChats: GROUP_CHAT_ENABLED
+      ? (game.chatGroups ?? [])
+          .filter((g) => g.kind === "custom" && g.memberIds.includes(ai.id))
+          .slice(-4)
+          .map((g) => ({
+            id: g.id,
+            name: g.name,
+            memberNames: g.memberIds.map(
+              (id) => game.players.find((p) => p.id === id)?.name ?? id
+            ),
+            messages: (game.groupMessages ?? [])
+              .filter((m) => m.groupId === g.id)
+              .slice(-8)
+              .map((m) => ({ fromName: m.fromName, text: m.text })),
+          }))
+      : [],
   };
 }

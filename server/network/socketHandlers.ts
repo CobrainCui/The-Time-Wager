@@ -1089,7 +1089,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     }
     if (game.phase === "COMMUNITY_NAMING") {
       const fallback = sanitizeCommunityName(`社区-${game.roomId}`) || "未命名社区";
-      finalizeCommunityName(io, game, fallback, "adminSkipPhase");
+      void finalizeCommunityName(io, game, fallback, "adminSkipPhase");
       return;
     }
 
@@ -1331,6 +1331,8 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       if (player) {
           const ratedAt = Date.now();
           player.socialRank = rank;
+          player.socialRankSource = "admin";
+          player.socialRankReason = "管理员手动评定";
           game.logs.push(`📝 上帝给 ${player.name} 社交评分: ${rank}`);
           appendSessionEvent(game, "social_rated", {
             targetPlayerId,
@@ -2526,7 +2528,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       return;
     }
 
-    finalizeCommunityName(io, game, communityName, "player");
+    void finalizeCommunityName(io, game, communityName, "player");
   });
 
   socket.on("adminSubmitCommunityName", ({ roomId, name }) => {
@@ -2546,7 +2548,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       socket.emit("error", "请输入有效的社区名称");
       return;
     }
-    finalizeCommunityName(io, game, communityName, "admin");
+    void finalizeCommunityName(io, game, communityName, "admin");
   });
 
   socket.on("disconnect", () => {

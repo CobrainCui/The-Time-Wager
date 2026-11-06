@@ -1,4 +1,5 @@
 import type { Server } from "socket.io";
+import { randomBytes } from "node:crypto";
 import type { GameState, Player } from "../state/gameState.js";
 import { getCommunityNamer } from "../state/gameState.js";
 import { AI_BOT_ENABLED, AI_SAFETY_ENABLED } from "../config/features.js";
@@ -38,11 +39,12 @@ import { purchaseCoffee } from "../logic/coffeeLogic.js";
 import {
   formatAuctionSoldMessage,
   getLeadingBidOnFocus,
+  getMinimumNextBid,
   placeAuctionBid,
   playerAvailableWealth,
 } from "../logic/auctionCards.js";
 import { resolvePendingTransfer } from "../logic/transferResolve.js";
-import { sendGroupChatMessage } from "../logic/chatGroups.js";
+import { sendGroupChatMessage, createCustomChatGroup } from "../logic/chatGroups.js";
 import { sanitizeTransactionNote } from "../logic/forbiddenText.js";
 import { appendSessionEvent } from "../state/sessionTelemetry.js";
 import { isInvestmentBuffLockoutActive } from "../state/actionDeadline.js";
@@ -93,6 +95,8 @@ interface AiRoomState {
   auction: Map<string, AiLotState>;
   buffRound: Map<string, number>;
   chatRound: Map<string, number>;
+  groupChatRound: Map<string, number>;
+  groupCreateRound: Map<string, number>;
   tokens: Map<string, number>;
   lastErrorAt: number;
 }
@@ -130,6 +134,8 @@ function getRoomState(game: GameState): AiRoomState {
       auction: new Map(),
       buffRound: new Map(),
       chatRound: new Map(),
+      groupChatRound: new Map(),
+      groupCreateRound: new Map(),
       tokens: new Map(),
       lastErrorAt: 0,
     };
@@ -143,6 +149,8 @@ function getRoomState(game: GameState): AiRoomState {
     state.tokens.clear();
     state.buffRound.clear();
     state.chatRound.clear();
+    state.groupChatRound.clear();
+    state.groupCreateRound.clear();
     state.auction.clear();
     state.forced.clear();
   }
@@ -155,7 +163,8 @@ function getRoomState(game: GameState): AiRoomState {
     // 故障只阻断发生的那个阶段；进入新阶段后清理旧故障，避免 AI 整局装死
     if (game.aiFailures) {
       for (const [id, failure] of Object.entries(game.aiFailures)) {
-        if (failure.phase !== game.phase) delete game.aiFailures[id];
+        const failureKey = failure.phaseKey ?? failure.phase;
+        if (failureKey !== key) delete game.aiFailures[id];
       }
       if (Object.keys(game.aiFailures).length === 0 && game.aiDeadlinePaused) {
         game.aiDeadlinePaused = false;
@@ -228,11 +237,12 @@ function recordAiFailure(
     playerId: ai.id,
     name: ai.name,
     phase: game.phase,
+    phaseKey: phaseKey(game),
     at: now(),
     message: clean,
     kind,
   };
-  if (!prev || prev.phase !== game.phase) {
+  if (!prev || (prev.phaseKey ?? prev.phase) !== phaseKey(game)) {
     game.logs.push(`⚠️ AI「${ai.name}」模型失败，已暂停等待管理员处理（${clean}）`);
   }
   if (
@@ -292,7 +302,13 @@ function isDone(game: GameState, ai: Player, state: AiRoomState): boolean {
   // 严格模式：已记录模型故障的 AI 在当前阶段暂停，等待管理员重试/移除；
   // 进入下一阶段后自动恢复（故障记录仍保留给管理端参考）。
   const failure = game.aiFailures?.[ai.id];
-  if (AI_CONFIG.strictAgent && failure && failure.phase === game.phase) return true;
+  if (
+    AI_CONFIG.strictAgent &&
+    failure &&
+    (failure.phaseKey ?? failure.phase) === phaseKey(game)
+  ) {
+    return true;
+  }
   if (game.phase === "ROOM_WAITING" || game.phase === "TUTORIAL" || game.phase === "GAME_OVER") {
     return true;
   }
@@ -363,7 +379,7 @@ async function resolveAiIncomingTransfers(
         const result = await askAiJson(
           buildSystemPrompt(profileForPlayer(ai)),
           buildTransferDecisionPrompt(observation, tx),
-          { label: "transfer-decision", maxOutputTokens: 200, config: modelConfig }
+          { label: "transfer-decision", maxOutputTokens: 8_000, config: modelConfig }
         );
         if (!result.ok || !result.data) {
           // 转账是旁路操作：失败只退避重试，不暂停整局、不把 AI 标成全局故障
@@ -482,7 +498,7 @@ function createAiTransfer(
   if (pendingCountFrom(game, ai.id) >= MAX_PENDING_PER_SENDER) return false;
 
   const tx = {
-    id: `ai-${now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    id: randomBytes(8).toString("hex"),
     fromId: ai.id,
     fromName: ai.name,
     toId: receiver.id,
@@ -548,6 +564,37 @@ function sendAiChat(game: GameState, ai: Player, text: string): boolean {
   return true;
 }
 
+/** AI 在自己被拉入的自定义群里发言。 */
+function sendAiGroupChat(game: GameState, ai: Player, groupId: string, text: string): boolean {
+  if (!GROUP_CHAT_ENABLED || !AI_CONFIG.chatEnabled) return false;
+  const group = (game.chatGroups ?? []).find(
+    (g) => g.id === groupId && g.kind === "custom"
+  );
+  if (!group || !group.memberIds.includes(ai.id)) return false;
+  let clean = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (!clean) return false;
+  if (AI_SAFETY_ENABLED) {
+    // 危机窗口内不闲聊，避免模型对危机内容自由发挥。
+    if ((game.safetyCrisisUntil ?? 0) > now()) return false;
+    const guarded = guardAgentOutput(clean, "chat");
+    if (!guarded.text) return false;
+    clean = guarded.text;
+  } else {
+    clean = clean.slice(0, 80);
+  }
+  const result = sendGroupChatMessage(game, ai.id, group.id, clean, undefined, {
+    allowAi: true,
+  });
+  if (!result.ok) return false;
+  appendSessionEvent(
+    game,
+    "group_message",
+    { groupId: group.id, messageId: result.message.id, fromId: ai.id, source: "ai" },
+    ai.id
+  );
+  return true;
+}
+
 /**
  * 执行一份方案。所有动作都是同步函数，避免与真人操作交错。
  * 返回是否产生了可见动作。
@@ -591,22 +638,61 @@ function applyInvestmentPlan(
     }
   }
 
-  // 3) 聊天：每轮最多一条
+  // 3) 拉群：每轮最多一次，和真人使用同一套建群规则
+  if (
+    plan.createGroup &&
+    state.groupCreateRound.get(ai.id) !== game.globalRound
+  ) {
+    const result = createCustomChatGroup(
+      game,
+      ai.id,
+      plan.createGroup.memberIds,
+      plan.createGroup.name
+    );
+    if (result.ok) {
+      state.groupCreateRound.set(ai.id, game.globalRound);
+      acted = true;
+      appendSessionEvent(
+        game,
+        "chat_group_created",
+        {
+          groupId: result.group.id,
+          name: result.group.name,
+          memberIds: result.group.memberIds,
+          source: "ai",
+        },
+        ai.id
+      );
+      game.logs.push(`👥 ${ai.name} 创建了群聊「${result.group.name}」`);
+    }
+  }
+
+  // 4) 聊天：每轮最多一条公开消息 + 一条群消息
   if (plan.messages?.length && state.chatRound.get(ai.id) !== game.globalRound) {
     if (sendAiChat(game, ai, plan.messages[0])) {
       state.chatRound.set(ai.id, game.globalRound);
       acted = true;
     }
   }
+  if (
+    plan.groupMessages?.length &&
+    state.groupChatRound.get(ai.id) !== game.globalRound
+  ) {
+    const groupPlan = plan.groupMessages[0];
+    if (sendAiGroupChat(game, ai, groupPlan.groupId, groupPlan.text)) {
+      state.groupChatRound.set(ai.id, game.globalRound);
+      acted = true;
+    }
+  }
 
-  // 4) 转账
+  // 5) 转账
   if (plan.transfer) {
     if (createAiTransfer(game, ai, plan.transfer.toPlayerId, plan.transfer.amount, plan.transfer.note)) {
       acted = true;
     }
   }
 
-  // 5) 投资：按「当前实际精力」再裁剪一次（咖啡/摸鱼都可能改变精力）
+  // 6) 投资：按「当前实际精力」再裁剪一次（咖啡/摸鱼都可能改变精力）
   if (game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") {
     const sanitized = sanitizeInvestments(game, ai, plan.investment ?? {});
     const applied = applyInvestments(game, ai.id, sanitized, "ai");
@@ -694,9 +780,36 @@ async function decideInvestmentPlan(
         result.data as Partial<AiInvestmentPlan>,
         profile
       );
-      // 模型没给出有效投资时：严格模式视为失败，不再用本地策略补齐
+      // 模型没给出有效投资时：严格模式不会用本地策略补齐，但允许模型自我纠正一次
+      // （常见原因是模型把输出全用在聊天/拉群上，忘了分配精力）。纠正仍由模型决策。
       if (sumInvestment(sanitized.investment) <= 0 && spendableEnergy(ai) > 0) {
         if (AI_CONFIG.strictAgent) {
+          if (hasUsableBudget(state, ai)) {
+            const retry = await askAiJson(
+              buildSystemPrompt(profile),
+              [
+                buildInvestmentPrompt(buildAiObservation(game, ai), profile),
+                "",
+                "## 纠正",
+                `上一次输出没有给任何项目分配精力，但你现在还有 ${spendableEnergy(ai)} 点可用精力。`,
+                "本轮必须在 investment 中至少投入 1 点精力（若已经买咖啡等把精力用光，可以留空）。只输出 JSON。",
+              ].join("\n"),
+              { label: `invest-r${game.globalRound}-retry`, config: modelConfig }
+            );
+            if (retry.ok && retry.data) {
+              markAiPreflightOk(ai);
+              recordTokens(state, ai, retry.usage?.totalTokens);
+              const retryPlan = sanitizeInvestmentPlan(
+                game,
+                ai,
+                retry.data as Partial<AiInvestmentPlan>,
+                profile
+              );
+              if (sumInvestment(retryPlan.investment) > 0) {
+                return { plan: retryPlan, usedLlm: true };
+              }
+            }
+          }
           return { plan: null, usedLlm: true, failure: "模型没有给出有效投资方案" };
         }
         const fallback = buildFallbackInvestmentPlan(game, ai, profile);
@@ -750,6 +863,8 @@ async function runInvestmentTurn(
         coffee: plan.coffee,
         useCard: plan.useCard,
         transfer: plan.transfer,
+        createGroup: plan.createGroup ?? null,
+        groupMessages: plan.groupMessages ?? [],
         source: "llm",
       },
       ai.id
@@ -891,22 +1006,26 @@ async function runAuctionTurn(
       });
     }
   } else if (plan.action === "bid" && typeof plan.amount === "number" && Number.isFinite(plan.amount)) {
-    const result = placeAuctionBid(game, ai.id, plan.amount);
-    if (!result.ok) {
-      if (AI_CONFIG.strictAgent) {
-        state.forced.add(ai.id);
-        recordAiFailure(
-          game,
-          ai,
-          io,
-          `模型出价 ${plan.amount} 无效：${result.message ?? "低于最低加价或超过可用财富"}`,
-          "invalid_output"
+    // 模型思考期间其他 AI 可能已经加价，旧出价会低于当前最低价。
+    // 这里按「当前最低价」重新兜底一次：保留出价意图，不因并发竞态暂停整局。
+    const latestMin = getMinimumNextBid(game);
+    const plannedAmount = Math.max(0, Math.floor(plan.amount));
+    const firstAmount = Math.max(plannedAmount, latestMin);
+    let result = placeAuctionBid(game, ai.id, firstAmount);
+    if (!result.ok && firstAmount !== latestMin) {
+      result = placeAuctionBid(game, ai.id, latestMin);
+    }
+    if (result.ok) {
+      if (firstAmount !== plannedAmount) {
+        game.logs.push(
+          `↗️ AI「${ai.name}」按当前最低价 ${firstAmount} 出价（模型原出价 ${plannedAmount}）`
         );
-        return false;
       }
-      lot.passed = true;
-    } else {
       acted = true;
+    } else {
+      // 资金不足 / 已领先 / 焦点已切走：本张放弃，不记为模型故障。
+      lot.passed = true;
+      game.logs.push(`⏭️ AI「${ai.name}」无法出价（${result.message ?? "出价无效"}），跳过本张`);
     }
   } else {
     lot.passed = true;
@@ -1008,8 +1127,14 @@ export async function ensureAiCommunityNaming(
   if (game.phase !== "COMMUNITY_NAMING" || game.communityName) return false;
   const namer = getCommunityNamer(game);
   if (!namer || !isAiPlayer(namer)) return false;
-  // 严格模式：已记录故障就先等待管理员处理，避免每秒重试刷额度
-  if (AI_CONFIG.strictAgent && game.aiFailures?.[namer.id]) return false;
+  const namerFailure = game.aiFailures?.[namer.id];
+  if (
+    AI_CONFIG.strictAgent &&
+    namerFailure &&
+    (namerFailure.phaseKey ?? namerFailure.phase) === phaseKey(game)
+  ) {
+    return false;
+  }
   const key = `${game.roomId}:${game.sessionId ?? ""}`;
   if (AI_NAMING_IN_FLIGHT.has(key)) return false;
   AI_NAMING_IN_FLIGHT.add(key);
@@ -1023,7 +1148,7 @@ export async function ensureAiCommunityNaming(
       const result = await askAiJson(
         buildSystemPrompt(profile),
         buildCommunityNamePrompt(observation),
-        { label: "community-name", maxOutputTokens: 120, config: modelConfig }
+        { label: "community-name", maxOutputTokens: 8_000, config: modelConfig }
       );
       if (result.ok) {
         markAiPreflightOk(namer);
@@ -1061,7 +1186,7 @@ export async function ensureAiCommunityNaming(
     if (!name) name = sanitizeCommunityName(`社区-${game.roomId}`) || "未命名社区";
     if (game.phase === "COMMUNITY_NAMING" && !game.communityName) {
       game.logs.push(`🤖 ${namer.name} 为社区命名：${name}`);
-      finalizeCommunityName(io, game, name, "ai");
+      void finalizeCommunityName(io, game, name, "ai");
       return true;
     }
     return false;
@@ -1300,6 +1425,8 @@ export function forgetAiPlayer(roomId: string, playerId: string): void {
   state.auction.delete(playerId);
   state.buffRound.delete(playerId);
   state.chatRound.delete(playerId);
+  state.groupChatRound.delete(playerId);
+  state.groupCreateRound.delete(playerId);
   state.tokens.delete(playerId);
 }
 

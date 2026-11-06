@@ -80,10 +80,14 @@ export function syncChatGroupsOnRosterChange(game: GameState): void {
   } else {
     syncPublicChatGroupMembers(game);
   }
-  const humans = new Set(humanIds(game));
+  const alive = new Set(game.players.map((p) => p.id));
   game.chatGroups = (game.chatGroups ?? []).filter((g) => {
     if (g.kind === "public") return true;
-    g.memberIds = g.memberIds.filter((id) => humans.has(id));
+    g.memberIds = g.memberIds.filter((id) => alive.has(id));
+    // 群主被移出/离线后，把群主转给仍然留在群里的第一名成员
+    if (g.ownerId && !g.memberIds.includes(g.ownerId)) {
+      g.ownerId = g.memberIds[0];
+    }
     return g.memberIds.length >= 2;
   });
   const groupIds = new Set(game.chatGroups.map((g) => g.id));
@@ -159,13 +163,13 @@ export function createCustomChatGroup(
   ensureArrays(game);
 
   const creator = game.players.find((p) => p.id === creatorId);
-  if (!creator || isAiPlayer(creator)) {
+  if (!creator) {
     return { ok: false, error: "无法建群" };
   }
 
-  const humans = new Set(humanIds(game));
+  const playerIds = new Set(game.players.map((p) => p.id));
   const unique = new Set<string>([creatorId, ...memberIds]);
-  const members = [...unique].filter((id) => humans.has(id) && id !== creatorId);
+  const members = [...unique].filter((id) => playerIds.has(id) && id !== creatorId);
   if (members.length < 2) {
     return { ok: false, error: "请至少再选择 2 名玩家" };
   }
@@ -224,8 +228,8 @@ export function addChatGroupMembers(
   if (group.ownerId !== actorId) {
     return { ok: false, error: "只有群主可以拉人" };
   }
-  const humans = new Set(humanIds(game));
-  const toAdd = newMemberIds.filter((id) => humans.has(id) && !group.memberIds.includes(id));
+  const players = new Set(game.players.map((p) => p.id));
+  const toAdd = newMemberIds.filter((id) => players.has(id) && !group.memberIds.includes(id));
   if (toAdd.length === 0) {
     return { ok: false, error: "没有可添加的成员" };
   }

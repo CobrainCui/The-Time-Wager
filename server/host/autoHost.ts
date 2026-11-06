@@ -413,7 +413,7 @@ export function ensureAutoHost(
     }
     const fallback = sanitizeCommunityName(`社区-${game.roomId}`) || "未命名社区";
     game.logs.push("⏱️ 系统自动主持：命名超时，使用系统名称");
-    finalizeCommunityName(io, game, fallback, "auto_host");
+    void finalizeCommunityName(io, game, fallback, "auto_host");
     return true;
   }
 

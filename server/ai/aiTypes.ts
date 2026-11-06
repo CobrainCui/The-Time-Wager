@@ -13,9 +13,23 @@ export interface AiTransferPlan {
   note: string;
 }
 
+export interface AiGroupMessagePlan {
+  groupId: string;
+  text: string;
+}
+
+export interface AiGroupCreatePlan {
+  /** 群名可省略；省略时按成员名自动生成 */
+  name?: string;
+  /** 至少 2 名其他玩家；创建者会自动加入 */
+  memberIds: string[];
+}
+
 export interface AiInvestmentPlan {
   reasoning: string;
   messages: string[];
+  groupMessages?: AiGroupMessagePlan[];
+  createGroup?: AiGroupCreatePlan | null;
   transfer: AiTransferPlan | null;
   coffee: number;
   useCard: AiBuffPlan | null;

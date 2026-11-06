@@ -67,12 +67,58 @@ function stripJsonFence(text: string): string {
   return t;
 }
 
-function parseJson(text: string): unknown | null {
-  try {
-    return JSON.parse(stripJsonFence(text));
-  } catch {
-    return null;
+function escapeControlCharsInStrings(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (!inString) {
+      if (ch === '"') inString = true;
+      out += ch;
+      continue;
+    }
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      out += ch;
+      escaped = true;
+    } else if (ch === '"') {
+      out += ch;
+      inString = false;
+    } else if (ch === "\n") {
+      out += "\\n";
+    } else if (ch === "\r") {
+      out += "\\r";
+    } else if (ch === "\t") {
+      out += "\\t";
+    } else {
+      out += ch;
+    }
   }
+  return out;
+}
+
+function parseJson(text: string): unknown | null {
+  const base = stripJsonFence(text);
+  const noTrailingCommas = base.replace(/,\s*([}\]])/g, "$1");
+  const candidates = [
+    base,
+    escapeControlCharsInStrings(base),
+    noTrailingCommas,
+    escapeControlCharsInStrings(noTrailingCommas),
+    base.replace(/[“”]/g, '"').replace(/[‘’]/g, "'"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -81,7 +127,8 @@ function sleep(ms: number): Promise<void> {
 
 function isRetryable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /timeout|timed out|429|500|502|503|504|ECONNRESET|ETIMEDOUT|fetch failed|network/i.test(
+  // 推理模型偶发「只返回思维链、content 为空」；这不是永久错误，必须重试。
+  return /timeout|timed out|429|500|502|503|504|ECONNRESET|ETIMEDOUT|fetch failed|network|empty response/i.test(
     message
   );
 }

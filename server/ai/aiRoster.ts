@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { STARTING_WEALTH } from "../config/startingWealth.js";
 import type { GameState, Player } from "../state/gameState.js";
 import { syncEnergyAfterRosterChange } from "../logic/energySchedule.js";
@@ -20,14 +21,15 @@ export interface AddAiOptions {
   name?: string;
 }
 
-/** 产品版 AI 不预设人格，用中性昵称；具体打法交给模型自由发挥 */
+/** 产品版 AI 不预设人格，用中性昵称；具体打法交给模型自由发挥。
+ *  昵称不带「AI / 机器人」标记：玩家身份由管理端字段标识，不靠名字泄露给同桌 Agent。 */
 const FREEFORM_NAMES = [
-  "🤖旅人",
-  "🤖拾光者",
-  "🤖旁观者",
-  "🤖远行客",
-  "🤖变量",
-  "🤖无名氏",
+  "林晚",
+  "周野",
+  "顾言",
+  "苏禾",
+  "陈默",
+  "江遥",
 ];
 
 export function countAiPlayers(game: GameState): number {
@@ -39,13 +41,22 @@ export function countHumanPlayers(game: GameState): number {
 }
 
 function uniqueAiName(game: GameState, base: string): string {
-  const trimmed = base.trim().slice(0, 20) || "🤖AI";
+  const trimmed = base.trim().slice(0, 20) || "玩家";
   if (!game.players.some((p) => p.name === trimmed)) return trimmed;
   for (let i = 2; i <= 99; i++) {
     const candidate = `${trimmed}${i}`;
     if (!game.players.some((p) => p.name === candidate)) return candidate;
   }
   return `${trimmed}${Date.now().toString(36).slice(-4)}`;
+}
+
+function uniquePlayerId(game: GameState): string {
+  for (let i = 0; i < 20; i++) {
+    // 与 Socket.IO 的玩家 ID 同为 20 字符 base64url，避免从 ID 形态看出是不是 AI
+    const id = randomBytes(15).toString("base64url");
+    if (!game.players.some((p) => p.id === id)) return id;
+  }
+  return randomBytes(18).toString("base64url");
 }
 
 function nextAiSlot(game: GameState): number {
@@ -136,7 +147,7 @@ export function addAiPlayer(game: GameState, options: AddAiOptions = {}): AddAiR
     ? options.name.trim()
     : FREEFORM_NAMES[index % FREEFORM_NAMES.length];
   const name = uniqueAiName(game, base);
-  const id = `ai_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const id = uniquePlayerId(game);
 
   const player = newAiPlayer(id, name, difficulty, slot);
   game.players.push(player);

@@ -190,8 +190,12 @@ export const AI_CONFIG = {
   decisionTimeoutMs: envInt("AI_DECISION_TIMEOUT_MS", 8_000, 1_000),
   /** 允许模型重试次数（不含首次） */
   maxRetries: envInt("AI_MAX_RETRIES", 2, 0),
-  /** 单次输出上限 */
-  maxOutputTokens: envInt("AI_MAX_OUTPUT_TOKENS", 700, 100),
+  /**
+   * 单次输出上限。
+   * 推理模型（如 deepseek-flash）的思维链同样计入 completion_tokens，
+   * 实测单次可到 1.8 万；上限过低会把 JSON 截断，默认给足余量。
+   */
+  maxOutputTokens: envInt("AI_MAX_OUTPUT_TOKENS", 32_000, 100),
   /** 每名 AI 每局 token 上限；超出后本局只走启发式 */
   tokenBudgetPerGame: envInt("AI_TOKEN_BUDGET_PER_GAME", 120_000, 0),
   /** 看门狗：阶段开始后多久仍未 ready，强制用启发式落子 */

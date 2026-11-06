@@ -33,6 +33,7 @@ export type SessionEventType =
   | "admin_wealth_offer_cancelled"
   | "admin_card_adjust"
   | "social_rated"
+  | "social_rank_auto"
   | "settlement_round"
   | "settlement_round_replaced"
   | "admin_project_stake"

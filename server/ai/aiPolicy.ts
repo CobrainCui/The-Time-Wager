@@ -14,6 +14,7 @@ import { profileForPlayer, type AiProfile } from "./aiPersona.js";
 import type {
   AiAuctionPlan,
   AiBuffPlan,
+  AiGroupCreatePlan,
   AiInvestmentPlan,
   AiTransferDecision,
   AiTransferPlan,
@@ -575,10 +576,57 @@ export function sanitizeInvestmentPlan(
     .filter(Boolean)
     .slice(0, 2);
 
+  const groupMessages = (Array.isArray(raw?.groupMessages) ? raw.groupMessages : [])
+    .filter(
+      (m): m is { groupId: string; text: string } =>
+        !!m &&
+        typeof (m as { groupId?: unknown }).groupId === "string" &&
+        typeof (m as { text?: unknown }).text === "string"
+    )
+    .map((m) => ({
+      groupId: m.groupId,
+      text: m.text.replace(/\s+/g, " ").trim().slice(0, 80),
+    }))
+    .filter((m) => {
+      if (!m.text) return false;
+      const group = (game.chatGroups ?? []).find(
+        (g) => g.id === m.groupId && g.kind === "custom"
+      );
+      return !!group && group.memberIds.includes(ai.id);
+    })
+    .slice(0, 1);
+
+  let createGroup: AiGroupCreatePlan | null = null;
+  const rawGroup = raw?.createGroup;
+  if (rawGroup && typeof rawGroup === "object" && Array.isArray(rawGroup.memberIds)) {
+    const validIds = [
+      ...new Set(
+        rawGroup.memberIds.filter(
+          (id): id is string =>
+            typeof id === "string" &&
+            id !== ai.id &&
+            game.players.some((p) => p.id === id)
+        )
+      ),
+    ].slice(0, 5);
+    if (validIds.length >= 2) {
+      const name =
+        typeof rawGroup.name === "string"
+          ? rawGroup.name.replace(/\s+/g, " ").trim().slice(0, 32)
+          : "";
+      createGroup = {
+        ...(name ? { name } : {}),
+        memberIds: validIds,
+      };
+    }
+  }
+
   return {
     reasoning:
       typeof raw?.reasoning === "string" ? raw.reasoning.slice(0, 600) : "",
     messages: AI_CONFIG.chatEnabled && GROUP_CHAT_ENABLED ? messages : [],
+    groupMessages: AI_CONFIG.chatEnabled && GROUP_CHAT_ENABLED ? groupMessages : [],
+    createGroup: AI_CONFIG.chatEnabled && GROUP_CHAT_ENABLED ? createGroup : null,
     transfer,
     coffee,
     useCard,

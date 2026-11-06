@@ -18,7 +18,7 @@ import type { AiObservation } from "./aiObservation.js";
  */
 
 const RULE_SUMMARY = [
-  "《光阴对赌》4 个时代 × 2 轮，共 8 轮；时代 2、3、4 前各有 1 场拍卖。正式开局固定 6 席（1–6 名真人，不足由 AI 补满）。",
+  "《光阴对赌》4 个时代 × 2 轮，共 8 轮；时代 2、3、4 前各有 1 场拍卖。正式开局固定 6 席。",
   "每轮先发精力，再投资；投资在结算时生效。道具卡在投资阶段、提交锁定前使用，没有独立道具阶段。",
   "短期项目：本轮每投入 1 点精力回报 10 财富；全场累计恰好达到上限时，按累计投入排名发排名奖；超过上限会投资失败（爆掉）并吃惩罚。",
   "长期项目：全场累计达到上限时，所有历史投资者按累计投入每 1 点精力回报 15 财富并分排名奖；未完成不发钱。第 4 时代第 2 轮仍未完成时，按全场进度分档返还：不足三分之一每 1 点精力返还 1 点财富，达到三分之一每 1 点精力返还 5 点财富，达到三分之二每 1 点精力返还 10 点财富。",
@@ -69,7 +69,7 @@ export function buildSystemPrompt(profile: AiProfile): string {
     ? "你没有预设人格。请根据局面、对手行为和自己的判断自由发挥，逐步形成自己的打法；不要刻意模仿某种固定人设。"
     : `你的性格倾向：${profile.personaLabel}（${profile.tagline}）。`;
   return [
-    "你是《光阴对赌》中的一名 AI 玩家，和其他玩家同桌竞争，拥有和真人完全相同的胜负与排名资格。",
+    "你是《光阴对赌》中的一名 AI 玩家，和其他玩家同桌竞争，胜负与排名资格完全相同。",
     identity,
     `难度：${profile.difficulty}。目标：游戏结束时财富尽可能高。`,
     "你只能依据本提示词和当前观察做决策，不编造不存在的项目/玩家/卡牌 ID。",
@@ -101,15 +101,18 @@ export function buildInvestmentPrompt(obs: AiObservation, profile: AiProfile): s
         eraCard: obs.eraCard,
         incoming: obs.incoming,
         publicChat: obs.publicChat,
+        groupChats: obs.groupChats,
       },
       null,
       0
     ),
     "",
     "## 任务",
-    "决定本轮：是否买咖啡、是否用一张手牌、是否给某位玩家转账、发一条短消息、以及如何分配精力。",
+    "决定本轮：是否买咖啡、是否用一张手牌、是否给某位玩家转账、是否拉一个自定义群、发一条短消息、以及如何分配精力。",
+    "你可以像其他玩家一样拉群：选择至少 2 名其他玩家，创建后你和这些成员可以在群里发言；群聊只对成员可见。",
+    "需要私下协调（避免撞项目、约好拍卖不互相抬价、交换情报）时，优先拉一个 2–3 人的小群或发私信，不要把所有话都放在全场频道。",
     "优先级：先保证投资合法且尽量吃满精力；再考虑排名奖与时代加成；风险项目要控制投爆风险。",
-    "若 publicChat 中出现自伤、自杀、暴力、进食障碍或未成年危机信号：messages 必须留空，由服务端统一发送固定安全回复；不要自行劝解或追问。",
+    "若 publicChat 或 groupChats 中出现自伤、自杀、暴力、进食障碍或未成年危机信号：messages 与 groupMessages 必须留空，由服务端统一发送固定安全回复；不要自行劝解或追问。",
     "",
     "## 输出 JSON",
     `{
@@ -117,9 +120,13 @@ export function buildInvestmentPrompt(obs: AiObservation, profile: AiProfile): s
   "coffee": 0,
   "useCard": null,
   "transfer": null,
+  "createGroup": {"name": "可选群名", "memberIds": ["玩家ID", "玩家ID"]},
   "messages": ["可选，最多 1 条，80 字以内"],
+  "groupMessages": [{"groupId": "可选，你所在的群 ID", "text": "最多 1 条，80 字以内"}],
   "investment": {"<项目ID>": 精力数}
 }`,
+    "createGroup 不需要时输出 null；memberIds 至少 2 名其他玩家，不能填自己。",
+    "groupMessages 只能发给你在 groupChats 里的群；没有合适内容就输出 []。",
     "useCard 示例：{\"cardId\":\"buff_slack\",\"targetPlayerId\":\"玩家ID\"}；{\"cardId\":\"buff_short\",\"targetProjectId\":123}；{\"cardId\":\"buff_gold\"}。",
     "transfer 示例：{\"toPlayerId\":\"玩家ID\",\"amount\":5,\"note\":\"合作愉快\"}。",
     "只使用手牌中的卡；打火机需要 burnCardId；摸鱼/劳逸需要 targetPlayerId；做空需要 targetProjectId。",
@@ -129,13 +136,15 @@ export function buildInvestmentPrompt(obs: AiObservation, profile: AiProfile): s
 export function buildAuctionPrompt(obs: AiObservation, profile: AiProfile): string {
   const auction = obs.auction;
   if (!auction) return "";
+  const minimumBid = Math.max(5, Math.ceil(Number(auction.minimumNextBid) || 0));
   return [
     `阶段：拍卖会（时代 ${obs.era}）`,
-    `正在拍：${auction.focusCardId}；当前最高价：${auction.currentBid}；最低下一口：${auction.minimumNextBid}；最高出价者：${auction.highBidderName ?? "无"}`,
+    `正在拍：${auction.focusCardId}；当前最高价：${auction.currentBid}；最低下一口：${minimumBid}；最高出价者：${auction.highBidderName ?? "无"}`,
     `我的可用财富：${obs.me.wealth}；手牌：${obs.me.inventory.join(", ") || "无"}`,
     `最近出价：${auction.bidHistory.map((b) => `${b.playerName}:${b.amount}`).join(" → ") || "无"}`,
     "",
-    '输出 JSON：{"reasoning":"...","action":"bid","amount":15} 或 {"reasoning":"...","action":"pass"} 或 {"reasoning":"...","action":"force_buy"}',
+    `出价必须是整数，且不小于最低下一口 ${minimumBid}；不要照抄示例金额。`,
+    `输出 JSON：{"reasoning":"...","action":"bid","amount":${minimumBid}} 或 {"reasoning":"...","action":"pass"} 或 {"reasoning":"...","action":"force_buy"}`,
   ].join("\n");
 }
 

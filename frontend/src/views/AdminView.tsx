@@ -1718,6 +1718,13 @@ export const AdminView: React.FC<Props> = ({
                               cursor: "pointer",
                             }}
                             value={p.socialRank || ""}
+                            title={
+                              p.socialRankSource === "auto"
+                                ? `系统按群聊/私信自动评定${p.socialRankReason ? `：${p.socialRankReason}` : ""}`
+                                : p.socialRankSource === "admin"
+                                  ? "管理员手动评定"
+                                  : "待评定"
+                            }
                             onChange={(e) => handleSocialRate(p.id, e.target.value)}
                           >
                             <option value="">待评</option>

@@ -326,6 +326,10 @@ export interface Player {
   investedLongEnergy: number;
   investedShortEnergy: number;
   socialRank: 'A' | 'B' | 'C' | 'D' | 'E' | null;
+  /** 社交分来源：auto=终局按聊天内容自动评定，admin=管理员手动覆盖 */
+  socialRankSource?: "auto" | "admin";
+  /** 自动评定的简短依据（不进入玩家视角） */
+  socialRankReason?: string;
   
   analysisResult?: PersonaAnalysis;
   // === AI 对弈相关 ===
@@ -525,6 +529,8 @@ export interface AiAgentFailure {
   name: string;
   /** 发生失败时所在阶段 */
   phase: string;
+  /** 阶段 + 全局轮的唯一键；避免上一轮的故障卡住下一轮同名阶段 */
+  phaseKey?: string;
   at: number;
   /** 面向管理员的可读原因（不含 Key） */
   message: string;

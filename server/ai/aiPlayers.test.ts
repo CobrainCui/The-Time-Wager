@@ -5,6 +5,7 @@ import { addAiPlayer, countAiPlayers, fillAiPlayers, removeAiPlayer } from "./ai
 import { buildFallbackInvestmentPlan, chooseAuctionAction, sanitizeInvestmentPlan } from "./aiPolicy.js";
 import { handleAIPhase } from "./aiOrchestrator.js";
 import { profileFor, profileForPlayer } from "./aiPersona.js";
+import { buildAiObservation } from "./aiObservation.js";
 import { buildSystemPrompt } from "./aiPrompt.js";
 import { getCommunityNamer } from "../state/gameState.js";
 import { applyInvestments } from "../logic/investmentLogic.js";
@@ -80,6 +81,55 @@ function makeGame(): { game: GameState; human: Player; ai: Player } {
   }
   return { game, human, ai };
 }
+
+test("AI observation does not expose whether other seats are AI or human", () => {
+  const { game, ai } = makeGame();
+  const obs = buildAiObservation(game, ai);
+  for (const p of obs.players) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(p, "isAI"),
+      false,
+      "players payload 不应带 isAI"
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(p, "agentModel"),
+      false,
+      "players payload 不应带模型"
+    );
+  }
+  assert.equal(obs.players.find((p) => p.id === ai.id)?.name, ai.name);
+});
+
+test("sanitizeInvestmentPlan rejects an AI-created group with only one other member", () => {
+  const { game, ai, human } = makeGame();
+  const plan = sanitizeInvestmentPlan(game, ai, {
+    reasoning: "拉个群聊合作",
+    messages: [],
+    createGroup: { name: "合作群", memberIds: [human.id, ai.id] },
+    transfer: null,
+    coffee: 0,
+    useCard: null,
+    investment: {},
+  });
+  assert.equal(plan.createGroup, null, "不足 2 名其他玩家时应拒绝");
+});
+
+test("sanitizeInvestmentPlan keeps a valid AI-created group", () => {
+  const { game, ai, human } = makeGame();
+  const other: Player = { ...human, id: "human_2", name: "乙" };
+  game.players.push(other);
+  const plan = sanitizeInvestmentPlan(game, ai, {
+    reasoning: "拉个群聊合作",
+    messages: [],
+    createGroup: { name: "合作群", memberIds: ["human_1", other.id] },
+    transfer: null,
+    coffee: 0,
+    useCard: null,
+    investment: {},
+  });
+  assert.equal(plan.createGroup?.name, "合作群");
+  assert.deepEqual(new Set(plan.createGroup!.memberIds), new Set(["human_1", other.id]));
+});
 
 test("fallback investment is legal and spends within energy", () => {
   const { game, ai } = makeGame();
