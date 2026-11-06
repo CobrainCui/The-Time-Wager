@@ -1,9 +1,9 @@
 name: Deploy to Aliyun BT Server
 
+# 自动部署已于 2026-11-06 停用：不再随 push 触发，只能手动 Run workflow。
+# 需要恢复自动部署时，把下面的 workflow_dispatch 换回 push: branches: [main]。
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
