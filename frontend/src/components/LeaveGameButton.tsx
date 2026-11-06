@@ -94,8 +94,10 @@ export const LeaveGameButton: React.FC<Props> = ({ phase, onExit }) => {
         aria-expanded={open}
         tabIndex={open ? -1 : 0}
         onClick={() => setOpen(true)}
+        aria-label="退出游戏"
       >
-        退出游戏
+        <span className="leave-game-btn__icon" aria-hidden>✕</span>
+        <span className="leave-game-btn__text">退出游戏</span>
       </button>
       {open && (
         <div className="modal-overlay leave-game-modal" onClick={close}>

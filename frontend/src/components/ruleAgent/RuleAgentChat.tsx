@@ -205,7 +205,10 @@ export const RuleAgentChat: React.FC = () => {
           title="规则助手"
           aria-label="打开规则助手"
         >
-          <span className="rule-agent-fab-label">📖 规则助手</span>
+          <span className="rule-agent-fab-label">
+            <span aria-hidden>📖</span>
+            <span className="rule-agent-fab-text">规则助手</span>
+          </span>
         </button>
       )}
     </div>

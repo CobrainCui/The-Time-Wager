@@ -17,7 +17,7 @@ const PROJECT_TYPE_LINE_KEY: Record<string, keyof typeof TYPE_COLORS> = {
 
 function renderTutorialLine(line: string) {
   const match = line.match(/^(短期项目|长期项目|风险项目)：(.+)$/);
-  if (!match) return { bullet: "•", body: line, accent: "#60a5fa" as const };
+  if (!match) return { bullet: "•", body: line, accent: "#c9973a" as const };
 
   const label = match[1];
   const typeKey = PROJECT_TYPE_LINE_KEY[label];
@@ -317,7 +317,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
               width: i === step ? "1.5rem" : "0.375rem",
               height: "0.375rem",
               borderRadius: "9999px",
-              background: i === step ? "#60a5fa" : "rgba(255,255,255,0.15)",
+              background: i === step ? "#c9973a" : "rgba(255,255,255,0.15)",
               transition: "all 0.3s ease",
             }}
           />
@@ -367,7 +367,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
             style={{
               height: "100%",
               width: `${progress}%`,
-              background: "linear-gradient(90deg, #3b82f6, #a855f7)",
+              background: "linear-gradient(90deg, #b07d22, #e8c877)",
               transition: "width 0.5s ease",
             }}
           />
@@ -389,7 +389,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
                 style={{
                   fontSize: titleSize,
                   fontWeight: 900,
-                  background: "linear-gradient(135deg, #60a5fa, #a78bfa)",
+                  background: "linear-gradient(135deg, #f4e3b2, #c9973a)",
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
                   backgroundClip: "text",
@@ -420,7 +420,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
               style={{
                 fontSize: titleSize,
                 fontWeight: 900,
-                background: "linear-gradient(135deg, #60a5fa, #a78bfa)",
+                background: "linear-gradient(135deg, #f4e3b2, #c9973a)",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 backgroundClip: "text",

@@ -121,9 +121,9 @@ const StatusBar: React.FC<{
 
   return (
     <div className="status-bar">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: "1100px", margin: "0 auto" }}>
+      <div className="status-bar-inner">
         {/* 左侧：精力 + 财富 */}
-        <div style={{ display: "flex", gap: "1.5rem", alignItems: "center" }}>
+        <div className="status-bar-left">
           <div style={{ display: "flex", alignItems: "center", gap: "0.15rem" }}>
             {!embed && (
               <CoffeeRoundIndicators
@@ -184,7 +184,7 @@ const StatusBar: React.FC<{
         </div>
 
         {/* 右侧：倒计时 + 咖啡 */}
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+        <div className="status-bar-right">
           {showCountdown && investmentEndsAt && (
             <div
               className="action-countdown-chip"
@@ -235,7 +235,7 @@ const StatusBar: React.FC<{
             <button
               onClick={onCoffee}
               disabled={coffeeLoading || !canAffordCoffee || coffeeLocked}
-              className="btn btn-sm"
+              className="btn btn-sm status-bar-coffee"
               style={{
                 background: "rgba(180,83,9,0.2)",
                 border: "1px solid rgba(180,83,9,0.4)",
@@ -249,10 +249,21 @@ const StatusBar: React.FC<{
                     : `消耗${COFFEE_WEALTH_COST}财富换${COFFEE_ENERGY_GAIN}精力`
               }
             >
-              ☕{" "}
-              {coffeeLoading
-                ? "..."
-                : `来杯咖啡（${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力）`}
+              <span className="status-bar-coffee-long">
+                ☕{" "}
+                {coffeeLoading
+                  ? "..."
+                  : `来杯咖啡（${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力）`}
+              </span>
+              <span className="status-bar-coffee-short">
+                ☕{" "}
+                {coffeeLoading
+                  ? "..."
+                  : `${COFFEE_WEALTH_COST}💰→${COFFEE_ENERGY_GAIN}⚡`}
+              </span>
+              <span className="status-bar-coffee-mini">
+                ☕{coffeeLoading ? "" : ` ${COFFEE_WEALTH_COST}💰`}
+              </span>
             </button>
           )}
         </div>
@@ -856,7 +867,7 @@ export const Investment: React.FC<Props> = ({
         )}
 
         {/* 标题 */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
+        <div className="investment-head" style={{ marginBottom: "1.5rem" }}>
           <h2 style={{ fontSize: "1.4rem", fontWeight: 800, color: "white" }}>
             📊 投资决策
           </h2>

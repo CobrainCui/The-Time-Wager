@@ -70,7 +70,7 @@ function parseRank(raw: unknown): { rank: SocialRank; reason: string } | null {
 
 function buildPrompt(player: Player, samples: ChatSample[]): string {
   return [
-    "你是桌游《光阴对赌》的社交行为评估器。",
+    "你是桌游《光阴对弈》的社交行为评估器。",
     "只根据下列「该玩家自己发出」的群聊、私信和转账留言，评价其社交表现；不要评价投资水平、财富或胜负。",
     "",
     "评分标准：",

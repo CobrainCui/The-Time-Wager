@@ -152,7 +152,7 @@ async function main() {
       spacing: { after: 400 },
       children: [
         new TextRun({
-          text: "光阴对赌 · 六种命运素描（名称 · 立绘 · 描述）",
+          text: "光阴对弈 · 六种命运素描（名称 · 立绘 · 描述）",
           size: 22,
           font: "Microsoft YaHei",
           color: "666666",

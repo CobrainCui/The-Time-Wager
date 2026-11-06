@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { Server, Socket } from "socket.io";
 import {
   createInitialGame,
@@ -37,9 +37,10 @@ import {
 } from "../logic/coffeeLogic.js";
 import { broadcastUpdate, emitSerializedGameUpdate } from "./broadcast.js";
 import { AI_BOT_ENABLED, AI_SAFETY_ENABLED } from "../config/features.js";
-import { addAiPlayer, removeAiPlayer, fillAiPlayers, aiRosterSummary } from "../ai/aiRoster.js";
+import { addAiPlayer, removeAiPlayer, fillAiPlayers, aiRosterSummary, countAiPlayers } from "../ai/aiRoster.js";
 import { handleAIPhase, forgetAiRoom, forgetAiPlayer, clearAiFailure } from "../ai/aiOrchestrator.js";
 import { applyAiPreflightToGame, verifyAiAgents } from "../ai/aiPreflight.js";
+import { normalizeDifficulty } from "../ai/aiPersona.js";
 import { AI_CONFIG } from "../ai/aiConfig.js";
 import {
   CRISIS_REPLY,
@@ -55,7 +56,7 @@ import { TUTORIAL_MAX_STEP } from "../config/tutorial.js";
 import { rooms, customImagesVersions, customEraImagesVersions, customBuffImagesVersions, customPersonaImagesVersions } from "../state/store.js";
 import { sanitizeCommunityName } from "../state/communityLeaderboard.js";
 import { finalizeCommunityName } from "../state/communityNaming.js";
-import { ensureAiSeatsFilled, startGameNow } from "../state/gameStart.js";
+import { ensureAiSeatsFilled, startGameNow, resolveSeatTarget, MAX_SEATS, MIN_PLAYERS_TO_START } from "../state/gameStart.js";
 import { armAutoHostStart, resetAutoHostState } from "../host/autoHost.js";
 import { ensureProjectsDrawnForEra } from "../state/gameEra.js";
 import { applyRoundEnergy, syncEnergyAfterRosterChange } from "../logic/energySchedule.js";
@@ -164,6 +165,73 @@ const MAX_ROOM_ID_LENGTH = 48;
 const MAX_PLAYER_NAME_LENGTH = 24;
 const MAX_ROOMS = 50;
 
+/** 房间号字符集：去掉 I/O/0/1 等易混字符，便于口头与截图转述 */
+const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateRoomCode(): string {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    let code = "";
+    for (let i = 0; i < 5; i++) {
+      code += ROOM_CODE_ALPHABET[randomInt(ROOM_CODE_ALPHABET.length)];
+    }
+    if (!rooms[code]) return code;
+  }
+  return `R${Date.now().toString(36).slice(-5).toUpperCase()}`;
+}
+
+/** 房主 = 第一个进入等待房的真人；离开后交给下一位在线真人 */
+function ensureRoomOwner(game: GameState, preferredId?: string): void {
+  const isHuman = (id: string) => game.players.some((p) => p.id === id && !isAiPlayer(p));
+  const current = game.roomOwnerId;
+  if (current && isHuman(current)) return;
+  if (preferredId && isHuman(preferredId)) {
+    game.roomOwnerId = preferredId;
+    return;
+  }
+  const next =
+    game.players.find((p) => !isAiPlayer(p) && p.connected) ??
+    game.players.find((p) => !isAiPlayer(p));
+  game.roomOwnerId = next?.id;
+}
+
+/**
+ * 真人变多时，把 AI 座位收缩到 6 席以内。
+ * 房主选了「3 名 AI」后又有朋友进房，AI 自动让位，不会把人挤出去。
+ */
+function reconcileAiSeats(game: GameState): number {
+  if (game.aiSeats == null) return 0;
+  const humans = game.players.filter((p) => !isAiPlayer(p)).length;
+  const maxAi = Math.max(0, Math.min(5, MAX_SEATS - humans, Math.floor(game.aiSeats)));
+  let removed = 0;
+  while (countAiPlayers(game) > maxAi) {
+    const lastAi = [...game.players].reverse().find((p) => isAiPlayer(p));
+    if (!lastAi || !removeAiPlayer(game, lastAi.id)) break;
+    removed += 1;
+  }
+  if (removed > 0) {
+    game.logs.push(`🤖 真人增多，${removed} 名 AI 玩家让出座位`);
+  }
+  return removed;
+}
+
+/** 房主调整 AI 人数后，把桌面上的 AI 座位同步到目标值 */
+function syncAiSeatsToRoom(game: GameState): { ok: boolean; message?: string } {
+  const target = resolveSeatTarget(game);
+  const added = Math.max(0, target - game.players.length);
+  if (added > 0) {
+    if (!AI_BOT_ENABLED) return { ok: false, message: "AI 玩家功能已关闭" };
+    const filled = fillAiPlayers(game, target, { difficulty: game.aiDifficulty });
+    if (filled < added) {
+      return {
+        ok: false,
+        message: "AI 座位不足：严格模式下有空位未配置模型 Key，请联系管理员。",
+      };
+    }
+  }
+  reconcileAiSeats(game);
+  return { ok: true };
+}
+
 const JUMPABLE_PHASES: ReadonlySet<string> = new Set([
   "ROOM_WAITING",
   "ERA_INTRO",
@@ -196,6 +264,7 @@ function detachClaimedPlayer(socket: Socket): GameState | null {
       const idx = game.players.findIndex((p) => p.id === player.id);
       if (idx >= 0) game.players.splice(idx, 1);
       game.readyPlayers.delete(player.id);
+      ensureRoomOwner(game);
     } else {
       player.connected = false;
       player.ready = false;
@@ -478,10 +547,25 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     }
 
     syncChatGroupsOnRosterChange(game);
+    if (!player.isAI) {
+      // 第一个真人成为房主；后来的真人不会被 AI 挤掉
+      ensureRoomOwner(game, player.id);
+      reconcileAiSeats(game);
+    }
     emitPlayerJoinSideEffects(socket, game, player);
     armAutoHostStart(game);
     broadcastUpdate(io, game);
     broadcastRoomList(io);
+  });
+
+  /** 房主（或任意玩家）新建房间前先要一个未占用的房号 */
+  socket.on("requestRoomCode", () => {
+    if (rejectStaleClient(socket)) return;
+    if (!allow(`room-code:${socket.id}`, 10, 60_000)) {
+      socket.emit("error", "操作过于频繁，请稍后再试");
+      return;
+    }
+    socket.emit("roomCode", { roomId: generateRoomCode() });
   });
 
   socket.on("leaveGame", () => {
@@ -498,6 +582,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         const idx = game.players.findIndex((p) => p.id === player.id);
         if (idx >= 0) game.players.splice(idx, 1);
         game.readyPlayers.delete(player.id);
+        ensureRoomOwner(game);
       } else {
         player.connected = false;
         player.ready = false;
@@ -528,6 +613,159 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     if (!roomId || !rooms[roomId]) return;
     const game = rooms[roomId];
     emitSerializedGameUpdate(socket, game);
+  });
+
+  // === 自助开局（产品版：不需要主持人） ===
+  // 房主在等待房选 AI 人数/难度并直接开局；管理端仍可覆盖。
+  socket.on("playerUpdateRoom", ({ aiSeats, aiDifficulty, autoStart } = {} as {
+    aiSeats?: number;
+    aiDifficulty?: string;
+    autoStart?: boolean;
+  }) => {
+    if (rejectStaleClient(socket)) return;
+    const roomId = getRoomId(socket);
+    const game = roomId ? rooms[roomId] : undefined;
+    if (!game) return;
+    const me = game.players.find((p) => p.socketId === socket.id);
+    if (!me) return;
+    if (game.roomOwnerId !== me.id) {
+      socket.emit("error", "只有房主可以设置对局");
+      return;
+    }
+    if (game.phase !== "ROOM_WAITING") {
+      socket.emit("error", "对局已经开始，不能再改设置");
+      return;
+    }
+    if (aiSeats != null) {
+      const humans = game.players.filter((p) => !isAiPlayer(p)).length;
+      const maxAi = Math.max(0, Math.min(5, MAX_SEATS - humans));
+      game.aiSeats = Math.max(0, Math.min(maxAi, Math.floor(Number(aiSeats) || 0)));
+    }
+    if (typeof aiDifficulty === "string" && aiDifficulty) {
+      game.aiDifficulty = normalizeDifficulty(aiDifficulty);
+      for (const p of game.players) {
+        if (isAiPlayer(p)) p.aiDifficulty = game.aiDifficulty;
+      }
+    }
+    if (typeof autoStart === "boolean") {
+      game.autoStartCancelled = !autoStart;
+      if (!autoStart) game.autoStartAt = undefined;
+    }
+    const synced = syncAiSeatsToRoom(game);
+    if (!synced.ok) socket.emit("error", synced.message ?? "AI 补位失败");
+    armAutoHostStart(game);
+    broadcastUpdate(io, game);
+    broadcastRoomList(io);
+  });
+
+  socket.on("playerStartGame", async () => {
+    if (rejectStaleClient(socket)) return;
+    const roomId = getRoomId(socket);
+    const game = roomId ? rooms[roomId] : undefined;
+    if (!game) return;
+    const me = game.players.find((p) => p.socketId === socket.id);
+    if (!me) return;
+    if (game.roomOwnerId !== me.id) {
+      socket.emit("error", "只有房主可以开始对局");
+      return;
+    }
+    if (game.phase !== "ROOM_WAITING") {
+      socket.emit("error", "对局已经开始了");
+      return;
+    }
+    if (!allow(`player-start:${socket.id}`, 5, 30_000)) {
+      socket.emit("error", "操作过于频繁，请稍后再试");
+      return;
+    }
+    const filled = ensureAiSeatsFilled(game);
+    if (!filled.ok) {
+      socket.emit("error", filled.message);
+      broadcastUpdate(io, game);
+      return;
+    }
+    if (filled.added > 0) broadcastUpdate(io, game);
+    if (AI_CONFIG.strictAgent) {
+      const preflight = await verifyAiAgents(game);
+      applyAiPreflightToGame(game, preflight);
+      broadcastUpdate(io, game);
+      if (!preflight.ok) {
+        socket.emit(
+          "error",
+          `AI 玩家还没准备好：${preflight.failures
+            .map((f) => `${f.name}（${f.message}）`)
+            .join("；")}`
+        );
+        return;
+      }
+    }
+    // await 期间阶段可能被自动主持推进，必须重新校验
+    if (!rooms[game.roomId] || game.phase !== "ROOM_WAITING") return;
+    const result = startGameNow(io, game, "player");
+    if (!result.ok) socket.emit("error", result.message);
+    broadcastRoomList(io);
+  });
+
+  /** 终局后再开一局：房主把房间重置回等待房，其他人自动跟随 */
+  socket.on("playerRematch", () => {
+    if (rejectStaleClient(socket)) return;
+    const roomId = getRoomId(socket);
+    const game = roomId ? rooms[roomId] : undefined;
+    if (!game) return;
+    const me = game.players.find((p) => p.socketId === socket.id);
+    if (!me) return;
+    const owner = game.players.find((p) => p.id === game.roomOwnerId);
+    // 房主不在线时，任何在线真人都可以重开一局，避免房间被离线房主锁死
+    if (owner && owner.id !== me.id && owner.connected) {
+      socket.emit("error", "只有房主可以再开一局");
+      return;
+    }
+    if (game.phase !== "GAME_OVER" && game.phase !== "COMMUNITY_NAMING") {
+      socket.emit("error", "本局还没结束");
+      return;
+    }
+    resetGameSession(game);
+    resetAutoHostState(game.roomId);
+    game.roomOwnerId = me.id;
+    armAutoHostStart(game);
+    broadcastUpdate(io, game);
+    broadcastRoomList(io);
+  });
+
+  /**
+   * 没有主持人时的兜底：AI 模型卡住导致倒计时暂停，房主可让这些 AI 直接过掉本轮。
+   * 这是显式的「跳过」动作，不是本地策略代打；日志与结算都会记录。
+   */
+  socket.on("playerUnstickAi", () => {
+    if (rejectStaleClient(socket)) return;
+    const roomId = getRoomId(socket);
+    const game = roomId ? rooms[roomId] : undefined;
+    if (!game) return;
+    const me = game.players.find((p) => p.socketId === socket.id);
+    if (!me) return;
+    const owner = game.players.find((p) => p.id === game.roomOwnerId);
+    if (owner && owner.id !== me.id && owner.connected) {
+      socket.emit("error", "只有房主可以跳过卡住的 AI");
+      return;
+    }
+    let forced = 0;
+    for (const p of game.players) {
+      if (!isAiPlayer(p) || p.ready) continue;
+      clearAiFailure(game, p.id, io);
+      if (togglePlayerReady(game, p.id)) forced += 1;
+    }
+    if (forced > 0) {
+      game.logs.push(`👑 房主让 ${forced} 名 AI 直接过掉本轮（模型响应超时）`);
+      appendSessionEvent(game, "ai_action", {
+        kind: "owner_skip_ai",
+        phase: game.phase,
+        globalRound: game.globalRound,
+        count: forced,
+      });
+      tryAdvancePhase(game);
+      broadcastUpdate(io, game);
+    } else {
+      socket.emit("error", "当前没有卡住的 AI");
+    }
   });
 
   // === Admin ===
@@ -712,6 +950,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const playerIndex = game.players.findIndex(p => p.id === targetPlayerId);
     if (playerIndex !== -1) {
       const [removed] = game.players.splice(playerIndex, 1);
+      ensureRoomOwner(game);
       appendSessionEvent(
         game,
         "presence",

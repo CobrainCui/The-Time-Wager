@@ -18,7 +18,7 @@ import OpenAI from "openai";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export const RULE_AGENT_GAME_NAME = "光阴对赌（The Time Wager）";
+export const RULE_AGENT_GAME_NAME = "光阴对弈（The Time Gambit）";
 
 /** 知识库目录：dist/logic/ruleAgent.js → ../../gameInstruction；可用环境变量覆盖 */
 function resolveKnowledgeDir(): string {
@@ -400,7 +400,7 @@ let cachedSystemPrompt: string | null = null;
 function loadSystemPrompt(): string {
   if (cachedSystemPrompt !== null) return cachedSystemPrompt;
   const md = readKnowledge(AGENT_PROMPT_FILE);
-  cachedSystemPrompt = md || "你是「光阴对赌（The Time Wager）」的规则助手。";
+  cachedSystemPrompt = md || "你是「光阴对弈（The Time Gambit）」的规则助手。";
   return cachedSystemPrompt;
 }
 

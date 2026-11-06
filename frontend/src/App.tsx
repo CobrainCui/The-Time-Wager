@@ -79,7 +79,10 @@ function App() {
     const onClientUpdateRequired = () => {
       handleServerClientUpdateRequired("player");
     };
-    const onError = (msg: string) => alert(`❌ ${msg}`);
+    const onError = (msg: string) => {
+      // 用页内提示代替阻塞式 alert：玩家在读规则/拖动分配时不会被打断
+      setPlayerNotify({ seq: Date.now(), text: String(msg || "操作失败，请重试") });
+    };
     const onPlayerKicked = ({ message }: { message?: string }) => {
       alert(message || "你已被移出房间");
       clearGameSession();
@@ -201,7 +204,7 @@ function App() {
       ) : (
         <>
           {notifyToast}
-          <Lobby game={game || ({ players: [] } as unknown as GameState)} />
+          <Lobby />
         </>
       )}
     </ConnectionGate>

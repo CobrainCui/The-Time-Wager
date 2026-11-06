@@ -20,6 +20,7 @@ import { BuffInvestmentSplit } from "./components/BuffInvestmentSplit";
 import { RuleAgentChat } from "./components/ruleAgent/RuleAgentChat";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { setPlayerDeferAppReload } from "./bootstrapAppUpdate";
+import { socket } from "./socket";
 import { PERSONA_IMAGE_SLUGS } from "./config/personaConfig";
 import {
   getPersonaDefaultImageSrc,
@@ -31,6 +32,37 @@ const GameOver = lazy(() =>
 );
 
 const EMBED_VIEWER_ID = "__admin_board__";
+
+/**
+ * 没有主持人时的兜底：AI 模型超时会把倒计时暂停，房主可以显式跳过。
+ * 只在服务端标记 aiDeadlinePaused 时出现，避免打断正常对局。
+ */
+const AiStuckBanner: React.FC<{ game: GameState; me: Player }> = ({ game, me }) => {
+  const [busy, setBusy] = React.useState(false);
+  const owner = game.players.find((p) => p.id === game.roomOwnerId);
+  const canAct = !owner || owner.id === me.id || !owner.connected;
+  return (
+    <div className="ai-stuck-banner" role="status" aria-live="polite">
+      <span className="ai-stuck-banner__text">⏸ AI 响应超时，本阶段倒计时已暂停。</span>
+      {canAct ? (
+        <button
+          type="button"
+          className="ai-stuck-banner__btn"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            socket.emit("playerUnstickAi");
+            window.setTimeout(() => setBusy(false), 4000);
+          }}
+        >
+          {busy ? "正在跳过…" : "跳过卡住的 AI，继续游戏"}
+        </button>
+      ) : (
+        <span className="ai-stuck-banner__hint">等待房主处理，或稍等模型重试。</span>
+      )}
+    </div>
+  );
+};
 
 /** 主持预览用空座位：接近玩家刚进本轮时的空表 */
 function makeBlankBoardSeat(game: GameState): Player {
@@ -336,8 +368,9 @@ export default function GameRoom({
         }}
       >
         {renderMainView()}
+        {!embed && !readOnly && game.aiDeadlinePaused && <AiStuckBanner game={game} me={me} />}
         {!embed && !readOnly && <RuleAgentChat />}
-        {!embed && showTransactionOverlay && (
+        {!embed && showTransactionOverlay && game.phase !== "COMMUNITY_NAMING" && (
           <PlayerChatSystem game={game} me={me} readOnly={readOnly} />
         )}
         {!embed && (

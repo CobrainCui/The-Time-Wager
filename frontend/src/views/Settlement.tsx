@@ -393,6 +393,7 @@ export const Settlement: React.FC<Props> = ({ game, me, embed = false }) => {
   return (
     <div
       ref={settlementMainRef}
+      className="settlement-page"
       style={{
         minHeight: "100vh",
         background: "#070b14",
@@ -403,7 +404,7 @@ export const Settlement: React.FC<Props> = ({ game, me, embed = false }) => {
       <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
 
         {/* 标题 */}
-        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
+        <div className="settlement-head" style={{ textAlign: "center", marginBottom: "2rem" }}>
           <div style={{ fontSize: uiRem(0.75), fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: "0.375rem" }}>
             Round {snapshot.round} · 结算报告
           </div>

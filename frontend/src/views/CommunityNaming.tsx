@@ -21,7 +21,7 @@ export const CommunityNaming: React.FC<Props> = ({ game, me, embed = false }) =>
 
   return (
     <div
-      className="page-center flex-col"
+      className="page-center flex-col naming-page"
       style={{
         background: `radial-gradient(ellipse at 50% 40%, rgba(245,158,11,0.1) 0%, transparent 60%), #070b14`,
         minHeight: "100vh",

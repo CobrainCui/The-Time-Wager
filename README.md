@@ -1,8 +1,8 @@
-# The Time Wager (光阴对赌)
+# The Time Gambit (光阴对弈)
 
-"The Time Wager" is a strategic multiplayer game spanning four life stages. Players invest their limited energy into short-term gains, long-term assets, or high-risk ventures to build wealth. Negotiate, cooperate, or backstab rivals using powerful strategy cards. Master the balance between instant gratification and lasting value!
+"The Time Gambit" is a strategic multiplayer game spanning four life stages. Players invest their limited energy into short-term gains, long-term assets, or high-risk ventures to build wealth. Negotiate, cooperate, or backstab rivals using powerful strategy cards. Master the balance between instant gratification and lasting value!
 
-**光阴对赌** 是一款跨越人生四大阶段的多人心理策略桌游。玩家需要在游戏中合理分配有限的“精力”，投资于短期收益、长期资产或高风险项目以积累“财富”。你可以与对手结盟、谈判，或者使用强力的策略道具卡背刺他们。在即时满足与长期价值之间寻找完美平衡，解锁你的决策密码！
+**光阴对弈** 是一款跨越人生四大阶段的多人心理策略桌游。玩家需要在游戏中合理分配有限的“精力”，投资于短期收益、长期资产或高风险项目以积累“财富”。你可以与对手结盟、谈判，或者使用强力的策略道具卡背刺他们。在即时满足与长期价值之间寻找完美平衡，解锁你的决策密码！
 
 > 第一次接触本项目、或需要把两个版本跑起来给研究/运营同学用，请先看 **[实施使用说明.md](实施使用说明.md)**（逐步操作 + 填 Key 的位置 + 验收清单）。本 README 偏向开发与部署。
 
@@ -12,7 +12,8 @@
 - **Investment Strategy (投资策略)**: Balance your portfolio between short-term tasks (quick wins), long-term visions (heavy investment, high payoff), and risk ventures.
 - **Social Interaction (社交互动)**: Negotiate with up to 6 players, cooperate to fund large projects, or use buff cards to disrupt your opponents (e.g., "Slack Virus" 摸鱼传染, "Shield" 反弹护盾).
 - **Group Chat (群聊与私信)**: 进房自动创建「全场」频道，支持自建小群、未读提醒与消息通知；**真人和 AI 都可以自己拉群**；禁聊阶段自动屏蔽，AI 发言统一过安全闸门。
-- **AI Players (C 端陪玩)**: 管理端可添加三档难度的 AI 玩家，开局自动补满 6 席；**不预设人格**，由模型根据局面自由发挥。**严格 Agent 模式**下 AI 全程走模型；未配置或未连通模型时拒绝补位/开局，并明确提示原因。
+- **AI Players (C 端陪玩)**: 等待房房主可直接选 **AI 人数（3–5 名）与难度**，开局自动补位；**不预设人格**，由模型根据局面自由发挥。**严格 Agent 模式**下 AI 全程走模型；未配置或未连通模型时拒绝补位/开局，并明确提示原因。
+- **自助开局（无需主持）**: 首页填昵称 →「开始一局」自动建房进等待房；房主选 AI 人数和难度 →「开始对局」，也可以把邀请链接发给朋友一起玩。
 - **Auto Host (系统自动主持)**: 产品版默认由系统自动开局、推进阶段、主持拍卖、线上随机开奖与社区命名兜底，C 端无需真人主持。
 - **AI Auto-Tuner (内部调参)**: 离线批量模拟，用于校验人格判定与数值平衡。
 
@@ -116,11 +117,11 @@ pm2 describe guangyin | grep -E "script path|exec cwd"
 
 ## 🤖 AI 玩家（产品版）
 
-AI 玩家由服务端托管，和真人走同一套规则、同一个阶段判定与同一份广播协议。管理端顶部「🤖 AI 玩家」面板可选择 **难度**（简单 / 普通 / 困难），添加单个 AI、补满到 6 人、或移除某个 AI。
+AI 玩家由服务端托管，和真人走同一套规则、同一个阶段判定与同一份广播协议。等待房里房主可以直接调 **AI 人数**（总人数 4–6）和 **难度**（简单 / 普通 / 困难）；管理端「🤖 AI 玩家」面板仍可补位、移除或逐个指定。
 
 - **不预设人格**：产品版 AI 没有固定人设，提示词只给规则、目标与当前局面，由模型自由发挥、形成自己的打法。旧局或手动指定人格的 AI 仍然兼容。
 - **基本平权**：AI 可以拍卖出价、可以成为首富、可以获得社区命名权；社区总财富榜按全部座位统计（含 AI）。
-- **全流程托管**：开局固定补满 6 席（支持 1–6 名真人，空位自动补 AI）；AI 自动 ready，投资、买咖啡、用道具、转账、拍卖出价、彩票领取、结算准备全部自动完成。
+- **全流程托管**：开局按「真人 + 房主选的 AI 人数」补座（4–6 人；真人超过目标时 AI 自动让位）；AI 自动 ready，投资、买咖啡、用道具、转账、拍卖出价、彩票领取、结算准备全部自动完成。
 - **AI 首富命名**：社区命名阶段若在线首富是 AI，AI 会自己生成社区名；严格模式下如果模型失败，不会改用本地名称池，而是等待主持处理。
 - **AI 也可以拉群**：AI 在投资阶段可以像真人一样创建自定义群、邀请至少 2 名其他玩家，并在自己所在的群里发言；群聊只对成员可见。
 - **不暴露对手身份**：AI 的观察里没有其他座位的 `isAI / isAgent / agentModel / agentProvider`，玩家昵称与 ID 也不带 AI 标记；AI 只能从行为和聊天内容推断对手。真人玩家端仍可在管理/玩家界面看到 AI 标识。
@@ -209,7 +210,7 @@ node scripts/group-chat-e2e.mjs   # 群聊：全场/自建群/退群/危机回�
 
 产品版默认不再依赖真人主持；管理端顶部可随时切换「🤖 系统自动主持：开/关」。
 
-- **等待房**：至少 1 名在线真人后开始 30 秒倒计时；开局自动补满 6 席（AI 需要模型 Key），补位/预检失败会拒绝开局并说明原因。
+- **等待房**：首页「开始一局」直接建房；房主可设 AI 人数/难度，点「开始对局」立即开局，或等 30 秒自动开局（想等朋友可点「先等朋友」取消）。AI 需要模型 Key，补位/预检失败会拒绝开局并说明原因。
 - **时代介绍 / 结算**：倒计时结束自动帮未点击的玩家准备，并进入下一阶段。
 - **拍卖**：自动聚焦下一张拍品；最后一次出价后 12 秒或单张最长 45 秒自动落槌；无人出价自动跳过；全部拍完自动结束。
 - **彩票**：玩家打出彩票后立刻线上随机掷骰；超时未确认自动领取。

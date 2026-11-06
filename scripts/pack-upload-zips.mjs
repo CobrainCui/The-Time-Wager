@@ -47,6 +47,8 @@ with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
         (stage / "package-lock.json", "package-lock.json"),
         (stage / ".env.example", ".env.example"),
         (stage / "data", "data"),
+        # 规则助手知识库：ruleAgent 运行时按 dist/logic → ../../gameInstruction 读取
+        (root / "server" / "gameInstruction", "gameInstruction"),
     ]
     for src, arc_base in items:
         if not src.exists():

@@ -1045,10 +1045,12 @@ export const PlayerChatSystem: React.FC<{
       : null);
   const inboxBadgeLabel = formatBadge(dockSummary.totalAttention);
 
+  const dockExpanded = displayOrder.some((id) => threads[id]?.expanded);
+
   return (
     <div
       ref={dockRef}
-      className="player-chat-dock"
+      className={`player-chat-dock${dockExpanded ? " player-chat-dock--expanded" : ""}`}
       aria-label={PLAYER_GROUP_CHAT_ENABLED ? "玩家私信、转账与群聊" : "玩家私信与转账"}
     >
       {PLAYER_GROUP_CHAT_ENABLED && !readOnly && (

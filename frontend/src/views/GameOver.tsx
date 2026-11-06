@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
+import { socket } from "../socket";
 import { isAiPlayer } from "../utils/isAiPlayer";
 import { FATE_SKETCH_PERSONA_COLORS } from "../config/personaConfig";
 import {
@@ -54,6 +55,9 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
   const [pdfProgress, setPdfProgress] = useState<string | null>(null);
   const [pdfFeedback, setPdfFeedback] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [personaModalName, setPersonaModalName] = useState<string | null>(null);
+  /** 房主不在线时，任何在线真人都可以重开一局 */
+  const roomOwner = game.players.find((p) => p.id === game.roomOwnerId);
+  const canRematch = Boolean(me) && (!roomOwner || roomOwner.id === me!.id || !roomOwner.connected);
 
   const sortedPlayers = [...game.players].sort((a, b) => b.wealth - a.wealth);
   // AI 与真人平权：社区总财富按全部座位统计，AI 也可以成为首富。
@@ -137,11 +141,11 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#070b14", padding: "2rem 1rem", overflowY: "auto" }}>
+    <div className="gameover-page" style={{ minHeight: "100vh", background: "#070b14", padding: "2rem 1rem", overflowY: "auto" }}>
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", background: "radial-gradient(ellipse at 30% 20%, rgba(245,158,11,0.06) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(168,85,247,0.06) 0%, transparent 50%)" }} />
 
       <div style={{ maxWidth: "800px", margin: "0 auto", position: "relative" }}>
-        <div style={{ textAlign: "center", marginBottom: "3rem" }} className="animate-slideDown">
+        <div className="gameover-head animate-slideDown" style={{ textAlign: "center", marginBottom: "3rem" }}>
           <h1
             style={{
               fontSize: "clamp(2.5rem, 10vw, 4.5rem)",
@@ -349,6 +353,23 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
                 }}
               >
                 {isGeneratingPdf ? pdfProgress || "正在生成 PDF…" : "📄 导出《人生决策手册》"}
+              </button>
+            )}
+
+            {canRematch && (
+              <button
+                onClick={() => socket.emit("playerRematch")}
+                className="btn"
+                type="button"
+                title="同一房间回到等待房，重新选人数和难度"
+                style={{
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid var(--color-border)",
+                  color: "var(--color-text-primary)",
+                  minWidth: "10rem",
+                }}
+              >
+                🔄 再来一局
               </button>
             )}
           </div>

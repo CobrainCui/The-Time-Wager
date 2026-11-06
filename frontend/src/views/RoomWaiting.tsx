@@ -1,9 +1,8 @@
-import React from "react";
-import { uiRem } from "../utils/typography";
+import React, { useEffect, useState } from "react";
 import { GameState, Player } from "../types";
-import { STARTING_WEALTH } from "../config/startingWealth";
-import { aiDifficultyLabel } from "../utils/isAiPlayer";
+import { aiDifficultyLabel, isAiPlayer } from "../utils/isAiPlayer";
 import { AutoHostCountdown } from "../components/AutoHostCountdown";
+import { socket } from "../socket";
 
 interface Props {
   game: GameState;
@@ -12,147 +11,270 @@ interface Props {
   embed?: boolean;
 }
 
+const MIN_PLAYERS = 4;
+const MAX_SEATS = 6;
+
+function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).then(
+      () => true,
+      () => false
+    );
+  }
+  try {
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.style.position = "fixed";
+    el.style.opacity = "0";
+    document.body.appendChild(el);
+    el.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(el);
+    return Promise.resolve(ok);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+/**
+ * 等待房（自助开局）。
+ * 房主在这里决定「和几个 AI 打、多难」，然后直接开始，不需要主持人。
+ */
 export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
-  const online = game.players.filter((p) => p.connected);
+  const [copied, setCopied] = useState<"code" | "link" | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const humans = game.players.filter((p) => !isAiPlayer(p));
+  const aiPlayers = game.players.filter((p) => isAiPlayer(p));
+  const humanSeats = humans.length;
+  const connectedHumans = humans.filter((p) => p.connected).length;
+  const maxAi = Math.max(0, Math.min(5, MAX_SEATS - humanSeats));
+  const minAi = Math.max(0, Math.min(maxAi, MIN_PLAYERS - humanSeats));
+  const aiValue = Math.max(0, Math.min(game.aiSeats ?? MAX_SEATS - humanSeats, maxAi));
+  const target = Math.min(MAX_SEATS, humanSeats + aiValue);
+  const isOwner = !embed && game.roomOwnerId === me.id;
+  const owner = game.players.find((p) => p.id === game.roomOwnerId);
+  const canStart = target >= MIN_PLAYERS && connectedHumans >= 1;
+  const difficulty = game.aiDifficulty ?? "normal";
+
+  useEffect(() => {
+    const onError = (msg: string) => {
+      setStarting(false);
+      setError(String(msg || "开局失败，请重试"));
+    };
+    socket.on("error", onError);
+    return () => {
+      socket.off("error", onError);
+    };
+  }, []);
+
+  const startingNow = starting && game.phase === "ROOM_WAITING";
+
+  const updateRoom = (patch: { aiSeats?: number; aiDifficulty?: string; autoStart?: boolean }) => {
+    setError(null);
+    socket.emit("playerUpdateRoom", patch);
+  };
+
+  const startGame = () => {
+    setError(null);
+    setStarting(true);
+    socket.emit("playerStartGame");
+    window.setTimeout(() => setStarting(false), 12000);
+  };
+
+  const inviteLink =
+    typeof window !== "undefined" ? `${window.location.origin}/?room=${game.roomId}` : game.roomId;
+
+  const handleCopy = async (kind: "code" | "link") => {
+    const ok = await copyText(kind === "code" ? game.roomId : inviteLink);
+    if (!ok) {
+      setError(`复制失败，请手动记下房号：${game.roomId}`);
+      return;
+    }
+    setCopied(kind);
+    window.setTimeout(() => setCopied(null), 1800);
+  };
+
+  const seats = [
+    ...humans.map((p) => ({ key: p.id, kind: "human" as const, player: p })),
+    ...aiPlayers.map((p) => ({ key: p.id, kind: "ai" as const, player: p })),
+    ...Array.from({ length: Math.max(0, target - game.players.length) }, (_, i) => ({
+      key: `empty-${i}`,
+      kind: "empty" as const,
+      player: null,
+    })),
+  ];
 
   return (
-    <div
-      className="page-center"
-      style={{
-        minHeight: "100vh",
-        background: `
-          radial-gradient(ellipse at 30% 40%, rgba(59,130,246,0.12) 0%, transparent 55%),
-          radial-gradient(ellipse at 70% 70%, rgba(16,185,129,0.08) 0%, transparent 50%),
-          #070b14
-        `,
-        padding: "2rem 1rem",
-      }}
-    >
-      <div className="container-sm" style={{ width: "100%", maxWidth: "420px" }}>
-        <div
-          className="glass animate-fadeIn"
-          style={{
-            borderRadius: "1.5rem",
-            padding: "2rem",
-            border: "1px solid rgba(255,255,255,0.08)",
-            textAlign: "center",
-          }}
-        >
-          <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }} aria-hidden>
-            ⏳
-          </div>
-          <h1 style={{ margin: "0 0 0.5rem", fontSize: uiRem(1.35), fontWeight: 800, color: "white" }}>
-            等候开局
-          </h1>
-          <p style={{ margin: "0 0 1rem", color: "var(--color-text-secondary)", fontSize: uiRem(0.9), lineHeight: 1.5 }}>
-            {game.autoHostEnabled ? "系统自动主持" : "等待主持人开始游戏"}
-            <br />
-            <span style={{ fontSize: uiRem(0.82), color: "var(--color-text-muted)" }}>
-              开局每人 {STARTING_WEALTH} 财富
-            </span>
-          </p>
-          {game.autoHostEnabled && (
-            <div style={{ marginBottom: "1.25rem" }}>
-              <AutoHostCountdown at={game.autoStartAt} label="自动开局" />
-              {!game.autoStartAt && (
-                <div
-                  style={{
-                    marginTop: "0.4rem",
-                    fontSize: uiRem(0.72),
-                    color: "var(--color-text-muted)",
-                  }}
-                >
-                  至少 1 名在线真人后开始倒计时；开局自动补满 6 席
-                </div>
-              )}
-            </div>
-          )}
-
-          <div
-            style={{
-              marginBottom: "1.5rem",
-              padding: "0.75rem 1rem",
-              borderRadius: "0.75rem",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid var(--color-border)",
-            }}
-          >
-            <div style={{ fontSize: uiRem(0.72), color: "var(--color-text-muted)", marginBottom: "0.35rem" }}>
-              房间号
-            </div>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: uiRem(1.4), fontWeight: 700, color: "#60a5fa" }}>
-              {game.roomId}
-            </div>
-          </div>
-
-          <div style={{ textAlign: "left", marginBottom: "1.5rem" }}>
-            <div
-              style={{
-                fontSize: uiRem(0.75),
-                fontWeight: 700,
-                color: "var(--color-text-muted)",
-                marginBottom: "0.65rem",
-                textAlign: "center",
-              }}
+    <div className="waiting-page">
+      <div className="waiting-shell">
+        <header className="waiting-head">
+          <div>
+            <div className="waiting-kicker">房间号</div>
+            <button
+              type="button"
+              className="waiting-code"
+              onClick={() => void handleCopy("code")}
+              title="点击复制房号"
             >
-              在线玩家 ({online.length})
-            </div>
-            <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              {online.map((p) => {
-                const isMe = !embed && p.id === me.id;
-                return (
-                <li
-                  key={p.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "0.5rem 0.75rem",
-                    borderRadius: "0.5rem",
-                    background: isMe ? "rgba(59,130,246,0.12)" : "rgba(255,255,255,0.03)",
-                    border: `1px solid ${isMe ? "rgba(59,130,246,0.25)" : "var(--color-border)"}`,
-                  }}
-                >
-                  <span style={{ fontWeight: isMe ? 700 : 500, color: "white" }}>
-                    {p.name}
-                    {isMe && (
-                      <span style={{ marginLeft: "0.35rem", fontSize: uiRem(0.75), color: "#93c5fd" }}>(我)</span>
-                    )}
-                    {p.isAI && (
-                      <span
-                        style={{
-                          marginLeft: "0.35rem",
-                          fontSize: uiRem(0.68),
-                          fontWeight: 700,
-                          color: "#7dd3fc",
-                          background: "rgba(56,189,248,0.12)",
-                          border: "1px solid rgba(56,189,248,0.3)",
-                          borderRadius: "9999px",
-                          padding: "0.05rem 0.4rem",
-                        }}
-                      >
-                        AI{p.aiDifficulty ? ` · ${aiDifficultyLabel(p.aiDifficulty)}` : ""}
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: uiRem(0.8),
-                      color: "#fbbf24",
-                      fontWeight: 600,
-                    }}
-                  >
-                    💰 {p.wealth}
+              {game.roomId}
+              <span>{copied === "code" ? "已复制" : "复制"}</span>
+            </button>
+          </div>
+          <div className="waiting-mode">
+            {game.autoHostEnabled ? "系统主持 · 自动推进" : "等待主持人"}
+          </div>
+        </header>
+
+        <p className="waiting-lead">
+          {humanSeats <= 1 ? "一个人也能玩：AI 会补齐剩下的座位。" : "把房间号发给朋友，他们可以直接加入。"}
+        </p>
+
+        <div className="waiting-progress">
+          <div className="waiting-progress-label">
+            <strong>{humanSeats}</strong> 名真人 · <strong>{aiPlayers.length}</strong> 名 AI
+            <span>目标 {target} 人</span>
+          </div>
+          <div className="waiting-progress-bar">
+            <i style={{ width: `${Math.min(100, (game.players.length / target) * 100)}%` }} />
+          </div>
+        </div>
+
+        <ul className="waiting-seats">
+          {seats.map(({ key, kind, player }) => {
+            if (kind === "empty" || !player) {
+              return (
+                <li key={key} className="waiting-seat waiting-seat--empty">
+                  <span className="waiting-seat-avatar" aria-hidden>＋</span>
+                  <span className="waiting-seat-body">
+                    <strong>空座</strong>
+                    <em>开局时补 AI，或等朋友加入</em>
                   </span>
                 </li>
               );
-              })}
-              {online.length === 0 && (
-                <li style={{ textAlign: "center", color: "var(--color-text-muted)", fontSize: uiRem(0.85) }}>暂无在线玩家</li>
-              )}
-            </ul>
-          </div>
+            }
+            const isMe = !embed && player.id === me.id;
+            const isOwnerSeat = player.id === game.roomOwnerId;
+            return (
+              <li
+                key={key}
+                className={`waiting-seat${isMe ? " waiting-seat--me" : ""}${player.connected ? "" : " waiting-seat--off"}`}
+              >
+                <span className="waiting-seat-avatar" aria-hidden>
+                  {player.name.slice(0, 1)}
+                </span>
+                <span className="waiting-seat-body">
+                  <strong>
+                    {player.name}
+                    {isMe && <span className="waiting-tag waiting-tag--me">我</span>}
+                    {isOwnerSeat && <span className="waiting-tag waiting-tag--owner">房主</span>}
+                    {kind === "ai" && (
+                      <span className="waiting-tag waiting-tag--ai">
+                        AI · {aiDifficultyLabel(player.aiDifficulty)}
+                      </span>
+                    )}
+                  </strong>
+                  <em>{player.connected ? "已就位" : "离线"}</em>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+
+        {isOwner ? (
+          <section className="waiting-owner" aria-label="对局设置">
+            <div className="waiting-setting">
+              <div className="waiting-setting-label">
+                <strong>AI 对手</strong>
+                <em>
+                  {maxAi === 0
+                    ? "房间已满 6 名真人"
+                    : `可设 ${minAi}–${maxAi} 名；总人数至少 ${MIN_PLAYERS} 人`}
+                </em>
+              </div>
+              <div className="waiting-stepper" role="group" aria-label="AI 对手数量">
+                <button
+                  type="button"
+                  onClick={() => updateRoom({ aiSeats: aiValue - 1 })}
+                  disabled={startingNow || aiValue <= minAi}
+                  aria-label="减少 AI"
+                >
+                  −
+                </button>
+                <span aria-live="polite">{aiValue}</span>
+                <button
+                  type="button"
+                  onClick={() => updateRoom({ aiSeats: aiValue + 1 })}
+                  disabled={startingNow || aiValue >= maxAi}
+                  aria-label="增加 AI"
+                >
+                  ＋
+                </button>
+              </div>
+            </div>
+
+            <div className="waiting-setting">
+              <div className="waiting-setting-label">
+                <strong>AI 难度</strong>
+                <em>简单适合第一次玩</em>
+              </div>
+              <div className="waiting-segments" role="group" aria-label="AI 难度">
+                {(["easy", "normal", "hard"] as const).map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    className={difficulty === d ? "is-active" : ""}
+                    onClick={() => updateRoom({ aiDifficulty: d })}
+                    disabled={startingNow}
+                  >
+                    {aiDifficultyLabel(d)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-primary waiting-start"
+              onClick={startGame}
+              disabled={startingNow || !canStart}
+            >
+              {startingNow ? "正在准备 AI…" : `开始对局（${target} 人）`}
+            </button>
+            {!canStart && (
+              <p className="waiting-note">
+                还差 {MIN_PLAYERS - target} 人：把 AI 加到 {Math.max(0, MIN_PLAYERS - humanSeats)} 名，或邀请朋友加入。
+              </p>
+            )}
+            {error && <p className="waiting-error" role="alert">{error}</p>}
+            <p className="waiting-note waiting-note--muted">
+              房主是你：设置只影响本房间，开局后不能再改。
+            </p>
+          </section>
+        ) : (
+          <section className="waiting-wait" aria-live="polite">
+            <span className="waiting-wait-icon" aria-hidden>⏳</span>
+            <strong>{owner ? `等待房主 ${owner.name} 开始对局` : "等待房主开始对局"}</strong>
+            <em>房主可以调整 AI 人数与难度并直接开局</em>
+            {startingNow && <em>正在准备…</em>}
+          </section>
+        )}
+
+        <div className="waiting-foot">
+          {game.autoStartAt != null && <AutoHostCountdown at={game.autoStartAt} label="自动开局" />}
+          {isOwner && (
+            <button
+              type="button"
+              className="waiting-invite"
+              onClick={() => updateRoom({ autoStart: game.autoStartCancelled === true })}
+            >
+              {game.autoStartCancelled ? "开启自动开局" : "先等朋友（取消自动开局）"}
+            </button>
+          )}
+          <button type="button" className="waiting-invite" onClick={() => void handleCopy("link")}>
+            {copied === "link" ? "✔ 邀请链接已复制" : "🔗 复制邀请链接"}
+          </button>
         </div>
       </div>
     </div>

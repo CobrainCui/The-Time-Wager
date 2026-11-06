@@ -150,8 +150,8 @@
 
 ## 9. 特性与教程开关
 - `AI_BOT_ENABLED = true`、`GROUP_CHAT_ENABLED = true`（产品版默认开）。
-- 产品版开局：支持 1–6 名真人；不足 6 席时由 AI 补满（严格模式需要对应模型 Key）。
-- 教程 `TUTORIAL_SLIDE_COUNT = 8`、`TUTORIAL_MAX_STEP = 7`；主持可 开始/上一步/下一步/结束。
+- 产品版开局：支持 1–6 名真人；房主在等待房选 AI 人数，总人数 4–6（严格模式需要对应模型 Key）。
+- 教程 `TUTORIAL_SLIDE_COUNT = 5`、`TUTORIAL_MAX_STEP = 4`；主持可 开始/上一步/下一步/结束。
 - 人格立绘白名单 6 个（Bridge/Moment/Navigator/Planter/Poet/Wave，对应 6 类命运素描）。
 - 客户端版本校验：过旧客户端收到强制更新提示。
 - 上传仅允许 JPEG（≤5MB），项目 / 时代 / 道具 / 人格立绘按白名单 id 上传。

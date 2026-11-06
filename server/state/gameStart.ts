@@ -8,37 +8,65 @@ import { ensureProjectsDrawnForEra } from "./gameEra.js";
 import { startInvestmentDeadline } from "./actionDeadline.js";
 import { broadcastUpdate } from "../network/broadcast.js";
 import { AI_BOT_ENABLED } from "../config/features.js";
-import { fillAiPlayers } from "../ai/aiRoster.js";
+import { fillAiPlayers, countHumanPlayers } from "../ai/aiRoster.js";
 import { handleAIPhase } from "../ai/aiOrchestrator.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 import { canStartWithAi } from "../ai/aiPreflight.js";
 
 export type StartGameResult = { ok: true } | { ok: false; message: string };
 
+/** 正式开局的最少人数：四/五/六人都有平衡过的精力表 */
+export const MIN_PLAYERS_TO_START = 4;
+export const MAX_SEATS = 6;
+
 /**
- * 正式开局固定 6 席：1–6 名真人，空位由 AI 补满。
+ * 目标总人数（含 AI）。
+ * - 房主选过 AI 数量：真人座位 + AI 数量（上限 6）；
+ * - 未选过（旧房间 / 管理端流程）：补满 6 席。
+ */
+export function resolveSeatTarget(game: GameState): number {
+  if (game.aiSeats == null) return MAX_SEATS;
+  const humanSeats = game.players.filter((p) => !isAiPlayer(p)).length;
+  const aiSeats = Math.max(0, Math.min(5, Math.floor(game.aiSeats)));
+  return Math.min(MAX_SEATS, humanSeats + aiSeats);
+}
+
+/**
+ * 正式开局按目标人数补座：1–6 名真人，空位由 AI 补满到目标人数。
  * 必须在 AI 预检之前调用，确保预检覆盖补位后的全部 AI。
  */
 export function ensureAiSeatsFilled(
   game: GameState
 ): { ok: true; added: number } | { ok: false; message: string } {
-  const humans = game.players.filter((p) => p.connected && !isAiPlayer(p));
-  if (humans.length === 0) {
+  const humans = countHumanPlayers(game);
+  if (humans === 0) {
     return { ok: false, message: "至少需要 1 名在线真人玩家才能开局。" };
   }
-  if (game.players.length >= 6) return { ok: true, added: 0 };
-  if (!AI_BOT_ENABLED) {
+  const target = resolveSeatTarget(game);
+  let added = 0;
+  if (game.players.length < target) {
+    if (!AI_BOT_ENABLED) {
+      return {
+        ok: false,
+        message: `开局需要 ${target} 席；AI 玩家已关闭，请补足真人，或开启 AI_PLAYERS_ENABLED。`,
+      };
+    }
+    added = fillAiPlayers(game, target, { difficulty: game.aiDifficulty });
+    if (added > 0) {
+      game.logs.push(`🤖 开局自动补入 ${added} 名 AI 玩家（凑满 ${target} 人）`);
+    }
+  }
+  // 管理端可能已手动加过 AI：以实际座位数为准判断能否开局
+  const seated = game.players.length;
+  if (seated < MIN_PLAYERS_TO_START) {
     return {
       ok: false,
       message:
-        "正式开局需要 6 席；AI 玩家已关闭，请补足 6 名真人，或开启 AI_PLAYERS_ENABLED。",
+        `至少 ${MIN_PLAYERS_TO_START} 人才能开局：当前 ${seated} 人（${humans} 名真人）。` +
+        `请把 AI 玩家加到 ${Math.max(0, MIN_PLAYERS_TO_START - humans)} 名以上，或邀请更多朋友。`,
     };
   }
-  const added = fillAiPlayers(game, 6);
-  if (added > 0) {
-    game.logs.push(`🤖 开局自动补入 ${added} 名 AI 玩家（补满 6 席）`);
-  }
-  if (game.players.length < 6) {
+  if (seated < target) {
     return {
       ok: false,
       message:
@@ -58,7 +86,7 @@ export function ensureAiSeatsFilled(
 export function startGameNow(
   io: Server | null,
   game: GameState,
-  source: "admin" | "auto_host"
+  source: "admin" | "auto_host" | "player"
 ): StartGameResult {
   if (game.phase === "ROOM_WAITING") {
     if (needsSessionReset(game)) {
@@ -81,7 +109,11 @@ export function startGameNow(
     game.autoStartAt = undefined;
     game.autoHostNextActionAt = undefined;
     game.logs.push(
-      source === "auto_host" ? "🤖 系统自动开局，进入第 1 时代" : "👑 主持开局，进入第 1 时代"
+      source === "auto_host"
+        ? "🤖 系统自动开局，进入第 1 时代"
+        : source === "player"
+          ? "👑 房主开局，进入第 1 时代"
+          : "👑 主持开局，进入第 1 时代"
     );
     recordPhaseChange(game, prevPhase, game.phase, source);
     if (io) broadcastUpdate(io, game);

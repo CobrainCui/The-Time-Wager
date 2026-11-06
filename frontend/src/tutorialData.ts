@@ -1,18 +1,5 @@
 import type { TutorialDemoKey } from "./tutorial/demoKeys";
-import { COFFEE_ENERGY_GAIN, COFFEE_WEALTH_COST } from "./config/coffeeConfig";
-import { STARTING_WEALTH } from "./config/startingWealth";
-import { ERA_BONUS_LONG, ERA_BONUS_SHORT } from "./config/projectCatalog";
-import {
-  TUTORIAL_ENERGY_INTRO_LINE,
-  TUTORIAL_ENERGY_SCHEDULE_HOST_LINE,
-} from "./config/tutorialProjectTypes";
-import {
-  TUTORIAL_AUCTION_BULLETS,
-  TUTORIAL_RESOURCE_COFFEE_LINE,
-  TUTORIAL_RESOURCE_WEALTH_LINE,
-  TUTORIAL_SLIDE_TITLE_TIED_RANK,
-  TUTORIAL_TRANSFER_BULLETS,
-} from "./config/playerHelpReference";
+import { TUTORIAL_SLIDE_TITLE_TIED_RANK } from "./config/playerHelpReference";
 
 export { TUTORIAL_SLIDE_TITLE_TIED_RANK };
 
@@ -30,82 +17,65 @@ export interface TutorialSlide {
     gavelIcon?: boolean;
 }
 
+/**
+ * 产品版教程：只回答新玩家最关心的三件事——「赢什么」「按什么」「怎么开始」。
+ * 每页不超过 4 条短句；完整数值与例外情况放在游戏内「指南 / 规则助手」里，
+ * 不做成一上来就要读完的说明书。
+ */
 export const TUTORIAL_SLIDES: TutorialSlide[] = [
     {
-        title: "欢迎来到《光阴对赌》",
+        title: "欢迎来到《光阴对弈》",
         icon: "⚖️",
         intro: true,
         content: [
-            "这是一款关于时间、选择与人生博弈的游戏。",
-            "在接下来的旅程中，你们将度过青年、壮年、中年、老年四个阶段。",
-            "每一个决定，都将塑造独一无二的人生轨迹。"
+            "4 个时代：青年 → 壮年 → 中年 → 老年，每个时代 2 轮，共 8 轮。",
+            "终局财富最高的人获胜。",
+            "你和另外 5 位玩家同桌，对方可能是真人，也可能是 AI。",
         ],
-        hostNotes: "欢迎大家。现在我们开始讲解规则。",
+        hostNotes: "一句话开场即可：赢家只有一个指标——终局财富。",
     },
     {
-        title: "认识你的核心资源",
+        title: "你只有两种资源",
         icon: "💎",
-        content: [TUTORIAL_ENERGY_INTRO_LINE, TUTORIAL_RESOURCE_WEALTH_LINE, TUTORIAL_RESOURCE_COFFEE_LINE],
-        hostNotes: `重点解释精力每轮重置、同时代两轮相同、时代越往后越少（${TUTORIAL_ENERGY_SCHEDULE_HOST_LINE}）。鼓励花完当轮精力。开局 ${STARTING_WEALTH} 财富可先买咖啡或留作拍卖/转账。可提一句咖啡 ${COFFEE_WEALTH_COST} 财富/杯。`,
+        content: [
+            "⚡ 精力：每轮发放，用来投资。时代越往后越少：15 → 13 → 11 → 9。",
+            "💰 财富：开局 100，终局比分；投资回报、排名奖、道具都围绕它。",
+            "☕ 咖啡：投资阶段花 17 财富换 1 精力，本轮锁定前可以退。",
+        ],
+        hostNotes: "强调精力每轮重置、不要留到下一轮。",
         intro: true,
-        demoKey: "resources",
     },
     {
-        title: "投资项目类型",
+        title: "三类项目，一句话记住",
         icon: "📋",
-        content: [],
-        hostNotes:
-            "强调三种结算节奏：短期/风险当轮结算，长期完成后结算与第四时代第二轮未完成的进度返还；注意停止投入与超过上限的风险。可点项目卡演示详情弹窗。",
-        demoKey: "projectTypes",
-    },
-    {
-        title: "时代主题与加成",
-        icon: "🌍",
         content: [
-            "每个时代都有一个主题（如气候、科技、文化）。",
-            `主题契合且历史总投入第 1：短期恰好满额 +${ERA_BONUS_SHORT}，长期满额或超出上限 +${ERA_BONUS_LONG}。`,
-            "短期超过上限、投资失败无时代加成；风险项目不参与时代加成。"
+            "短期：当轮结算，每点精力 10 财富；恰好投满有排名奖，超过上限直接爆掉。",
+            "长期：全场凑满上限才发钱，每点 15；第 4 时代结束还没满，按进度返还。",
+            "风险：当轮结算，每点 20–25 财富；超过上限就爆掉，还要追回历史收益。",
+            `投入相同名次并列，奖励均分；只按历史累计排名（详见「${TUTORIAL_SLIDE_TITLE_TIED_RANK}」）。`,
         ],
-        hostNotes: "强调：短期要「恰好满额」才有加成，投资失败没有；长期填满或超填都可以；风险永远不参与。可点试玩卡看时代 UP。",
-        intro: true,
-        demoKey: "eraTheme",
+        hostNotes: "只讲三类节奏：当轮、完成后、赌一把。数值细节让玩家查指南。",
     },
     {
-        title: TUTORIAL_SLIDE_TITLE_TIED_RANK,
-        icon: "🤝",
-        intro: true,
-        content: [
-            "项目结算只按历史累计投入排名。",
-            "投入相同则并列：共享所占用名次的奖励或惩罚，再均分（向零取整）。",
-            `时代加成仅第一名并列组共享；短期恰好满额 +${ERA_BONUS_SHORT}，长期满额或超填 +${ERA_BONUS_LONG}。`
-        ],
-        hostNotes: "强调：并列是均分所占用档位合计，不是各拿第一名全额。",
-        demoKey: "tiedRank",
-    },
-    {
-        title: "转账、私信与群聊",
-        icon: "💬",
-        content: [...TUTORIAL_TRANSFER_BULLETS],
-        hostNotes: "演示右侧折叠对话框；可试玩「插入待收转账」；私信可不填金额、只写留言；群聊演示「全场」与自建群。",
-        demoKey: "transferAndMessage",
-    },
-    {
-        title: "拍卖会",
+        title: "道具与拍卖",
         icon: "",
         gavelIcon: true,
-        content: [...TUTORIAL_AUCTION_BULLETS],
-        hostNotes: "主持用「确认成交 / 这张先跳过 / 改成拍这张」控场；不要再手动填价选人。",
-        demoKey: "auction",
+        content: [
+            "时代 2、3、4 开始前各有一场拍卖，用财富竞拍道具卡。",
+            "道具只能在投资阶段、锁定投资前使用，每张一次。",
+            "常见用法：摸鱼扣对手精力、点石成金放大收益、保险兜底风险项目。",
+        ],
+        hostNotes: "不逐个念卡面：玩家手上有卡时，卡面会写清效果。",
     },
     {
-        title: "准备出发",
+        title: "一局怎么走",
         icon: "🚀",
-        content: [
-            "游戏共 4 个时代，每个时代 2 轮。",
-            "每一轮结束都会结算。",
-            "祝各位在光阴的博弈中，此生无悔。"
-        ],
-        hostNotes: "规则讲解结束。主持人点击'结束教程'以进入游戏第一轮。",
         finale: true,
+        content: [
+            "每轮：发精力 → 拖动分配 → 锁定投资 → 结算。",
+            "全部人锁定后自动进入下一阶段；倒计时结束也会自动推进，不需要主持人。",
+            "不确定时点左下角「规则助手」，或打开左侧「指南」，随时问。",
+        ],
+        hostNotes: "最后提醒：锁定后倒计时结束前还能自己解锁修改。",
     }
 ];

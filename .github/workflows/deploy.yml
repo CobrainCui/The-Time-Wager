@@ -34,7 +34,7 @@ jobs:
         cd server
         npm ci
         npm test
-        zip -r ../server_upload.zip dist/* package.json package-lock.json .env.example
+        zip -r ../server_upload.zip dist/* package.json package-lock.json .env.example gameInstruction
 
     - name: Copy files via SCP
       uses: appleboy/scp-action@v0.1.7
@@ -92,6 +92,19 @@ jobs:
           grep -q fetchTransactionHistory /www/wwwroot/admin.guangyinduidu.com/assets/admin-*.js
           grep -q viewAsPlayerId /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
           grep -q viewAsPlayerId /www/wwwroot/admin.guangyinduidu.com/assets/admin-*.js
+
+          # 自助开局：等待房房主可设 AI 人数/难度并直接开局，终局可再来一局
+          grep -q playerUpdateRoom /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
+          grep -q playerStartGame /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
+          grep -q playerRematch /www/wwwroot/guangyinduidu.com/server/dist/network/socketHandlers.js
+          grep -rq playerStartGame /www/wwwroot/guangyinduidu.com/assets/
+          grep -rq '开始一局' /www/wwwroot/guangyinduidu.com/assets/
+
+          # 品牌名：光阴对弈（旧名不再出现在玩家入口）
+          grep -q '光阴对弈' /www/wwwroot/guangyinduidu.com/index.html
+
+          # 规则助手知识库（ruleAgent 运行时读取 dist/../../gameInstruction）
+          test -f /www/wwwroot/guangyinduidu.com/server/gameInstruction/rules_framework.md
 
           # 管理子域入口必须指向最新 admin.html（含新 hash 资源）；禁缓存避免旧入口指到过期 hash
           test -f /www/wwwroot/admin.guangyinduidu.com/index.html

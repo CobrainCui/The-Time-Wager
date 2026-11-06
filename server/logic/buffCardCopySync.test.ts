@@ -10,23 +10,26 @@ const catalogPath = join(
   "../../../frontend/src/config/buffCards.ts"
 );
 
-function parseLighterDescription(src: string): string {
-  const block = src.match(/export const LIGHTER_CARD_BULLETS[\s\S]*?=\s*\[([\s\S]*?)\]\s*(?:as const)?;/);
-  if (!block) return "";
-  const bullets: string[] = [];
-  for (const m of block[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
-    bullets.push(m[1]);
+/**
+ * 卡面文案在 frontend 以 `X_CARD_BULLETS` 数组维护，经 formatBuffBullets 拼成
+ * `· 条目\n· 条目`。这里按同样规则还原，保证与服务端 game_data 字符级一致。
+ */
+function parseBulletDescriptions(src: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const m of src.matchAll(
+    /export const (\w+)_CARD_BULLETS(?::[^=]*)?\s*=\s*\[([\s\S]*?)\]\s*;/g
+  )) {
+    const bullets: string[] = [];
+    for (const s of m[2].matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+      bullets.push(s[1]);
+    }
+    map[`${m[1]}_CARD_DESCRIPTION`] = bullets.map((b) => `· ${b}`).join("\n");
   }
-  return bullets.map((b) => `· ${b}`).join("\n");
+  return map;
 }
 
 function extractDescriptionConstants(src: string): Record<string, string> {
-  const map: Record<string, string> = {};
-  for (const m of src.matchAll(/export const (\w+_CARD_DESCRIPTION) =\s*\n?\s*"([^"]*)"/g)) {
-    map[m[1]] = m[2];
-  }
-  map.LIGHTER_CARD_DESCRIPTION = parseLighterDescription(src);
-  return map;
+  return parseBulletDescriptions(src);
 }
 
 function resolveDescValue(raw: string, consts: Record<string, string>): string {

@@ -10,7 +10,7 @@
 | 咖啡精力增益 `COFFEE_ENERGY_GAIN` | 1 | logic/coffeeLogic.ts |
 
 ### 精力表（按开局在线人数定档，同代两轮相同）
-> 产品版正式开局固定补满 6 席（1–6 名真人 + AI 补位），新局使用 **6 人档**；4/5 人档仅为旧局兼容。
+> 产品版正式开局 4–6 人：房主在等待房选择 AI 人数（默认 6 人），按开局在线人数使用 4/5/6 人档。
 
 | 人数 | 轮1 | 轮2 | 轮3 | 轮4 |
 |---|---|---|---|---|
@@ -69,9 +69,9 @@
 |---|---|
 | `AI_BOT_ENABLED` | true |
 | `GROUP_CHAT_ENABLED` | true |
-| 开局人数 | 1–6 名真人；不足 6 席由 AI 补满 |
-| 教程页数 `TUTORIAL_SLIDE_COUNT` | 8 |
-| 教程最大步 `TUTORIAL_MAX_STEP` | 7 |
+| 开局人数 | 1–6 名真人；房主选 AI 人数，总人数 4–6 |
+| 教程页数 `TUTORIAL_SLIDE_COUNT` | 5 |
+| 教程最大步 `TUTORIAL_MAX_STEP` | 4 |
 | 人格立绘白名单 | Bridge / Moment / Navigator / Planter / Poet / Wave（对应 6 类命运素描） |
 
 ## 数据留存 / 导出

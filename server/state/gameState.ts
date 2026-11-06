@@ -3,6 +3,7 @@ import { AUTO_HOST_ENABLED } from "../config/features.js";
 import { EventCard, EraCard, eraCards } from "../data/game_data.js";
 import { syncChatGroupsOnRosterChange } from "../logic/chatGroups.js";
 import { shuffleArray } from "../utils/shuffle.js";
+import type { AiDifficulty } from "../ai/aiPersona.js";
 import { emptySessionTelemetry, SessionTelemetry } from "./sessionTelemetry.js";
 
 export type Phase =
@@ -489,6 +490,16 @@ export interface GameState {
   /** 当前阶段下一次自动主持动作的时间（客户端倒计时用） */
   autoHostNextActionAt?: number;
 
+  // === 自助开局（产品版：不需要主持人） ===
+  /** 等待房房主：第一个进房的真人，负责选 AI 人数并直接开局 */
+  roomOwnerId?: string;
+  /** 房主选择的 AI 座位数（0–5）；未设置时按「补满 6 席」处理（兼容旧房间与管理端流程） */
+  aiSeats?: number;
+  /** 房主选择的 AI 难度；新建 AI 座位时使用 */
+  aiDifficulty?: AiDifficulty;
+  /** 房主手动取消了「30 秒自动开局」（想等朋友时用）；再次开启或换房时清除 */
+  autoStartCancelled?: boolean;
+
   // === 安全约束（人本 AI 原则） ===
   /** 危机窗口截止时间；窗口内 AI 不闲聊，只允许固定安全回复 */
   safetyCrisisUntil?: number;
@@ -701,6 +712,7 @@ export function resetGameSession(game: GameState): void {
   game.energyTableSize = undefined;
   game.roomCreatedAt = Date.now();
   game.autoStartAt = undefined;
+  game.autoStartCancelled = undefined;
   game.autoHostNextActionAt = undefined;
   game.safetyCrisisUntil = undefined;
   game.lastAiSafetyReplyAt = undefined;

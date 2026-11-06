@@ -4,42 +4,78 @@ export function formatBuffBullets(bullets: readonly string[]): string {
   return bullets.map((b) => `· ${b}`).join("\n");
 }
 
+/**
+ * 卡面文案原则：最多 3–4 条、每条一句、保留关键数字。
+ * 例外流程（打火机）才允许 4 条以上；完整规则在「指南 → 道具卡」里。
+ */
 export const LIGHTER_CARD_BULLETS: readonly string[] = [
-  "发动时机：投资阶段（提交锁定前）；倒计时最后 2 分钟不可用",
-  "指定另一名玩家 + 一种道具；**不可指定自己或打火机**；使用时**立即消耗**打火机；你看不到对方手牌，也无法知道对方有没有这种卡",
-  "使用后你只会看到「已使用」，**不会得知是否烧中**；只有被指定者会看到自己是否被烧",
-  "**结算页判定**（不是使用时立刻烧）",
-  "**先**作废本卡生效轮次内已打出的一张该种类；若没有，再查手牌烧一张；**同种类有多张时只处理一张**",
-  "手牌命中：**私下提示**，对方**确认后**移除一张",
-  "没烧中：被指定者会收到「未烧中」提示；**无效但仍消耗**；详情**仅当事人可见**",
+  "投资阶段、锁定前使用；最后 2 分钟不能再用",
+  "指定一名玩家 + 一种道具；**看不到对方手牌，也不知道有没有烧中**",
+  "结算页判定：**先作废生效期间已打出的一张**；没有就烧手牌，同种类只处理一张",
+  "**没烧中仍然消耗**；只有被指定者会收到提示",
+];
+
+export const GOLD_CARD_BULLETS: readonly string[] = [
+  "项目、彩票、保险的**正收益 ×1.5**（向下取整）",
+  "排名奖、时代加成、终局进度奖同样放大",
+  "**惩罚不放大**；转账与放弃结算的返还也不放大",
 ];
 
 /** 与 BUFF_CARD_DEFS、服务端 game_data 一致 */
+export const GOLD_CARD_DESCRIPTION = formatBuffBullets(GOLD_CARD_BULLETS);
+
+export const WORK_REST_CARD_BULLETS: readonly string[] = [
+  "指定一名玩家",
+  "他被摸鱼时改为 **+8 精力**",
+  "发动时**追溯**生效期间已发生的摸鱼；多张不叠加",
+];
+
+/** 与 BUFF_CARD_DEFS、服务端 game_data 一致 */
+export const WORK_REST_CARD_DESCRIPTION = formatBuffBullets(WORK_REST_CARD_BULLETS);
+
+export const SHORT_CARD_BULLETS: readonly string[] = [
+  "投资阶段、锁定前指定一个项目",
+  "结算时该项目**全场累计精力清零**（含自己）",
+  "**已入账的财富不追回**",
+];
+
+/** 与 BUFF_CARD_DEFS、服务端 game_data 一致 */
+export const SHORT_CARD_DESCRIPTION = formatBuffBullets(SHORT_CARD_BULLETS);
+
+export const SLACK_CARD_BULLETS: readonly string[] = [
+  "指定一名玩家（可以选自己）",
+  "精力 **-8**，可以低于 0；已锁定的投资会自动解锁",
+  "对方生效期间有【劳逸结合】时改为 **+8 精力**",
+];
+
+export const SLACK_CARD_DESCRIPTION = formatBuffBullets(SLACK_CARD_BULLETS);
+
+export const INSURANCE_CARD_BULLETS: readonly string[] = [
+  "只保风险项目；整局投过就能赔",
+  "该项目爆掉 → **赔 100 财富**",
+  "点石成金可把赔付放大 1.5 倍",
+];
+
+export const INSURANCE_CARD_DESCRIPTION = formatBuffBullets(INSURANCE_CARD_BULLETS);
+
+export const FORCE_BUY_CARD_BULLETS: readonly string[] = [
+  "**仅拍卖阶段**可用，每张一次",
+  "**免费**拿走当前拍品",
+  "默认整局只有一张（补发除外）",
+];
+
+export const FORCE_BUY_CARD_DESCRIPTION = formatBuffBullets(FORCE_BUY_CARD_BULLETS);
+
+export const LOTTERY_CARD_BULLETS: readonly string[] = [
+  "打出后系统掷 1 颗骰子开奖",
+  "1–6 点 → **0 / 30 / 60 / 90 / 120 / 200** 财富",
+  "点石成金可放大奖金",
+];
+
+export const LOTTERY_CARD_DESCRIPTION = formatBuffBullets(LOTTERY_CARD_BULLETS);
+
+/** 与 BUFF_CARD_DEFS、服务端 game_data 一致 */
 export const LIGHTER_CARD_DESCRIPTION = formatBuffBullets(LIGHTER_CARD_BULLETS);
-
-/** 与 BUFF_CARD_DEFS、服务端 game_data 一致 */
-export const GOLD_CARD_DESCRIPTION =
-  "所有由项目结算、彩票、保险产生的**正向收益**（基础收益、排名奖励、时代加成、第四时代未完成长期项目的进度奖、彩票奖金、保险赔付）都按 **1.5 倍结算并向下取整**；**放弃结算的返还与玩家间转账不放大**。**惩罚不放大**。";
-
-/** 与 BUFF_CARD_DEFS、服务端 game_data 一致 */
-export const WORK_REST_CARD_DESCRIPTION =
-  "指定一名在局玩家（含他人）：该玩家在本卡生效轮次内被「摸鱼传染」时**不减精力，反而增加 8 点精力**；发动时**追溯改判本卡生效轮次内已经发生的摸鱼**（多个劳逸结合不叠加）。打火机作废某次摸鱼时，对应的改判也一并撤销；被撤销后劳逸结合不会退回手牌，仍作为本卡生效轮次内的被动保留。摸鱼传染、劳逸结合在每场拍卖各可出现一张。";
-
-/** 与 BUFF_CARD_DEFS、服务端 game_data 一致 */
-export const SHORT_CARD_DESCRIPTION =
-  "投资阶段（提交锁定前）声明，**结算页判定**：指定一个本卡生效轮次内可投入的项目。**全员**在该项目**已积累的精力全部清零**（含长期进度与本卡生效轮次内已投入的精力，**含使用者自己**）；**已经入账的财富不追回**；本卡生效轮次内该项目不再发放回报。";
-
-export const SLACK_CARD_DESCRIPTION =
-  "指定一名在局玩家（含自己），使其精力 **减少 8 点（可以低于 0）**。若对方在本卡生效轮次内已有【劳逸结合】被动（含他人为其指定），改为 **增加 8 点精力**。摸鱼传染、劳逸结合在每场拍卖各可出现一张。";
-
-export const INSURANCE_CARD_DESCRIPTION =
-  "你**整局曾经投入过**的风险项目，若在本卡生效轮次内投资失败（爆掉），则**赔付 100 财富**（历史投入也算，即使本卡生效轮次内没有再投）。点石成金会把保险赔付作为正向收益按 **1.5 倍向下取整**。只保风险项目，短期与长期项目不赔。";
-
-export const FORCE_BUY_CARD_DESCRIPTION =
-  "**仅能在拍卖阶段**使用，**每张只能用一次**；**默认整局仅出现一张**（管理端补发除外）。**免费**获得当前正在拍卖的那张道具卡。";
-
-export const LOTTERY_CARD_DESCRIPTION =
-  "打出后由系统调用线上随机源掷 1 颗六面骰，点数决定奖金：掷出 1 点没有奖金；2 点 30 财富；3 点 60 财富；4 点 90 财富；5 点 120 财富；6 点 200 财富。若在本卡生效轮次内持有点石成金，奖金作为正向收益按 **1.5 倍向下取整**。";
 
 /** L3 情境提示（确认框等），禁止整段复制 L1 desc */
 export const BUFF_UI_SNIPPETS = {

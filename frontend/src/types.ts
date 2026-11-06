@@ -324,6 +324,15 @@ export interface GameState {
   /** 当前阶段下一次自动主持动作时间（时代介绍/结算/拍卖/命名倒计时） */
   autoHostNextActionAt?: number;
 
+  /** 等待房房主（第一个进房的真人）：可设置 AI 人数并直接开局 */
+  roomOwnerId?: string;
+  /** 房主选择的 AI 座位数（0–5）；未设置时按补满 6 席 */
+  aiSeats?: number;
+  /** 房主选择的 AI 难度 */
+  aiDifficulty?: "easy" | "normal" | "hard";
+  /** 房主手动取消了 30 秒自动开局（想等朋友） */
+  autoStartCancelled?: boolean;
+
   /** 严格 Agent 模式：AI 模型故障（仅管理端上帝视图下发） */
   aiFailures?: Record<string, AiAgentFailure>;
   /** 投资倒计时是否因 AI 故障被系统暂停 */

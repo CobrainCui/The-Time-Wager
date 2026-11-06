@@ -293,6 +293,7 @@ export const AuctionView: React.FC<Props> = ({
           >
             {/* 左侧：正在拍 */}
             <div
+              className="auction-focus-card"
               style={{
                 background: "var(--color-bg-card)",
                 border: "1px solid rgba(251,191,36,0.45)",
@@ -304,11 +305,13 @@ export const AuctionView: React.FC<Props> = ({
                 gap: "0.875rem",
               }}
             >
-              <div style={{ fontSize: uiRem(0.75), fontWeight: 800, color: "#fbbf24", letterSpacing: "0.06em" }}>
+              <div className="auction-focus-kicker" style={{ fontSize: uiRem(0.75), fontWeight: 800, color: "#fbbf24", letterSpacing: "0.06em" }}>
                 正在拍
               </div>
-              <BuffCardArt cardId={focusId} buffImages={buffImages} />
-              <div>
+              <div className="auction-focus-art">
+                <BuffCardArt cardId={focusId} buffImages={buffImages} />
+              </div>
+              <div className="auction-focus-copy">
                 <div
                   style={{
                     fontWeight: 800,

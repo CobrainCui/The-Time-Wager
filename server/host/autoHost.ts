@@ -3,7 +3,7 @@ import type { GameState } from "../state/gameState.js";
 import { getCommunityNamer } from "../state/gameState.js";
 import { AI_BOT_ENABLED } from "../config/features.js";
 import { AUTO_HOST_CONFIG } from "./autoHostConfig.js";
-import { ensureAiSeatsFilled, startGameNow } from "../state/gameStart.js";
+import { ensureAiSeatsFilled, startGameNow, resolveSeatTarget, MIN_PLAYERS_TO_START, MAX_SEATS } from "../state/gameStart.js";
 import { isInvestmentComplete, togglePlayerReady } from "../state/gameActions.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
 import { recordPhaseChange, appendSessionEvent } from "../state/sessionTelemetry.js";
@@ -57,15 +57,16 @@ function autoState(game: GameState, now: number): AutoRoomState {
   return prev;
 }
 
-/** 等待房是否具备自动开局条件（1–6 名真人；AI 开启时固定补满 6 席） */
+/** 等待房是否具备自动开局条件（1–6 名真人；AI 开启时按房主选的人数补位） */
 function canAutoStart(game: GameState): boolean {
   const humans = game.players.filter((p) => p.connected && !isAiPlayer(p)).length;
   const humansNeeded = Math.max(1, AUTO_HOST_CONFIG.minPlayersToStart);
   if (humans < humansNeeded) return false;
-  const connected = game.players.filter((p) => p.connected).length;
-  // AI 开启时开局会补满 6 席；AI 关闭时必须已有 6 名真人
-  const projected = AI_BOT_ENABLED ? 6 : connected;
-  return projected >= 6;
+  if (!AI_BOT_ENABLED) {
+    // AI 关闭时必须已有 6 名真人
+    return game.players.filter((p) => p.connected).length >= MAX_SEATS;
+  }
+  return resolveSeatTarget(game) >= MIN_PLAYERS_TO_START;
 }
 
 /**
@@ -74,6 +75,11 @@ function canAutoStart(game: GameState): boolean {
  */
 export function armAutoHostStart(game: GameState, now = Date.now()): boolean {
   if (!game.autoHostEnabled || game.phase !== "ROOM_WAITING") return false;
+  if (game.autoStartCancelled) {
+    if (game.autoStartAt == null) return false;
+    game.autoStartAt = undefined;
+    return true;
+  }
   if (!canAutoStart(game)) {
     if (game.autoStartAt == null) return false;
     game.autoStartAt = undefined;
