@@ -1,0 +1,201 @@
+import type { AiLlmResult } from "../ai/llmClient.js";
+
+interface ParsedPromptPlayer {
+  id: string;
+  name: string;
+  wealth: number;
+  isMe: boolean;
+}
+
+interface ParsedPromptProject {
+  id: number;
+  name: string;
+}
+
+function sectionBetween(text: string, header: string): string {
+  const idx = text.indexOf(header);
+  if (idx < 0) return "";
+  const rest = text.slice(idx + header.length);
+  const nextIdx = rest.search(/\n##\s/);
+  return nextIdx >= 0 ? rest.slice(0, nextIdx) : rest;
+}
+
+function parsePlayers(text: string): ParsedPromptPlayer[] {
+  const sec = sectionBetween(text, "## 同桌玩家");
+  const list: ParsedPromptPlayer[] = [];
+  for (const line of sec.split(/\r?\n/)) {
+    const m = /^-\s*([^|]+?)\s*\|\s*ID=([^\s|]+)\s*\|\s*财富\s*(-?\d+)/.exec(line.trim());
+    if (!m) continue;
+    const rawName = m[1].trim();
+    const isMe = rawName.endsWith("（你）");
+    list.push({
+      name: rawName.replace(/（你）$/, "").trim(),
+      id: m[2].trim(),
+      wealth: Number(m[3]) || 0,
+      isMe,
+    });
+  }
+  return list;
+}
+
+function parseProjects(text: string): ParsedPromptProject[] {
+  const sec = sectionBetween(text, "## 当前项目");
+  const list: ParsedPromptProject[] = [];
+  for (const line of sec.split(/\r?\n/)) {
+    const m = /^-\s*ID\s*(\d+)\s*\|\s*([^|]+?)\s*\|/.exec(line.trim());
+    if (!m) continue;
+    list.push({ id: Number(m[1]), name: m[2].trim() });
+  }
+  return list;
+}
+
+function parseGroupIds(text: string): string[] {
+  const sec = sectionBetween(text, "## 你所在的自定义群聊");
+  const ids: string[] = [];
+  for (const line of sec.split(/\r?\n/)) {
+    const m = /^-\s*群ID=([^\s|]+)/.exec(line.trim());
+    if (m) ids.push(m[1].trim());
+  }
+  return ids;
+}
+
+function parseIntField(text: string, regex: RegExp, fallback = 0): number {
+  const m = regex.exec(text);
+  return m ? Number(m[1]) || fallback : fallback;
+}
+
+function agentIndexFrom(system: string): number {
+  const m = /第\s*(\d+)\s*号座位/.exec(system || "");
+  return m ? Number(m[1]) : 1;
+}
+
+function prediction(user: string, agentIndex: number) {
+  const round = parseIntField(user, /第\s*(\d+)\s*全局轮/, 1);
+  const players = parsePlayers(user);
+  players.sort((a, b) => b.wealth - a.wealth || a.id.localeCompare(b.id));
+  if (agentIndex % 2 === 0 && players.length >= 3) {
+    [players[1], players[2]] = [players[2], players[1]];
+  }
+  return {
+    reasoning: `按当前财富与第 ${round} 轮表现排序。`,
+    ranking: players.map((p) => p.id),
+  };
+}
+
+function investment(user: string, agentIndex: number) {
+  const round = parseIntField(user, /第\s*(\d+)\s*全局轮/, 1);
+  const energy = Math.max(0, Math.floor(parseIntField(user, /精力[：:]\s*(\d+)/, 0)));
+  const projects = parseProjects(user);
+  const players = parsePlayers(user);
+  const others = players.filter((p) => !p.isMe);
+  const groupIds = parseGroupIds(user);
+
+  const investmentMap: Record<string, number> = {};
+  if (projects.length > 0 && energy > 0) {
+    const ordered = projects
+      .slice()
+      .sort((a, b) => a.id - b.id)
+      .sort((a, b) => ((a.id + agentIndex) % projects.length) - ((b.id + agentIndex) % projects.length));
+    const first = ordered[0];
+    const second = ordered[1] ?? ordered[0];
+    const firstAmount = Math.max(1, Math.floor(energy * 0.6));
+    investmentMap[String(first.id)] = firstAmount;
+    const rest = energy - firstAmount;
+    if (rest > 0 && second) {
+      investmentMap[String(second.id)] = (investmentMap[String(second.id)] ?? 0) + rest;
+    }
+  }
+
+  const messages: Array<Record<string, unknown>> = [];
+  if (projects[0]) {
+    messages.push({
+      channel: "public",
+      text: `第 ${round} 轮我重点关注 ${projects[0].name}，欢迎一起分散布局。`,
+    });
+  }
+  if (round % 2 === 0 && others.length > 0) {
+    const target = others[(agentIndex - 1) % others.length];
+    messages.push({
+      channel: "private",
+      toPlayerId: target.id,
+      text: `这轮我打算投 ${projects[0]?.name ?? "长期项目"}，你如果错峰搭配会更稳妥。`,
+    });
+  }
+
+  const transfer =
+    round === 3 && agentIndex <= 2 && others.length > 0
+      ? { toPlayerId: others[agentIndex % others.length].id, amount: 5, note: "合作诚意" }
+      : null;
+
+  const createGroup =
+    round === 1 && agentIndex === 1 && others.length >= 2 && groupIds.length === 0
+      ? { name: "合作小组", memberIds: others.slice(0, 2).map((p) => p.id) }
+      : null;
+  const groupMessages =
+    groupIds.length > 0
+      ? [
+          {
+            groupId: groupIds[0],
+            text: `群内同步：第 ${round} 轮我准备投 ${projects[0]?.name ?? "当前项目"}。`,
+          },
+        ]
+      : [];
+
+  return {
+    reasoning: `根据第 ${round} 轮项目容量与精力做分配。`,
+    messages,
+    groupMessages,
+    createGroup,
+    transfer,
+    coffee: 0,
+    useCard: null,
+    investment: investmentMap,
+    ready: true,
+  };
+}
+
+function auction(userText: string, agentIndex: number) {
+  const maxBidMatch = /即\s*(\d+)/.exec(userText);
+  const maxBid = maxBidMatch ? Number(maxBidMatch[1]) : 0;
+  const minMatch = /最低下一口[：:]\s*(\d+)/.exec(userText);
+  const minNext = minMatch ? Number(minMatch[1]) : 5;
+  if (agentIndex % 3 !== 0 && minNext <= maxBid) {
+    return { reasoning: `出到 ${minNext}，仍在上限内。`, action: "bid", amount: minNext };
+  }
+  return { reasoning: "价格或卡牌价值不匹配，放弃。", action: "pass" };
+}
+
+/**
+ * 进程内 Mock LLM 响应器：仅用于免费自检链路，不调用外部接口，也不代表真实模型行为。
+ */
+export function askMockLabLlm(system: string, user: string): AiLlmResult {
+  const agentIndex = agentIndexFrom(system);
+
+  let payload: unknown;
+  if (user.includes("任务：预测本局结束时")) {
+    payload = prediction(user, agentIndex);
+  } else if (user.includes("阶段：拍卖会")) {
+    payload = auction(user, agentIndex);
+  } else if (user.includes("向你发起转账")) {
+    payload = { reasoning: "接受这笔转账，保留合作可能。", decision: "accept" };
+  } else if (user.includes("需要为这个社区命名")) {
+    payload = { reasoning: "取一个中性的实验社区名。", name: `实验社区${agentIndex}` };
+  } else {
+    payload = investment(user, agentIndex);
+  }
+
+  const raw = JSON.stringify(payload);
+  const promptTokens = Math.ceil((system.length + user.length) / 4);
+  const completionTokens = Math.ceil(raw.length / 4);
+  return {
+    ok: true,
+    data: payload,
+    raw,
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens,
+    },
+    latencyMs: 5,
+  };
+}

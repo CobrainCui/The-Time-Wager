@@ -28,25 +28,25 @@ export interface HelpLineDef {
 export const HELP_TAB_CHAT_TITLE = "私信、转账与群聊";
 
 export const HELP_CHAT_DOCK_INTRO =
-  "等待房、时代介绍与规则教程阶段不显示聊天坞。对局开始后，屏幕右侧为聊天坞：最前为「全场」频道与已加入的自建群，其后每位玩家各有一个一对一折叠会话。";
+  "对局开始后，右侧聊天坞按「全场 → 自建群 → 每位玩家私信」排列；等待房、时代介绍与教程阶段不显示。";
 
 export const HELP_DM_LINE = "私信：不填金额留言";
 
 export const HELP_TRANSFER_LINE =
-  "转账：填金额发送，对方收/退；金额不得超过可用财富（总额减去领先出价占用与未完成转出）";
+  "转账：填金额发送，对方可收可退；不能超过可用财富";
 
 export const HELP_GROUP_LINE =
-  "群聊：进房后自动加入「全场」频道，所有真人可见；可自建小群（至少 3 名真人），群内只可文字、不可转账，仅限群成员可见。";
+  "群聊：进房自动加入「全场」；可自建至少 3 名真人的小群；群内只能发文字，仅成员可见。";
 
 export const HELP_CHAT_PEER_ONLY_NOTE =
-  "私信与转账只发给单个玩家；群聊文字仅该群成员可见。";
+  "私信/转账只发单个玩家；群聊仅群成员可见。";
 
 export const HELP_CHAT_AUCTION_LINE =
-  "拍卖期间仍可私信、转账与群聊；暂时领先的出价会占用可用财富";
+  "拍卖期间仍可私信、转账、群聊；领先出价占用可用财富";
 
 /** 准备清单等场景的群聊一句摘要 */
 export const HELP_GROUP_LINE_SHORT =
-  "进房自动加入「全场」；可自建至少 3 名真人的小群，群内仅文字、不可转账";
+  "进房自动加入「全场」；可自建 3 人以上小群，仅文字";
 
 /** 分栏顺序（与产品一致） */
 export const HELP_TABS: HelpTabDef[] = [
@@ -58,7 +58,7 @@ export const HELP_TABS: HelpTabDef[] = [
   { id: "misc", icon: "🤝", title: HELP_TAB_CHAT_TITLE },
 ];
 
-export type PlayerSidebarPanelId = "projects" | "buffs" | "guide" | "history";
+export type PlayerSidebarPanelId = "projects" | "buffs" | "feed" | "guide" | "history";
 
 export interface SidebarActivityItem {
   id: PlayerSidebarPanelId;
@@ -71,6 +71,7 @@ export interface SidebarActivityItem {
 export const SIDEBAR_ACTIVITY_ITEMS: SidebarActivityItem[] = [
   { id: "projects", icon: "📊", label: "项目", title: "项目总览" },
   { id: "buffs", icon: "🃏", label: "道具", title: "道具卡" },
+  { id: "feed", icon: "📰", label: "动态", title: "公开动态" },
   { id: "guide", icon: "📖", label: "指南", title: "玩法指南" },
   { id: "history", icon: "📜", label: "战报", title: "个人战报" },
 ];
@@ -120,24 +121,27 @@ export const GUIDE_MERGED_TAB_IDS: HelpTabId[] = [
 ];
 
 /** 道具卡：单次使用与发动时机（与 BuffUsage / server 阶段一致） */
-export const HELP_BUFF_ONCE_RULE = "每张道具卡只能使用一次";
+export const HELP_BUFF_ONCE_RULE = "每张卡只能用一次";
 
 /** 与 server actionDeadline.BUFF_LOCKOUT_REMAINING_MS 一致 */
 export const BUFF_LOCKOUT_REMAINING_MS = 2 * 60 * 1000;
 
 export const HELP_INVESTMENT_SELF_UNLOCK =
-  "锁定后可自行解锁并修改，直到倒计时结束；倒计时结束后不可再解锁";
+  "倒计时结束前可解锁修改；结束后不可解锁";
 export const HELP_INVESTMENT_ADVANCE_WHEN_ALL_LOCKED =
-  "当前在线玩家全部锁定后进入下一阶段（离线玩家不挡进度）";
+  "自动主持模式下全员锁定后将在约 4 秒后自动进入结算（期间可解锁中断）；倒计时结束后按当前锁定/草稿结算";
 export const HELP_BUFF_LOCKOUT =
-  "倒计时最后 2 分钟不能使用道具卡（投资仍可改、可锁定）";
+  "最后 2 分钟不能使用道具卡（投资仍可修改）";
 
 export const HELP_BUFF_TIMING_SHORT =
-  "获得道具卡后，在投资阶段、提交锁定前可发动";
+  "投资阶段、锁定前可发动";
+
+export const HELP_BUFF_PAGE_HINT =
+  "投资阶段、锁定前可用；最后 2 分钟停用。打火机与项目做空在结算页判定。";
 
 export const HELP_BUFF_SETTLEMENT_BULLETS = [
-  "项目做空：投资阶段（提交锁定前）声明，**结算页判定**（进入结算时与其他道具一并执行）",
-  "做空：**全员**在该项目**已积累精力全部清零**（含长期进度与本卡生效轮次内已投入的精力，**含使用者自己**）；**已入账财富不追回**",
+  "打火机、项目做空：投资阶段声明，**结算页判定**",
+  "项目做空：**全场累计精力清零**（含自己）；已入账财富不追回",
   "打火机：",
   ...LIGHTER_CARD_BULLETS,
 ];
@@ -166,47 +170,43 @@ export const GUIDE_AUCTION_TAIL_BULLETS = [
   HELP_CHAT_AUCTION_LINE,
 ];
 
-/** 侧栏道具卡要点（完整规则见 BUFF_CARD_DEFS.desc） */
+/** 侧栏道具卡要点（2–3 条；完整规则见 BUFF_CARD_DEFS.desc） */
 export const BUFF_SIDEBAR_BRIEF: Record<string, string[]> = {
   buff_slack: [
-    "指定一名玩家（含自己）",
-    "对方精力 **减少 8 点（可低于 0）**",
-    "有劳逸结合被动则改为 **增加 8 点精力**",
-    "摸鱼使精力为负时，已锁定的投资会自动解锁",
+    "指定一名玩家（含自己），立刻生效",
+    "精力 **-8**（可低于 0）；精力不足时自动解锁投资",
+    "有劳逸结合时改为 **+8 精力**",
   ],
   buff_insurance: [
-    "整局曾投入过的风险项目投资失败（爆掉）",
-    "**赔付 100 财富**；只保风险项目，短期/长期不赔",
-    "点石成金对赔付按 **1.5 倍向下取整**",
+    "只保风险项目；整局只要投过该项目就算",
+    "爆掉 **赔 100 财富**",
+    "点石成金在手时，赔付变为 **150 财富**",
   ],
   buff_gold: [
-    "**正向收益按 1.5 倍向下取整**",
-    "含基础、排名、时代、第四时代未完成长期进度奖、彩票、保险赔付",
-    "**放弃结算的返还、玩家间转账不放大**",
-    "**惩罚不放大**",
+    "**正收益 ×1.5**（向下取整）",
+    "含基础、排名、时代、进度奖、彩票、保险",
+    "**惩罚、转账、放弃返还都不放大**",
   ],
   buff_force_buy: [
-    "**仅拍卖阶段**",
-    "**默认整局仅一张**（管理端补发除外）",
-    "**免费**拿下当前正在拍的卡",
-    "**每张只能用一次**",
+    "**仅拍卖阶段**可用，每张一次",
+    "**免费**拿走当前拍品，不花财富",
+    "整局默认只有一张（补发除外）",
   ],
   buff_short: [
-    "投资阶段（提交锁定前）声明，**结算页判定**",
-    "**全员**在该项目**已积累的精力全部清零**（含长期进度与本卡生效轮次内已投入的精力，**含使用者自己**）",
-    "**已经入账的财富不追回**",
+    "锁定前指定一个项目",
+    "结算时，该项目**全场累计精力清零**（含自己）",
+    "**已经发到手的财富不追回**",
   ],
   buff_work_rest: [
-    "指定一名在局玩家",
-    "本卡生效轮次内被摸鱼时**不减精力，反而增加 8 点**",
-    "发动时**追溯改判本卡生效轮次内已经发生的摸鱼**",
-    "打火机作废摸鱼时，对应改判同步撤销；劳逸结合不会退回手牌",
+    "指定一名玩家（可含自己）",
+    "他再被摸鱼时，改为 **+8 精力**",
+    "**追溯**本卡生效后已发生的摸鱼；同一人多张不叠加",
   ],
   buff_lighter: [...LIGHTER_CARD_BULLETS],
   buff_lottery: [
-    "系统线上随机掷 1–6 点定奖金",
-    "掷出 1 点没有奖金；2 点 30 财富；3 点 60 财富；4 点 90 财富；5 点 120 财富；6 点 200 财富",
-    "点石成金对奖金按 **1.5 倍向下取整**",
+    "打出后掷 1–6 点定奖金",
+    "1 点 0；2 点 30；3 点 60；4 点 90；5 点 120；6 点 200",
+    "点石成金放大奖金（向下取整）",
   ],
 };
 
@@ -219,7 +219,7 @@ export const GUIDE_RESOURCE_ROWS: GuideResourceRow[] = [
   { label: "财富", brief: `开局每人 ${STARTING_WEALTH}；终局最高者命名社区` },
   {
     label: "咖啡",
-    brief: `投资阶段 ${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力；本轮未提交可退订`,
+    brief: `投资阶段 ${COFFEE_WEALTH_COST} 财富换 ${COFFEE_ENERGY_GAIN} 精力；未提交可退订`,
   },
   { label: "赛制", brief: "4 个时代，每个时代 2 轮；终局按财富决胜" },
 ];
@@ -245,26 +245,26 @@ export interface GuideChatRow {
 }
 
 export const TUTORIAL_TRANSFER_WEALTH_LIMIT_LINE =
-  "金额不得超过可用财富：总额减去领先出价占用，以及对方尚未处理的转出。";
+  "金额不能超过可用财富（总额 − 领先出价 − 未处理转出）。";
 
 export const GUIDE_CHAT_ROWS: GuideChatRow[] = [
-  { feature: "全场", how: "进房自动加入", note: "所有真人可见；禁聊阶段自动屏蔽" },
-  { feature: "自建群", how: "至少 3 名真人", note: "仅群成员可见；群内只可文字、不可转账" },
-  { feature: "转账", how: "右侧对话框填金额发送", note: "仅对方可见，可接收或退回" },
-  { feature: "私信", how: "不填金额（或 0）并留言", note: "不扣财富，仅对方可见" },
+  { feature: "全场", how: "进房自动加入", note: "所有真人可见；禁聊阶段屏蔽" },
+  { feature: "自建群", how: "至少 3 名真人", note: "仅成员可见；只能发文字" },
+  { feature: "转账", how: "右侧对话框填金额", note: "仅对方可见，可收可退" },
+  { feature: "私信", how: "不填金额（或 0）留言", note: "不扣财富，仅对方可见" },
   {
     feature: "财富上限",
     how: "—",
-    note: "可用财富 = 总额 − 领先出价占用 − 对方未处理的转出",
+    note: "可用财富 = 总额 − 领先出价 − 未处理转出",
   },
-  { feature: "拍卖中", how: "仍可转账、私信与群聊", note: "暂时领先的出价占用可用财富" },
+  { feature: "拍卖中", how: "仍可转账、私信、群聊", note: "领先出价占用可用财富" },
 ];
 
 export const TUTORIAL_TRANSFER_BULLETS = [
-  "🤝 转账：右侧每人一个对话框。填金额发送，仅对方可见，可接收或退回。",
-  "💬 私信：不填金额（或填 0）并留言，即为仅对方可见的私信（不扣财富）。",
-  "👥 群聊：进房自动加入「全场」；也可自建至少 3 名真人的小群，群内只可文字、不可转账。",
-  "可用于结盟、议价、传递情报等；私信与转账只发给单个玩家。",
+  "🤝 转账：填金额发送，仅对方可见，可收可退。",
+  "💬 私信：不填金额（或 0）留言，不扣财富。",
+  "👥 群聊：进房自动加入「全场」；也可自建至少 3 名真人的小群。",
+  "可用于结盟、议价、传递情报；私信与转账只发给单个玩家。",
   TUTORIAL_TRANSFER_WEALTH_LIMIT_LINE,
 ];
 
@@ -290,9 +290,7 @@ export const GUIDE_FLOW_PHASES: GuideFlowPhase[] = [
     bullets: [
       "全员进入后开始倒计时（见下表）",
       "时限内分配精力并提交锁定",
-      "锁定后可自行解锁并修改",
-      "倒计时结束后不可再解锁",
-      HELP_BUFF_ONCE_RULE,
+      "倒计时结束前可解锁修改",
       HELP_BUFF_TIMING_SHORT,
       HELP_BUFF_LOCKOUT,
       "打火机与做空：投资阶段声明，结算页执行",
@@ -315,9 +313,9 @@ export const GUIDE_FLOW_PHASES: GuideFlowPhase[] = [
     bullets: [
       "时代交替时进行",
       "同时只拍一张；主持先选定卡",
-      "公开加价；主持确认成交后最高者付钱拿卡",
+      "起拍 5，每次至少加 5；出价只是暂时冻结",
+      "成交后最高者付钱拿卡；没拍到不扣钱",
       "拍得卡存入手牌",
-      HELP_BUFF_ONCE_RULE,
       HELP_BUFF_TIMING_SHORT,
       HELP_BUFF_LOCKOUT,
       ...GUIDE_AUCTION_TAIL_BULLETS,
@@ -328,8 +326,9 @@ export const GUIDE_FLOW_PHASES: GuideFlowPhase[] = [
 
 export const TUTORIAL_AUCTION_BULLETS = [
   "时代交替时进入拍卖会。",
-  "同时只拍一张。主持先选定；左侧是这张卡，右侧是起拍价、最高价和每一次加价。",
-  "出价先占住。主持确认成交后，最高者付钱拿卡，然后换下一张。",
+  "同时只拍一张：左侧是卡，右侧是起拍价、最高价与每次加价。",
+  "起拍 5，每次至少加 5；出价只是暂时冻结，没拍到不扣钱。",
+  "成交后最高者付钱拿卡，然后换下一张。",
   HELP_BUFF_ONCE_RULE,
   HELP_BUFF_TIMING_SHORT,
   HELP_BUFF_LOCKOUT,

@@ -54,6 +54,10 @@ export interface AiLlmOptions {
   config?: AiModelConfig | null;
   /** 用于日志；不要包含敏感信息 */
   label?: string;
+  /** 关闭推理链（DeepSeek v4 thinking 开关）；默认取 AI_CONFIG.disableThinking */
+  disableThinking?: boolean;
+  /** 推理强度提示（开启思考且 DeepSeek 时透传 reasoning_effort: low / medium） */
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
 }
 
 function stripJsonFence(text: string): string {
@@ -127,8 +131,8 @@ function sleep(ms: number): Promise<void> {
 
 function isRetryable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  // 推理模型偶发「只返回思维链、content 为空」；这不是永久错误，必须重试。
-  return /timeout|timed out|429|500|502|503|504|ECONNRESET|ETIMEDOUT|fetch failed|network|empty response/i.test(
+  // 推理模型偶发「只返回思维链、content 为空」或长思考期间 TCP 被对端断开（terminated）；必须重试。
+  return /timeout|timed out|terminated|hang up|socket|aborted|ECONNABORTED|EPIPE|429|500|502|503|504|ECONNRESET|ETIMEDOUT|fetch failed|network|empty response/i.test(
     message
   );
 }
@@ -143,30 +147,81 @@ async function requestOnce(
   cfg: AiModelConfig,
   system: string,
   user: string,
-  options: Required<Pick<AiLlmOptions, "timeoutMs" | "maxOutputTokens">> & { useJsonMode: boolean }
+  options: Required<Pick<AiLlmOptions, "timeoutMs" | "maxOutputTokens">> & {
+    useJsonMode: boolean;
+    disableThinking: boolean;
+    reasoningEffort?: AiLlmOptions["reasoningEffort"];
+  }
 ): Promise<{ raw: string; usage?: AiLlmUsage }> {
   const startedAt = Date.now();
-  const request = getClient(cfg).chat.completions.create(
-    {
-      model: cfg.model,
-      temperature: AI_CONFIG.temperature,
-      max_tokens: options.maxOutputTokens,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      ...(options.useJsonMode ? { response_format: { type: "json_object" as const } } : {}),
-    },
-    { timeout: options.timeoutMs }
-  );
+  const isDeepSeek = /deepseek/i.test(`${cfg.provider} ${cfg.model}`);
+  // thinking 是 DeepSeek v4 系列的扩展字段，OpenAI SDK 类型里没有；用断言透传。
+  // 只在 DeepSeek 供应商上发送，避免 OpenAI 等接口因未知字段直接 400。
+  const useNoThinking = options.disableThinking && isDeepSeek;
+  // DeepSeek 开启思考链时使用流式接收，防止长推理期间静默连接被网关/undici 断开（terminated）。
+  const useStreaming = isDeepSeek && !options.disableThinking;
 
+  const baseBody = {
+    model: cfg.model,
+    temperature: AI_CONFIG.temperature,
+    max_tokens: options.maxOutputTokens,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    ...(options.useJsonMode ? { response_format: { type: "json_object" as const } } : {}),
+    ...(useNoThinking ? { thinking: { type: "disabled" as const } } : {}),
+    ...(!options.disableThinking && isDeepSeek && options.reasoningEffort
+      ? { reasoning_effort: options.reasoningEffort }
+      : {}),
+  };
+
+  const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`timeout ${options.timeoutMs}ms`)),
-      options.timeoutMs + 500
-    );
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`timeout ${options.timeoutMs}ms`));
+    }, options.timeoutMs + 500);
   });
+
+  if (useStreaming) {
+    const consumeStream = async (): Promise<{ raw: string; usage?: AiLlmUsage }> => {
+      const stream = (await getClient(cfg).chat.completions.create(
+        {
+          ...baseBody,
+          stream: true,
+          stream_options: { include_usage: true },
+        } as OpenAI.Chat.ChatCompletionCreateParamsStreaming,
+        { timeout: options.timeoutMs, signal: controller.signal }
+      )) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
+      let raw = "";
+      let usage: AiLlmUsage | undefined;
+      for await (const chunk of stream) {
+        const piece = chunk.choices?.[0]?.delta?.content ?? "";
+        if (piece) raw += piece;
+        if (chunk.usage) {
+          usage = {
+            promptTokens: chunk.usage.prompt_tokens ?? 0,
+            completionTokens: chunk.usage.completion_tokens ?? 0,
+            totalTokens: chunk.usage.total_tokens ?? 0,
+          };
+        }
+      }
+      if (!raw.trim()) throw new Error("empty response");
+      return { raw, usage };
+    };
+    try {
+      return await Promise.race([consumeStream(), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  const request = getClient(cfg).chat.completions.create(
+    baseBody as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+    { timeout: options.timeoutMs, signal: controller.signal }
+  );
 
   let response: OpenAI.Chat.ChatCompletion;
   try {
@@ -209,9 +264,17 @@ export async function askAiJson(
     };
   }
 
-  const timeoutMs = options.timeoutMs ?? AI_CONFIG.decisionTimeoutMs;
+  const requestedTimeoutMs = options.timeoutMs ?? AI_CONFIG.decisionTimeoutMs;
   const maxRetries = options.maxRetries ?? AI_CONFIG.maxRetries;
-  const maxOutputTokens = options.maxOutputTokens ?? AI_CONFIG.maxOutputTokens;
+  const disableThinking = options.disableThinking ?? AI_CONFIG.disableThinking;
+  const requestedMaxTokens = options.maxOutputTokens ?? AI_CONFIG.maxOutputTokens;
+  const isDeepSeek = /deepseek/i.test(`${cfg.provider} ${cfg.model}`);
+  // 防止线上 .env 遗留极小 AI_DECISION_TIMEOUT_MS / AI_MAX_OUTPUT_TOKENS 导致 DeepSeek 推理中途超时或截断
+  const timeoutMs =
+    !disableThinking && isDeepSeek ? Math.max(requestedTimeoutMs, 65_000) : requestedTimeoutMs;
+  const maxOutputTokens =
+    !disableThinking && isDeepSeek ? Math.max(requestedMaxTokens, 16_000) : requestedMaxTokens;
+  const reasoningEffort = options.reasoningEffort;
   const label = options.label ?? "decision";
   const errors: string[] = [];
 
@@ -222,6 +285,8 @@ export async function askAiJson(
         timeoutMs,
         maxOutputTokens,
         useJsonMode,
+        disableThinking,
+        reasoningEffort,
       });
       const data = parseJson(raw);
       if (data == null) {

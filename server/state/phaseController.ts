@@ -9,6 +9,7 @@ import { settlePhase } from "../logic/projectSettlement.js";
 import { settleAllPendingLotteryOffers } from "../logic/lotteryDraw.js";
 import { clearAdminProjectAdjustState } from "../logic/adminProjectAdjust.js";
 import { ensureProjectsDrawnForEra, stripExpiredRiskProjects, updateEraCard } from "../state/gameEra.js";
+import { hasConnectedHuman } from "../util/roomHumans.js";
 import { AI_BOT_ENABLED } from "../config/features.js";
 import { beginAuctionSession } from "../logic/auctionCards.js";
 import { ensureSessionStarted, recordPhaseChange } from "./sessionTelemetry.js";
@@ -19,6 +20,7 @@ import {
 } from "./actionDeadline.js";
 import { applyRoundEnergy } from "../logic/energySchedule.js";
 import { syncActiveLongTermRecords } from "../logic/longTermLogic.js";
+import { appendPublicFeed } from "../util/publicFeed.js";
 
 export function tryAdvancePhase(game: GameState) {
   const initialPhase = game.phase;
@@ -59,6 +61,12 @@ export function tryAdvancePhase(game: GameState) {
   // 3. INVESTMENT -> SETTLEMENT
   else if (game.phase === "INVESTMENT") {
     if (isInvestmentComplete(game)) {
+      // 有在线真人时，「全员锁定」不再立即进入结算：
+      // 本轮继续到倒计时结束（或主持人手动推进），期间玩家仍可解锁修改。
+      // 倒计时结束时 handleActionTimeExpired 会先 clearActionDeadline 再调用本函数。
+      if (hasConnectedHuman(game) && game.investmentEndsAt != null) {
+        return;
+      }
       // 彩票结果是服务端权威随机值：结算前统一领取，避免玩家来不及确认而丢奖
       const lotterySettled = settleAllPendingLotteryOffers(game);
       if (lotterySettled > 0) {
@@ -100,6 +108,13 @@ export function tryAdvancePhase(game: GameState) {
     game.autoHostNextActionAt = undefined;
     if (game.phase === "INVESTMENT") {
       ensureSessionStarted(game);
+      appendPublicFeed(
+        game,
+        "era",
+        `🚀 第 ${game.currentEra} 时代第 ${game.roundInEra} 轮（全局第 ${game.globalRound} 轮）投资开始，时代卡：${game.currentEraCard?.name ?? "未知"}（${game.currentEraCard?.era ?? "?"}）`
+      );
+    } else if (game.phase === "AUCTION") {
+      appendPublicFeed(game, "auction", `🔨 第 ${game.currentEra - 1} 场拍卖会开启`);
     }
     recordPhaseChange(game, initialPhase, game.phase, "tryAdvancePhase");
   }

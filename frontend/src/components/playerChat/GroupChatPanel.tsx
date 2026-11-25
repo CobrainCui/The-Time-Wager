@@ -1,4 +1,5 @@
 import React, { memo, useEffect, useRef, useState } from "react";
+import type { AiChatStatusEntry } from "../../types";
 import type { ChatMessage, ChatThread } from "./types";
 import { GroupTextComposer } from "./GroupTextComposer";
 import type { ComposerDraft } from "./chatComposerDraft";
@@ -12,6 +13,7 @@ type Props = {
   onSend: (threadId: string, text: string) => boolean;
   onComposerFocus: (threadId: string) => void;
   onComposerBlur: (threadId: string) => void;
+  aiChatStatuses?: Record<string, AiChatStatusEntry>;
   readOnly?: boolean;
 };
 
@@ -24,6 +26,7 @@ export const GroupChatPanel = memo<Props>(function GroupChatPanel({
   onSend,
   onComposerFocus,
   onComposerBlur,
+  aiChatStatuses,
   readOnly = false,
 }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -38,6 +41,14 @@ export const GroupChatPanel = memo<Props>(function GroupChatPanel({
     }
     prevCountRef.current = displayMessages.length;
   }, [displayMessages, stickToBottom]);
+
+  const statusEntries = Object.values(aiChatStatuses ?? {});
+  const thinkingNames = statusEntries
+    .filter((s) => s.state === "thinking")
+    .map((s) => s.playerName);
+  const silentNames = statusEntries
+    .filter((s) => s.state === "silent")
+    .map((s) => s.playerName);
 
   return (
     <div className="player-chat-panel player-chat-panel--group">
@@ -88,6 +99,24 @@ export const GroupChatPanel = memo<Props>(function GroupChatPanel({
           </div>
         ))}
       </div>
+      {(thinkingNames.length > 0 || silentNames.length > 0) && (
+        <div
+          className="player-chat-ai-status"
+          style={{
+            padding: "0.28rem 0.65rem",
+            fontSize: "0.74rem",
+            color: thinkingNames.length > 0 ? "var(--gold, #eab308)" : "var(--text-muted, #94a3b8)",
+            borderTop: "1px solid rgba(255,255,255,0.06)",
+            background: "rgba(15, 23, 42, 0.35)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.15rem",
+          }}
+        >
+          {thinkingNames.length > 0 && <span>⏳ {thinkingNames.join("、")} 正在思考…</span>}
+          {silentNames.length > 0 && <span>👀 {silentNames.join("、")} 已读，暂保持沉默</span>}
+        </div>
+      )}
       {!readOnly && (
         <GroupTextComposer
           threadId={thread.playerId}

@@ -8,10 +8,11 @@
 import type { Server } from "socket.io";
 import type { GameState, Player } from "../state/gameState.js";
 import { askAiJson } from "./llmClient.js";
-import { resolveAiModelConfigForSlot } from "./aiConfig.js";
+import { resolveAiModelConfig, resolveAiModelConfigForSlot } from "./aiConfig.js";
 import { appendSessionEvent } from "../state/sessionTelemetry.js";
 import { broadcastUpdate } from "../network/broadcast.js";
 import { GROUP_CHAT_ENABLED } from "../config/playerChatFeatures.js";
+import { guardAgentOutput } from "./aiSafety.js";
 
 export type SocialRank = "A" | "B" | "C" | "D" | "E";
 
@@ -50,6 +51,17 @@ function collectSamples(game: GameState, player: Player): ChatSample[] {
     if (samples.length >= MAX_SAMPLES) break;
   }
 
+  for (const dm of game.labDirectMessages ?? []) {
+    if (dm.fromId !== player.id) continue;
+    const text = String(dm.text ?? "").replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    samples.push({
+      channel: "私信",
+      text: `私聊 ${dm.toName}：${text}`,
+    });
+    if (samples.length >= MAX_SAMPLES) break;
+  }
+
   return samples.slice(0, MAX_SAMPLES).map((s) => ({
     ...s,
     text: s.text.slice(0, MAX_SAMPLE_CHARS),
@@ -61,10 +73,10 @@ function parseRank(raw: unknown): { rank: SocialRank; reason: string } | null {
   const data = raw as { rank?: unknown; reason?: unknown };
   const rank = typeof data.rank === "string" ? data.rank.trim().toUpperCase() : "";
   if (!/^[A-E]$/.test(rank)) return null;
-  const reason =
-    typeof data.reason === "string"
-      ? data.reason.replace(/\s+/g, " ").trim().slice(0, 60)
-      : "";
+  const rawReason =
+    typeof data.reason === "string" ? data.reason.replace(/\s+/g, " ").trim().slice(0, 60) : "";
+  // 评定理由会进入对局日志/管理端，属于玩家可见的 AI 文本，必须过同一道输出闸门。
+  const reason = rawReason ? guardAgentOutput(rawReason, "note").text.trim() : "";
   return { rank: rank as SocialRank, reason };
 }
 
@@ -108,7 +120,29 @@ async function scoreOne(game: GameState, player: Player): Promise<void> {
     return;
   }
 
-  const config = resolveAiModelConfigForSlot(player.aiSlot);
+  if (game.isLabExperiment && game.labMeta?.mock) {
+    player.socialRank = "B";
+    player.socialRankSource = "auto";
+    player.socialRankReason = "模拟自检发言记录";
+    appendSessionEvent(
+      game,
+      "social_rank_auto",
+      { targetPlayerId: player.id, rank: "B", reason: "模拟自检发言记录", samples: samples.length },
+      player.id
+    );
+    return;
+  }
+
+  let config = game.isLabExperiment
+    ? resolveAiModelConfig()
+    : resolveAiModelConfigForSlot(player.aiSlot);
+  if (game.isLabExperiment && config && player.agentModel) {
+    config = {
+      ...config,
+      model: player.agentModel,
+      provider: player.agentProvider || config.provider,
+    };
+  }
   if (!config) {
     player.socialRank = "C";
     player.socialRankSource = "auto";

@@ -23,9 +23,16 @@ export const AUTO_HOST_CONFIG = {
   /** 拍卖：最后一次出价后多久自动落槌 / 跳过 */
   auctionIdleMs: envInt("AUTO_AUCTION_IDLE_MS", 12_000, 4_000),
   /** 拍卖：单张卡最长停留时间（无人出价也会结束） */
-  auctionLotMaxMs: envInt("AUTO_AUCTION_LOT_MS", 45_000, 15_000),
+  auctionLotMaxMs: envInt("AUTO_AUCTION_LOT_MS", 40_000, 15_000),
+  /**
+   * 有在线真人时，阶段停留超过该时长后由系统主持人发提醒（不自动推进）。
+   * 每个阶段最多提醒 3 次。
+   */
+  phaseReminderMs: envInt("AUTO_PHASE_REMINDER_MS", 90_000, 15_000),
   /** 社区命名：真人首富超时未命名则系统兜底 */
   namingMs: envInt("AUTO_NAMING_MS", 45_000, 10_000),
   /** 彩票开奖确认：超时自动领取，避免漏发 */
   lotteryConfirmMs: envInt("AUTO_LOTTERY_CONFIRM_MS", 30_000, 5_000),
+  /** 全员锁定投资后的缓冲时间（毫秒）：期间仍可解锁，超时自动进入结算 */
+  allLockedGraceMs: envInt("AUTO_ALL_LOCKED_GRACE_MS", 4_000, 1_000),
 } as const;

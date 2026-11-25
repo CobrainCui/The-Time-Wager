@@ -19,6 +19,11 @@ import {
   safeExportBasename,
   contentDispositionAttachment,
 } from "./export/sessionExport.js";
+import { buildLabSessionExport, buildLabSessionWorkbook } from "./lab/labExport.js";
+import { initLabStore } from "./lab/labStore.js";
+import { registerLabAdminRoutes } from "./lab/labRoutes.js";
+import { setLabRoomListNotifier } from "./lab/labRunner.js";
+import { broadcastAdminRoomList } from "./network/socketHandlers.js";
 import { isAllowedBuffImageId } from "./util/buffImageIds.js";
 import { isAllowedPersonaImageId } from "./config/personaImageSlugs.js";
 import {
@@ -48,6 +53,16 @@ import {
   syncLeaderboardFromArchiveOnBoot,
   voidSession,
 } from "./state/sessionArchive.js";
+import {
+  addFeedback,
+  deleteFeedback,
+  initFeedbackPersistence,
+  listAdminFeedback,
+  listPublicFeedback,
+  setFeedbackStatus,
+  toPublicFeedbackEntry,
+} from "./state/feedbackStore.js";
+import type { FeedbackStatus } from "./state/feedbackStore.js";
 
 assertAdminTokenConfigured();
 
@@ -58,6 +73,13 @@ initCommunityLeaderboardPersistence(
   path.join(__dirname, "../data/community_leaderboard.json")
 );
 initSessionArchivePersistence(path.join(__dirname, "../data/session_archive.json"));
+initFeedbackPersistence(path.join(__dirname, "../data/feedback.json"));
+initLabStore({
+  runsPath: path.join(__dirname, "../data/lab_runs.json"),
+  sessionsPath: path.join(__dirname, "../data/lab_archive.json"),
+  agentEditionExperimentsDir: path.resolve(__dirname, "../../agent-edition/experiments"),
+});
+setLabRoomListNotifier((liveIo) => broadcastAdminRoomList(liveIo));
 syncLeaderboardFromArchiveOnBoot();
 
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -117,6 +139,8 @@ function ipLimit(limit: number, windowMs: number, tag: string): express.RequestH
 app.use("/api", ipLimit(120, 60_000, "api"));
 const uploadLimit = ipLimit(20, 60_000, "upload");
 const exportLimit = ipLimit(10, 60_000, "export");
+const feedbackGetLimit = ipLimit(60, 60_000, "feedback-get");
+const feedbackPostLimit = ipLimit(3, 10 * 60_000, "feedback-post");
 
 // --- File Upload Setup ---
 const uploadDir = path.join(__dirname, "../data/uploads");
@@ -290,6 +314,86 @@ app.get("/api/community-leaderboard", (_req, res) => {
   res.json({ entries: getPublicCommunityLeaderboard() });
 });
 
+// --- 玩家评价（公开、匿名） ---
+const FEEDBACK_DUPLICATE_WINDOW_MS = 5 * 60_000;
+const recentFeedbackPosts = new Map<string, number>();
+
+app.get("/api/feedback", feedbackGetLimit, (req, res) => {
+  res.json(
+    listPublicFeedback({
+      offset: parseInt(String(req.query.offset ?? "0"), 10),
+      limit: parseInt(String(req.query.limit ?? "20"), 10),
+    })
+  );
+});
+
+app.post("/api/feedback", express.json({ limit: "8kb" }), feedbackPostLimit, (req, res) => {
+  const body = req.body ?? {};
+  const rawContent = typeof body?.content === "string" ? body.content.trim() : "";
+  const ip = req.ip ?? "unknown";
+  const now = Date.now();
+  for (const [key, at] of recentFeedbackPosts) {
+    if (now - at >= FEEDBACK_DUPLICATE_WINDOW_MS) recentFeedbackPosts.delete(key);
+  }
+  const dedupeKey = `${ip}\u0000${String(body?.rating ?? "")}\u0000${rawContent}`;
+  const lastAt = recentFeedbackPosts.get(dedupeKey);
+  if (lastAt != null && now - lastAt < FEEDBACK_DUPLICATE_WINDOW_MS) {
+    res.status(409).json({ error: "请勿重复提交相同内容" });
+    return;
+  }
+
+  const result = addFeedback(body);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  recentFeedbackPosts.set(dedupeKey, now);
+  res.status(201).json({ item: toPublicFeedbackEntry(result.entry), summary: result.summary });
+});
+
+app.get("/api/admin/feedback", requireAdminToken, (req, res) => {
+  const status = String(req.query.status ?? "all");
+  if (status !== "visible" && status !== "hidden" && status !== "all") {
+    res.status(400).json({ error: "Invalid status" });
+    return;
+  }
+  res.json(
+    listAdminFeedback({
+      status: status as FeedbackStatus | "all",
+      offset: parseInt(String(req.query.offset ?? "0"), 10),
+      limit: parseInt(String(req.query.limit ?? "50"), 10),
+    })
+  );
+});
+
+app.post(
+  "/api/admin/feedback/:id/status",
+  express.json(),
+  requireAdminToken,
+  (req, res) => {
+    const id = String(req.params.id ?? "").trim();
+    const status = req.body?.status;
+    if (status !== "visible" && status !== "hidden") {
+      res.status(400).json({ error: "Invalid status" });
+      return;
+    }
+    if (!id || !setFeedbackStatus(id, status)) {
+      res.status(404).json({ error: "Feedback not found" });
+      return;
+    }
+    res.json({ ok: true });
+  }
+);
+
+app.delete("/api/admin/feedback/:id", requireAdminToken, (req, res) => {
+  const id = String(req.params.id ?? "").trim();
+  if (!id || !deleteFeedback(id)) {
+    res.status(404).json({ error: "Feedback not found" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
 // --- 规则助手智能体（内嵌自 郑先隽-PBL/GameInstruction，功能与原智能体一致） ---
 // 代码开关：server/.env 中 RULE_AGENT_ENABLED=false 时，入口与接口整体关闭
 app.get("/api/rule-agent/health", (_req, res) => {
@@ -297,7 +401,7 @@ app.get("/api/rule-agent/health", (_req, res) => {
 });
 
 const ruleAgentLimit = ipLimit(12, 60_000, "rule-agent");
-app.post("/api/rule-agent/chat", express.json(), ruleAgentLimit, async (req, res) => {
+app.post("/api/rule-agent/chat", express.json({ limit: "64kb" }), ruleAgentLimit, async (req, res) => {
   if (!isRuleAgentEnabled()) {
     res.status(404).json({ error: "规则助手未开启" });
     return;
@@ -445,6 +549,27 @@ app.get("/api/session-export", exportLimit, requireAdminToken, async (req, res) 
     return;
   }
   const base = safeExportBasename(roomId);
+  if (game.isLabExperiment) {
+    const labData = buildLabSessionExport(game);
+    if (format === "xlsx") {
+      const buf = await buildLabSessionWorkbook(labData);
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
+      res.setHeader("Content-Disposition", contentDispositionAttachment(`${base}_lab_session.xlsx`));
+      res.send(buf);
+      return;
+    }
+    if (format === "json") {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", contentDispositionAttachment(`${base}_lab_session.json`));
+      res.send(JSON.stringify(labData, null, 2));
+      return;
+    }
+    res.status(400).json({ error: "Invalid format (use json or xlsx)" });
+    return;
+  }
   const exportData = buildSessionExport(game);
 
   if (format === "xlsx") {
@@ -465,6 +590,8 @@ app.get("/api/session-export", exportLimit, requireAdminToken, async (req, res) 
   }
   res.status(400).json({ error: "Invalid format (use json or xlsx)" });
 });
+
+registerLabAdminRoutes(app);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
@@ -509,6 +636,8 @@ const investmentClockSyncAt = new Map<string, number>();
 setInterval(() => {
   const now = Date.now();
   Object.values(rooms).forEach((game) => {
+    // 实验室房间由 labRunner 独立驱动，不走产品 AI/自动主持
+    if (game.isLabExperiment) return;
     // 单个房间异常不能拖垮整个进程（所有房间都在内存里）
     try {
       if (handleActionTimeExpired(game)) {
@@ -547,6 +676,7 @@ setInterval(() => {
   lastRoomSweepAt = now;
   sweepRateLimits(60_000, now);
   for (const [rid, game] of Object.entries(rooms)) {
+    if (game.isLabExperiment) continue;
     // AI 不算「有人在线」；没有在线真人的房间按阶段 TTL 回收
     const hasOnlineHuman = game.players.some((p) => p.connected && !p.isAI);
     if (hasOnlineHuman) continue;

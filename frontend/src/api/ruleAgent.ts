@@ -1,13 +1,24 @@
 /** 规则讲解员智能体 API 客户端（后端：server/logic/ruleAgent.ts，/api/rule-agent/*） */
 
+/** 服务端护栏命中类型；正常回答没有该字段。 */
+export type RuleAgentGuardKind =
+  | "crisis"
+  | "prompt_injection"
+  | "rule_tampering"
+  | "pii"
+  | "off_topic"
+  | "unsafe_output";
+
 export interface RuleAgentTurn {
   role: "user" | "assistant";
   content: string;
+  guardrail?: RuleAgentGuardKind;
 }
 
 export interface RuleAgentChatResponse {
   relevant: boolean;
   reply: string;
+  guardrail?: RuleAgentGuardKind;
 }
 
 export interface RuleAgentHealth {

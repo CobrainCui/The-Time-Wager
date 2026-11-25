@@ -10,6 +10,7 @@ import { recordPhaseChange, appendSessionEvent } from "../state/sessionTelemetry
 import {
   findNextAutoAuctionCard,
   formatAuctionSoldMessage,
+  getAuctionRound,
   getLeadingBidOnFocus,
   hammerAuctionLot,
   isAuctionCardAvailable,
@@ -27,20 +28,60 @@ import {
 } from "../logic/lotterySettle.js";
 import { finalizeCommunityName } from "../state/communityNaming.js";
 import { sanitizeCommunityName } from "../state/communityLeaderboard.js";
-import { ensureAiCommunityNaming, handleAIPhase } from "../ai/aiOrchestrator.js";
+import { ensureAiCommunityNaming, handleAIPhase, hasAiTurnInFlight } from "../ai/aiOrchestrator.js";
+import { clearActionDeadline } from "../state/actionDeadline.js";
 import { AI_CONFIG } from "../ai/aiConfig.js";
 import { canStartWithAi, verifyAiAgents } from "../ai/aiPreflight.js";
 import { broadcastUpdate } from "../network/broadcast.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
+import { hasConnectedHuman } from "../util/roomHumans.js";
 
 interface AutoRoomState {
   phaseKey: string;
   deadlineAt: number;
   /** 命名阶段：AI 首富的模型调用是否已多等过一次 */
   aiNamingRetried?: boolean;
+  /** 有真人时：下一次「停留过久」提醒的时间 */
+  nextReminderAt?: number;
+  /** 有真人时：本阶段已提醒次数（上限 3） */
+  remindersSent?: number;
+  /** 投资阶段全员锁定的起始时间（用于延迟提醒） */
+  allLockedSince?: number;
+  /** 投资阶段临近截止的一次性提醒是否已发 */
+  deadlineReminderSent?: boolean;
 }
 
 const AUTO_ROOMS = new Map<string, AutoRoomState>();
+const MAX_PHASE_REMINDERS = 3;
+
+/**
+ * 有真人时不自动推进阶段，只在停留过久时由系统主持人提醒。
+ * 首次调用只排定提醒时间，之后每隔 phaseReminderMs 提醒一次，最多 3 次。
+ */
+function maybeRemindPhase(
+  game: GameState,
+  io: Server | null,
+  state: AutoRoomState,
+  now: number,
+  message: string
+): boolean {
+  if ((state.remindersSent ?? 0) >= MAX_PHASE_REMINDERS) return false;
+  if (state.nextReminderAt == null) {
+    state.nextReminderAt = now + AUTO_HOST_CONFIG.phaseReminderMs;
+    return false;
+  }
+  if (now < state.nextReminderAt) return false;
+  state.remindersSent = (state.remindersSent ?? 0) + 1;
+  state.nextReminderAt = now + AUTO_HOST_CONFIG.phaseReminderMs;
+  game.logs.push(`⏰ 系统主持人提醒：${message}`);
+  if (io) {
+    io.to(game.roomId).emit("playerNotify", {
+      type: "system_host",
+      message,
+    });
+  }
+  return true;
+}
 
 function phaseKey(game: GameState): string {
   return `${game.phase}:${game.globalRound}:${game.currentEra}:${game.roundInEra}`;
@@ -74,6 +115,7 @@ function canAutoStart(game: GameState): boolean {
  * 返回是否改动了状态。
  */
 export function armAutoHostStart(game: GameState, now = Date.now()): boolean {
+  if (game.isLabExperiment) return false;
   if (!game.autoHostEnabled || game.phase !== "ROOM_WAITING") return false;
   if (game.autoStartCancelled) {
     if (game.autoStartAt == null) return false;
@@ -147,6 +189,13 @@ function autoLottery(game: GameState, io: Server | null, now: number): boolean {
       );
       if (accepted?.ok) {
         logLotteryAccepted(game, accepted);
+        if (accepted.visibility === "public" && io) {
+          const rollText = typeof accepted.roll === "number" ? `掷出 ${accepted.roll} 点` : "已开奖";
+          io.to(game.roomId).emit("playerNotify", {
+            type: "lottery",
+            message: `🎲 ${accepted.player.name} 公开开奖【彩票】：${rollText}`,
+          });
+        }
         changed = true;
       }
       continue;
@@ -179,6 +228,36 @@ function autoLottery(game: GameState, io: Server | null, now: number): boolean {
   return changed;
 }
 
+/**
+ * 同步更新拍卖焦点拍品的自动落槌时间戳。
+ * - 在出价发生或定时检查时调用；若 autoHostNextActionAt 发生变化则返回 true，便于立即广播同步前后端倒计时。
+ */
+export function syncAutoAuctionDeadline(game: GameState, now = Date.now()): boolean {
+  if (!game.autoHostEnabled || game.phase !== "AUCTION") return false;
+  const focus = game.auctionFocusCardId;
+  if (!focus) {
+    if (game.autoHostNextActionAt == null) return false;
+    game.autoHostNextActionAt = undefined;
+    return true;
+  }
+  const focusAt = game.auctionFocusSetAt ?? now;
+  const round = getAuctionRound(game);
+  const lastBidAt = (game.auctionBids ?? [])
+    .filter(
+      (b) =>
+        b.cardId === focus &&
+        (b.auctionRound ?? round) === round &&
+        (b.status === "leading" || b.status === "outbid")
+    )
+    .reduce((max, b) => Math.max(max, b.timestamp), 0);
+  const idleDeadline = Math.max(focusAt, lastBidAt) + AUTO_HOST_CONFIG.auctionIdleMs;
+  const hardDeadline = focusAt + AUTO_HOST_CONFIG.auctionLotMaxMs;
+  const deadline = Math.min(idleDeadline, hardDeadline);
+  if (game.autoHostNextActionAt === deadline) return false;
+  game.autoHostNextActionAt = deadline;
+  return true;
+}
+
 function autoAuction(game: GameState, io: Server | null, now: number): boolean {
   let focus = game.auctionFocusCardId;
   if (focus && !isAuctionCardAvailable(game, focus)) {
@@ -209,18 +288,9 @@ function autoAuction(game: GameState, io: Server | null, now: number): boolean {
     return true;
   }
 
-  const focusAt = game.auctionFocusSetAt ?? now;
-  const lastBidAt = (game.auctionBids ?? [])
-    .filter(
-      (b) =>
-        b.cardId === focus && (b.status === "leading" || b.status === "outbid")
-    )
-    .reduce((max, b) => Math.max(max, b.timestamp), 0);
-  const idleDeadline = Math.max(focusAt, lastBidAt) + AUTO_HOST_CONFIG.auctionIdleMs;
-  const hardDeadline = focusAt + AUTO_HOST_CONFIG.auctionLotMaxMs;
-  const deadline = Math.min(idleDeadline, hardDeadline);
-  game.autoHostNextActionAt = deadline;
-  if (now < deadline) return false;
+  const deadlineChanged = syncAutoAuctionDeadline(game, now);
+  const deadline = game.autoHostNextActionAt ?? now;
+  if (now < deadline) return deadlineChanged;
 
   const leading = getLeadingBidOnFocus(game);
   let action: "sold" | "passed" = "passed";
@@ -293,6 +363,7 @@ export function ensureAutoHost(
   io: Server | null,
   now = Date.now()
 ): boolean {
+  if (game.isLabExperiment) return false;
   if (!game.autoHostEnabled) {
     if (game.autoStartAt != null || game.autoHostNextActionAt != null) {
       game.autoStartAt = undefined;
@@ -340,6 +411,34 @@ export function ensureAutoHost(
   }
 
   if (game.phase === "ERA_INTRO" || game.phase === "SETTLEMENT") {
+    // 有在线真人：不替玩家点「继续」、不自动进入下一阶段，只在停留过久时提醒。
+    if (hasConnectedHuman(game)) {
+      game.autoHostNextActionAt = undefined;
+      const state = autoState(game, now);
+      const phaseLabel = game.phase === "ERA_INTRO" ? "时代介绍" : "结算";
+      const pendingHumans = game.players.filter(
+        (p) => p.connected && !isAiPlayer(p) && !p.ready
+      );
+      const waitText =
+        pendingHumans.length > 0
+          ? `正在等待 ${pendingHumans
+              .slice(0, 3)
+              .map((p) => p.name)
+              .join("、")}${
+              pendingHumans.length > 3 ? ` 等 ${pendingHumans.length} 名玩家` : ""
+            } 点击继续`
+          : "所有真人都已准备，正在等待系统推进";
+      const reminded = maybeRemindPhase(
+        game,
+        io,
+        state,
+        now,
+        `${phaseLabel}已停留较久，${waitText}。`
+      );
+      if (reminded && io) broadcastUpdate(io, game);
+      return reminded;
+    }
+
     const state = autoState(game, now);
     if (!state.deadlineAt) {
       const delay =
@@ -372,13 +471,84 @@ export function ensureAutoHost(
   }
 
   if (game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") {
-    game.autoHostNextActionAt = undefined;
     const lotteryChanged = autoLottery(game, io, now);
-    // 抽奖/自动领取可能让「全员 ready」重新成立；兜底推一次阶段
-    if (isInvestmentComplete(game)) {
+    const humans = hasConnectedHuman(game);
+    if (!humans && isInvestmentComplete(game) && !hasAiTurnInFlight(game.roomId)) {
+      game.autoHostNextActionAt = undefined;
       tryAdvancePhase(game);
       if (io) broadcastUpdate(io, game);
       return true;
+    }
+    if (humans) {
+      const state = autoState(game, now);
+      if (isInvestmentComplete(game) && !hasAiTurnInFlight(game.roomId)) {
+        if (state.allLockedSince == null) {
+          state.allLockedSince = now;
+          const graceMs = AUTO_HOST_CONFIG.allLockedGraceMs;
+          game.autoHostNextActionAt = now + graceMs;
+          const secs = Math.max(1, Math.ceil(graceMs / 1000));
+          const msg = `全员已锁定，${secs} 秒后进入结算（期间仍可解锁修改）`;
+          game.logs.push(`✅ 系统自动主持：${msg}`);
+          if (io) {
+            io.to(game.roomId).emit("playerNotify", {
+              type: "system_host",
+              message: msg,
+            });
+            broadcastUpdate(io, game);
+          }
+          return true;
+        }
+        const deadline = state.allLockedSince + AUTO_HOST_CONFIG.allLockedGraceMs;
+        game.autoHostNextActionAt = deadline;
+        if (now >= deadline) {
+          state.allLockedSince = undefined;
+          game.autoHostNextActionAt = undefined;
+          clearActionDeadline(game);
+          tryAdvancePhase(game);
+          if (io) broadcastUpdate(io, game);
+          return true;
+        }
+        return lotteryChanged;
+      } else {
+        const hadGrace = state.allLockedSince != null || game.autoHostNextActionAt != null;
+        state.allLockedSince = undefined;
+        game.autoHostNextActionAt = undefined;
+        if (hadGrace && io) broadcastUpdate(io, game);
+        // 临近截止仍未锁定：提醒一次
+        const remainingMs =
+          typeof game.investmentEndsAt === "number"
+            ? game.investmentEndsAt - now
+            : Number.POSITIVE_INFINITY;
+        const pendingHumans = game.players.filter(
+          (p) => p.connected && !isAiPlayer(p) && !p.ready
+        );
+        if (
+          pendingHumans.length > 0 &&
+          remainingMs <= 2 * 60_000 &&
+          !state.deadlineReminderSent
+        ) {
+          state.deadlineReminderSent = true;
+          const names = pendingHumans
+            .slice(0, 3)
+            .map((p) => p.name)
+            .join("、");
+          const message = `本轮还剩不到 2 分钟，${names}${
+            pendingHumans.length > 3 ? ` 等 ${pendingHumans.length} 名玩家` : ""
+          } 还没锁定；倒计时结束后将按当前草稿结算。`;
+          game.logs.push(`⏰ 系统主持人提醒：${message}`);
+          if (io) {
+            io.to(game.roomId).emit("playerNotify", {
+              type: "system_host",
+              message,
+            });
+            broadcastUpdate(io, game);
+          }
+          return true;
+        }
+        if (hadGrace) return true;
+      }
+    } else {
+      game.autoHostNextActionAt = undefined;
     }
     return lotteryChanged;
   }

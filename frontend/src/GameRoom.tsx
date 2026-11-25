@@ -111,6 +111,10 @@ interface Props {
   readOnly?: boolean;
   /** 嵌入/预览时不展示右下角玩家私信浮层（主持用独立私信面板） */
   hidePlayerChat?: boolean;
+  /** 管理端预览框内嵌：侧栏与主区各自占满外框高度并独立滚动 */
+  contained?: boolean;
+  /** 初始展开的侧栏标签（如实验室只读视角默认打开个人战报） */
+  defaultSidebarPanel?: PlayerSidebarPanel;
 }
 
 export default function GameRoom({
@@ -124,9 +128,11 @@ export default function GameRoom({
   embed = false,
   readOnly = false,
   hidePlayerChat = false,
+  contained = false,
+  defaultSidebarPanel = null,
 }: Props) {
   const uiLocked = embed || readOnly;
-  const [sidebarPanel, setSidebarPanel] = useState<PlayerSidebarPanel>(null);
+  const [sidebarPanel, setSidebarPanel] = useState<PlayerSidebarPanel>(defaultSidebarPanel);
   const [investmentPrefill, setInvestmentPrefill] = useState<Record<number, number>>({});
   const prefillRoundRef = useRef(game.globalRound);
   const prevInvestmentReadyRef = useRef(false);
@@ -337,17 +343,16 @@ export default function GameRoom({
   const showHelpSidebar =
     !embed &&
     game.phase !== "TUTORIAL" &&
-    game.phase !== "ROOM_WAITING" &&
-    (!readOnly || sidebarPanel !== null);
+    game.phase !== "ROOM_WAITING";
   const helpOverlayOnOpen = isIntro && isDesktopLayout;
+  const useSplitScroll = !contained && showHelpSidebar;
 
   return (
     <div
-      style={{
-        display: "flex",
-        minHeight: embed ? undefined : "100vh",
-        width: "100%",
-      }}
+      className={`game-room-shell${contained ? " game-room-shell--contained" : ""}${
+        useSplitScroll ? " game-room-shell--split-scroll" : ""
+      }`}
+      style={!contained && !useSplitScroll ? { minHeight: embed ? undefined : "100vh" } : undefined}
     >
       {onExit && <LeaveGameButton phase={game.phase} onExit={onExit} />}
       {showHelpSidebar && (
@@ -356,18 +361,17 @@ export default function GameRoom({
           onPanelChange={setSidebarPanel}
           game={game}
           me={me}
-          overlayWhenOpen={helpOverlayOnOpen}
+          overlayWhenOpen={!contained && helpOverlayOnOpen}
+          contained={contained}
         />
       )}
       <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          position: "relative",
-          ...(embed ? undefined : { minHeight: "100vh" }),
-        }}
+        className="game-room-main"
+        style={!contained && !useSplitScroll && !embed ? { minHeight: "100vh" } : undefined}
       >
-        {renderMainView()}
+        <div style={uiLocked ? { pointerEvents: "none" } : undefined}>
+          {renderMainView()}
+        </div>
         {!embed && !readOnly && game.aiDeadlinePaused && <AiStuckBanner game={game} me={me} />}
         {!embed && !readOnly && <RuleAgentChat />}
         {!embed && showTransactionOverlay && game.phase !== "COMMUNITY_NAMING" && (

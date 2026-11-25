@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { GameState, LotteryOffer, Player } from "../state/gameState.js";
+import { GameState, LotteryOffer, LotteryVisibility, Player } from "../state/gameState.js";
 import { applyGoldMultiplier } from "./buffLogic.js";
 
 export const LOTTERY_CARD_ID = "buff_lottery";
@@ -29,10 +29,16 @@ export function createLotteryOffer(
   game: GameState,
   playerId: string,
   amount: number,
-  meta?: { roll?: number; source?: "random.org" | "server" | "manual"; drawnAt?: number }
+  meta?: {
+    roll?: number;
+    source?: "random.org" | "server" | "manual";
+    drawnAt?: number;
+    visibility?: LotteryVisibility;
+  }
 ): { offer: LotteryOffer; replaced?: LotteryOffer } {
   const pending = game.pendingLotteryOffers ?? [];
   const replaced = pending.find((o) => o.playerId === playerId);
+  const visibility: LotteryVisibility = meta?.visibility === "private" ? "private" : "public";
   const offer: LotteryOffer = {
     offerId: randomUUID(),
     playerId,
@@ -40,6 +46,7 @@ export function createLotteryOffer(
     ...(meta?.roll != null ? { roll: meta.roll } : {}),
     ...(meta?.source ? { source: meta.source } : {}),
     drawnAt: meta?.drawnAt ?? Date.now(),
+    visibility,
   };
   game.pendingLotteryOffers = pending.filter((o) => o.playerId !== playerId);
   game.pendingLotteryOffers.push(offer);
@@ -76,6 +83,7 @@ export function claimLotteryResponse(
       roll?: number;
       source?: "random.org" | "server" | "manual";
       drawnAt?: number;
+      visibility?: LotteryVisibility;
     }
   | { ok: false; message: string } {
   if (typeof offerId !== "string" || !offerId) {
@@ -104,6 +112,7 @@ export function claimLotteryResponse(
     roll: offer.roll,
     source: offer.source,
     drawnAt: offer.drawnAt,
+    visibility: offer.visibility ?? "public",
   };
 }
 
@@ -113,7 +122,11 @@ export function recordLotteryCompletedDeal(
   amount: number,
   enteredAmount?: number,
   goldApplied?: boolean,
-  meta?: { roll?: number; source?: "random.org" | "server" | "manual" }
+  meta?: {
+    roll?: number;
+    source?: "random.org" | "server" | "manual";
+    visibility?: LotteryVisibility;
+  }
 ): void {
   if (!game.lotteryCompletedDeals) game.lotteryCompletedDeals = [];
   game.lotteryCompletedDeals = game.lotteryCompletedDeals.filter((d) => d.playerId !== playerId);
@@ -124,6 +137,7 @@ export function recordLotteryCompletedDeal(
     ...(goldApplied != null ? { goldApplied } : {}),
     ...(meta?.roll != null ? { roll: meta.roll } : {}),
     ...(meta?.source ? { source: meta.source } : {}),
+    ...(meta?.visibility ? { visibility: meta.visibility } : {}),
   });
 }
 
@@ -131,9 +145,15 @@ export function applyLotteryAccept(
   game: GameState,
   player: Player,
   amount: number,
-  meta?: { roll?: number; source?: "random.org" | "server" | "manual" }
-): { enteredAmount: number; creditedAmount: number; goldApplied: boolean } {
+  meta?: {
+    roll?: number;
+    source?: "random.org" | "server" | "manual";
+    visibility?: LotteryVisibility;
+  }
+): { enteredAmount: number; creditedAmount: number; goldApplied: boolean; visibility: LotteryVisibility } {
   const lotteryBuff = player.activeBuffs?.find((b) => b.cardId === LOTTERY_CARD_ID);
+  const visibility: LotteryVisibility =
+    meta?.visibility ?? (lotteryBuff?.visibility === "private" ? "private" : "public");
   const goldApplied = Boolean(player.activeBuffs?.some((b) => b.cardId === "buff_gold"));
   const credited = applyGoldMultiplier(player, amount);
   player.wealth += credited;
@@ -143,8 +163,11 @@ export function applyLotteryAccept(
     if (rec) rec.wealthCredited = credited;
   }
   removeLotteryBuff(player);
-  recordLotteryCompletedDeal(game, player.id, credited, amount, goldApplied, meta);
-  return { enteredAmount: amount, creditedAmount: credited, goldApplied };
+  recordLotteryCompletedDeal(game, player.id, credited, amount, goldApplied, {
+    ...meta,
+    visibility,
+  });
+  return { enteredAmount: amount, creditedAmount: credited, goldApplied, visibility };
 }
 
 export type RevokeLotteryResult =

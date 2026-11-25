@@ -82,10 +82,10 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
           ? "3.75rem"
           : "5rem"
       : fitViewport
-        ? "2.5rem"
+        ? "3rem"
         : compact
-          ? "3rem"
-          : "4rem";
+          ? "3.25rem"
+          : "4.5rem";
   const titleSize = isIntro
     ? fitViewport
       ? "2.35rem"
@@ -99,10 +99,10 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
           ? "2rem"
           : "2.75rem"
       : fitViewport
-        ? "1.5rem"
+        ? "2.25rem"
         : compact
-          ? "1.75rem"
-          : "2.25rem";
+          ? "2rem"
+          : "2.5rem";
   const contentPadding = isIntro
     ? fitViewport
       ? "2rem 1.75rem"
@@ -116,7 +116,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
           ? "1.75rem 1.5rem"
           : "3rem 2.5rem"
       : fitViewport
-        ? "1.5rem 1.25rem"
+        ? "1.75rem 1.5rem"
         : compact
           ? "1.5rem 1.25rem"
           : "2.5rem 2rem";
@@ -151,9 +151,9 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
     : isFinale
       ? uiRem(fitViewport ? 1.1 : 1.15)
       : fitViewport
-        ? uiRem(0.9)
-        : uiRem(1);
-  const linePad = isIntro ? "0.65rem 0" : isFinale ? "0.55rem 0" : fitViewport ? "0.35rem 0" : "0.5rem 0";
+        ? uiRem(1.12)
+        : uiRem(1.1);
+  const linePad = isIntro ? "0.65rem 0" : isFinale ? "0.55rem 0" : fitViewport ? "0.5rem 0" : "0.6rem 0";
   const copyPadding = isIntro
     ? fitViewport
       ? "1.5rem 1.75rem"
@@ -163,7 +163,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
         ? "1.35rem 1.5rem"
         : "1.5rem 1.75rem"
       : fitViewport
-        ? "0.75rem"
+        ? "1rem"
         : "1.25rem";
   const dotsMt = isHero ? (fitViewport ? "1rem" : "1.75rem") : fitViewport ? "0.65rem" : "1.5rem";
   const footerMt = fitViewport ? "0.5rem" : "1rem";
@@ -188,7 +188,7 @@ export const TutorialSlidePanel: React.FC<TutorialSlidePanelProps> = ({
   const isResourcesSlide = slide.demoKey === "resources";
 
   const projectTypesLineFont =
-    isProjectTypesSlide && fitViewport ? uiRem(0.84) : isProjectTypesSlide ? uiRem(0.88) : lineFont;
+    isProjectTypesSlide && fitViewport ? uiRem(0.95) : isProjectTypesSlide ? uiRem(1) : lineFont;
 
   const copyBlock = (
     <div

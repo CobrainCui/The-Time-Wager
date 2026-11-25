@@ -35,7 +35,7 @@ export const CommunityNaming: React.FC<Props> = ({ game, me, embed = false }) =>
           为你们的社区命名
         </h1>
         <p style={{ color: "var(--color-text-muted)", marginBottom: "2.5rem", fontSize: uiRem(0.95) }}>
-          游戏已结束，请为本次冒险命名，留下你们共同的印记
+          游戏已结束，为你们的社区命名。
         </p>
 
         {canName ? (
@@ -59,7 +59,12 @@ export const CommunityNaming: React.FC<Props> = ({ game, me, embed = false }) =>
               🌟 确认命名
             </button>
             {game.autoHostEnabled && (
-              <AutoHostCountdown at={game.autoHostNextActionAt} label="超时自动命名" compact />
+              <AutoHostCountdown
+                at={game.autoHostNextActionAt}
+                serverNow={game.serverNow}
+                label="超时自动命名"
+                compact
+              />
             )}
           </div>
         ) : (
@@ -77,7 +82,12 @@ export const CommunityNaming: React.FC<Props> = ({ game, me, embed = false }) =>
             ⏳ 等待在线首富{namer ? ` ${namer.name} ` : ""}为社区命名...
             {game.autoHostEnabled && (
               <div style={{ marginTop: "1rem", animation: "none" }}>
-                <AutoHostCountdown at={game.autoHostNextActionAt} label="超时自动命名" compact />
+                <AutoHostCountdown
+                  at={game.autoHostNextActionAt}
+                  serverNow={game.serverNow}
+                  label="超时自动命名"
+                  compact
+                />
               </div>
             )}
           </div>

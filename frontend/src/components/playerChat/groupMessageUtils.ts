@@ -45,7 +45,7 @@ export function mergeServerGroupMessageIntoThread(
     bumpUnread: false,
     seenIds: [],
   };
-  if (thread.messages.some((m) => m.id === gm.id)) {
+  if (thread.messages.some((m) => m.txId === gm.id || m.id === gm.id)) {
     return { thread, effects };
   }
 

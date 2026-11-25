@@ -129,6 +129,33 @@ export interface AuctionBidRecord {
   status: AuctionBidStatus;
 }
 
+export type LotteryVisibility = "public" | "private";
+
+export type PublicFeedKind = "lottery" | "auction" | "project" | "era" | "system";
+
+export interface PublicFeedItem {
+  id: string;
+  round: number;
+  era: number;
+  phase: Phase;
+  kind: PublicFeedKind;
+  text: string;
+  timestamp: number;
+}
+
+export interface AiTurnStatus {
+  state: "thinking" | "idle";
+  phase?: Phase;
+  updatedAt: number;
+}
+
+export interface AiChatStatusEntry {
+  playerId: string;
+  playerName: string;
+  state: "thinking" | "silent";
+  updatedAt: number;
+}
+
 export interface LotteryOffer {
   offerId: string;
   playerId: string;
@@ -139,6 +166,8 @@ export interface LotteryOffer {
   source?: "random.org" | "server" | "manual";
   /** 抽奖完成时间，用于超时自动领取 */
   drawnAt?: number;
+  /** 彩票开奖可见性：public 全桌可见点数，private 仅自己与管理端可见 */
+  visibility?: LotteryVisibility;
 }
 
 /** 主持发起的财富调整，待玩家确认后才入账 */
@@ -162,6 +191,7 @@ export interface LotteryCompletedDeal {
   roll?: number;
   /** 随机源：random.org / 服务端加密随机 / 主持手动 */
   source?: "random.org" | "server" | "manual";
+  visibility?: LotteryVisibility;
 }
 
 export interface BuffRoundNote {
@@ -176,6 +206,7 @@ export interface ActiveBuff {
   cardId: string;
   targetPlayerId?: string;
   targetProjectId?: number;
+  visibility?: LotteryVisibility;
   extraData?: any;
 }
 
@@ -342,6 +373,79 @@ export interface Player {
   aiSlot?: number;
   /** 管理端展示用：该 AI 实际使用的模型名（不含 Key） */
   aiModelLabel?: string;
+  // === 6AI 实验室字段 ===
+  isAgent?: boolean;
+  agentIndex?: number;
+  agentModel?: string;
+  agentProvider?: string;
+}
+
+export interface LabDirectMessage {
+  id: string;
+  fromId: string;
+  fromName: string;
+  toId: string;
+  toName: string;
+  text: string;
+  timestamp: number;
+  era: number;
+  roundInEra: number;
+  globalRound: number;
+}
+
+export interface LabPrediction {
+  id: string;
+  playerId: string;
+  playerName: string;
+  era: number;
+  globalRound: number;
+  ranking: string[];
+  reasoning: string;
+  model?: string;
+  timestamp: number;
+}
+
+export interface LabAgentDecision {
+  id: string;
+  timestamp: number;
+  phase: Phase;
+  era: number;
+  roundInEra: number;
+  globalRound: number;
+  playerId: string;
+  playerName: string;
+  kind: "prediction" | "investment" | "auction" | "transaction" | "chat" | "community_name";
+  model?: string;
+  reasoning: string;
+  action: unknown;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  latencyMs?: number;
+}
+
+export interface LabRoomMeta {
+  runId: string;
+  condition: string;
+  name: string;
+  notes: string;
+  gameIndex: number;
+  totalGames: number;
+  seedBase: number;
+  seed: number;
+  sessionOrdinal: number;
+  chatEnabled: boolean;
+  memoryEnabled: boolean;
+  predictionEnabled: boolean;
+  autoSocialScore: boolean;
+  mock: boolean;
+  tokenBudgetPerAgent: number;
+  promptVersion: string;
+  promptHash: string;
+  gitCommit: string | null;
+  models: string[];
+  providers: string[];
+  startedAt: number;
 }
 
 export interface GainBreakdown {
@@ -431,7 +535,13 @@ export interface GameState {
   eventChoices: Record<string, "A" | "B">; 
 
   logs: string[];
-  playerLogs: Record<string, string[]>; 
+  playerLogs: Record<string, string[]>;
+  /** 面向全部真人与 AI 共享的公开信息流（绝不包含私密开奖、私信、暗手牌等私密信息） */
+  publicFeed?: PublicFeedItem[];
+  /** AI 回合思考状态（公开给玩家用于展示“思考中”） */
+  aiTurnStatuses?: Record<string, AiTurnStatus>;
+  /** AI 聊天思考/沉默状态（key 为 dm:<humanId>:<aiId> 或 group:<groupId>，广播时按视角过滤） */
+  aiChatStatuses?: Record<string, Record<string, AiChatStatusEntry>>;
   lastSettlement?: {
     round: number;
     results: SettlementProjectResult[];
@@ -533,6 +643,15 @@ export interface GameState {
   aiFailures?: Record<string, AiAgentFailure>;
   /** 投资倒计时是否因 AI 故障被系统暂停（管理员恢复后自动继续） */
   aiDeadlinePaused?: boolean;
+
+  // === 6AI 实验室隔离标记与运行数据 ===
+  isLabExperiment?: boolean;
+  labMeta?: LabRoomMeta;
+  labRngState?: number;
+  labPredictions?: LabPrediction[];
+  labDirectMessages?: LabDirectMessage[];
+  labAgentDecisions?: LabAgentDecision[];
+  labTokenUsage?: Record<string, number>;
 }
 
 export interface AiAgentFailure {
@@ -584,6 +703,9 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
     
     logs: [],
     playerLogs: {},
+    publicFeed: [],
+    aiTurnStatuses: {},
+    aiChatStatuses: {},
 
     investmentEndsAt: undefined,
     investmentTimerPausedAt: undefined,
@@ -683,6 +805,9 @@ export function resetGameSession(game: GameState): void {
   game.eventChoices = fresh.eventChoices;
   game.logs = fresh.logs;
   game.playerLogs = fresh.playerLogs;
+  game.publicFeed = [];
+  game.aiTurnStatuses = {};
+  game.aiChatStatuses = {};
   game.investmentEndsAt = undefined;
   game.investmentTimerPausedAt = undefined;
   game.buffPhaseEndsAt = undefined;

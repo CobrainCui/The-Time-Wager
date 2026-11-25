@@ -142,14 +142,11 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {}, embed = fa
               }}
             >
               <span style={{ display: "block", marginBottom: "0.35rem" }}>
-                📢 时代加成：主题契合、历史总投入第 1 名
+                📢 时代加成：主题契合且历史总投入第 1
               </span>
               <span style={{ display: "block", fontWeight: 500, fontSize: uiRem(0.95) }}>
                 本时代 <span style={{ color: eraColor, fontWeight: 700 }}>【{card.era}】</span>
-                短期恰好满额 +{ERA_BONUS_SHORT}；长期满额或超上限 +{ERA_BONUS_LONG}
-              </span>
-              <span style={{ display: "block", fontWeight: 500, fontSize: uiRem(0.9), color: "var(--color-text-muted)", marginTop: "0.25rem" }}>
-                短期爆掉与风险项目无时代加成
+                短期恰好满额 +{ERA_BONUS_SHORT}；长期满额/超上限 +{ERA_BONUS_LONG}；风险与爆掉无加成
               </span>
             </p>
           </div>
@@ -229,7 +226,12 @@ export const EraIntro: React.FC<Props> = ({ game, me, eraImages = {}, embed = fa
             已准备 {readyCount} / {game.players.length} 人
           </div>
           {!embed && game.autoHostEnabled && (
-            <AutoHostCountdown at={game.autoHostNextActionAt} label="自动进入投资" compact />
+            <AutoHostCountdown
+              at={game.autoHostNextActionAt}
+              serverNow={game.serverNow}
+              label="自动进入投资"
+              compact
+            />
           )}
         </div>
       </div>

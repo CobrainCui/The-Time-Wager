@@ -146,6 +146,13 @@ test("output guard truncates and rejects unsafe community names", () => {
   const badName = guardAgentOutput("加我微信13800138000", "name");
   assert.equal(badName.ok, false);
   assert.equal(badName.text, "");
+
+  const goodGroupName = guardAgentOutput("合作（3人）", "groupName");
+  assert.equal(goodGroupName.ok, true);
+  assert.equal(goodGroupName.text, "合作（3人）");
+  const badGroupName = guardAgentOutput("加我微信13800138000", "groupName");
+  assert.equal(badGroupName.ok, false);
+  assert.equal(badGroupName.text, "");
 });
 
 test("crisis protocol suppresses AI chat and sends one fixed reply per window", () => {
@@ -193,6 +200,23 @@ test("AI observation hides system safety notices from the model", () => {
     observation.publicChat.some((m) => m.text.includes("12356")),
     false
   );
+});
+
+test("AI observation masks PII before the model sees it", () => {
+  const game = makeGame();
+  const ai = game.players.find((p) => p.isAI)!;
+  game.groupMessages!.push({
+    id: "pii-1",
+    groupId: PUBLIC_GROUP_ID,
+    fromId: "human_1",
+    fromName: "真人",
+    text: "我电话 13800138000，这轮投短期",
+    timestamp: Date.now(),
+  });
+  const observation = buildAiObservation(game, ai);
+  const seen = observation.publicChat.map((m) => m.text).join("\n");
+  assert.equal(seen.includes("13800138000"), false);
+  assert.ok(seen.includes("联系方式已隐藏"));
 });
 
 test("AI may post to the public group through the explicit allowAi path", () => {

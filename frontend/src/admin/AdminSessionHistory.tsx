@@ -550,7 +550,7 @@ export const AdminSessionHistory: React.FC<Props> = ({ onBack }) => {
                     color: "var(--color-text-muted)",
                   }}
                 >
-                  复盘含 JSON 与 Excel 两份文件。请分别点击下载（浏览器可能拦截同一次点击的第二个文件）。
+                  复盘含 JSON 与 Excel，请分别下载（浏览器可能拦截第二个文件）。
                 </p>
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   <button

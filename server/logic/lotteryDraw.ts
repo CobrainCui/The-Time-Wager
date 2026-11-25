@@ -1,5 +1,6 @@
-import type { GameState, LotteryOffer, Player } from "../state/gameState.js";
+import type { GameState, LotteryOffer, LotteryVisibility, Player } from "../state/gameState.js";
 import { appendSessionEvent } from "../state/sessionTelemetry.js";
+import { appendPublicFeed } from "../util/publicFeed.js";
 import {
   applyLotteryAccept,
   claimLotteryResponse,
@@ -68,10 +69,14 @@ export async function createRandomLotteryOffer(
     if (findPendingLotteryOffer(game, playerId)) {
       return { ok: false, message: "已有待确认的彩票开奖" };
     }
+    const lotteryBuff = player.activeBuffs?.find((b) => b.cardId === "buff_lottery");
+    const visibility: LotteryVisibility =
+      lotteryBuff?.visibility === "private" ? "private" : "public";
     const { offer, replaced } = createLotteryOffer(game, playerId, draw.amount, {
       roll: draw.roll,
       source: draw.source,
       drawnAt: draw.drawnAt,
+      visibility,
     });
     return { ok: true, player, offer, replaced, draw };
   } finally {
@@ -88,6 +93,7 @@ export type LotteryAcceptResult =
       goldApplied: boolean;
       roll?: number;
       source?: "random.org" | "server" | "manual";
+      visibility: LotteryVisibility;
     }
   | { ok: false; message: string };
 
@@ -104,7 +110,13 @@ export function acceptLotteryOffer(
   const settled = applyLotteryAccept(game, player, claimed.amount, {
     roll: claimed.roll,
     source: claimed.source,
+    visibility: claimed.visibility,
   });
+  if (settled.visibility === "public") {
+    const rollText =
+      typeof claimed.roll === "number" ? `掷出 ${claimed.roll} 点` : "已开奖";
+    appendPublicFeed(game, "lottery", `🎲 ${player.name} 公开开奖【彩票】：${rollText}`);
+  }
   return {
     ok: true,
     player,
@@ -113,6 +125,7 @@ export function acceptLotteryOffer(
     goldApplied: settled.goldApplied,
     roll: claimed.roll,
     source: claimed.source,
+    visibility: settled.visibility,
   };
 }
 

@@ -1,5 +1,5 @@
 import React, { memo, useMemo } from "react";
-import type { Transaction } from "../../types";
+import type { AiChatStatusEntry, Transaction } from "../../types";
 import type { ChatMessage, ChatThread } from "./types";
 import { mergeThreadMessages } from "./chatMessageUtils";
 import { peerTxSignature, threadMessagesSignature } from "./chatPeerActivity";
@@ -23,6 +23,7 @@ type Props = {
   onComposerFocus: (peerId: string) => void;
   onComposerBlur: (peerId: string) => void;
   onComposerImeChange?: (active: boolean) => void;
+  aiChatStatuses?: Record<string, AiChatStatusEntry>;
   readOnly?: boolean;
 };
 
@@ -59,6 +60,7 @@ export const ExpandedChatDockPanel = memo<Props>(function ExpandedChatDockPanel(
   onComposerFocus,
   onComposerBlur,
   onComposerImeChange,
+  aiChatStatuses,
   readOnly = false,
 }) {
   const threadSig = threadMessagesSignature(thread.messages);
@@ -95,6 +97,7 @@ export const ExpandedChatDockPanel = memo<Props>(function ExpandedChatDockPanel(
       onComposerFocus={onComposerFocus}
       onComposerBlur={onComposerBlur}
       onComposerImeChange={onComposerImeChange}
+      aiChatStatuses={aiChatStatuses}
       readOnly={readOnly}
     />
   );

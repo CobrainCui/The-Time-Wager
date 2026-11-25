@@ -38,7 +38,15 @@ import {
 import { broadcastUpdate, emitSerializedGameUpdate } from "./broadcast.js";
 import { AI_BOT_ENABLED, AI_SAFETY_ENABLED } from "../config/features.js";
 import { addAiPlayer, removeAiPlayer, fillAiPlayers, aiRosterSummary, countAiPlayers } from "../ai/aiRoster.js";
-import { handleAIPhase, forgetAiRoom, forgetAiPlayer, clearAiFailure } from "../ai/aiOrchestrator.js";
+import {
+  handleAIPhase,
+  forgetAiRoom,
+  forgetAiPlayer,
+  clearAiFailure,
+  handleAiDirectMessage,
+  handleAiGroupMessage,
+  handleAiGroupCreated,
+} from "../ai/aiOrchestrator.js";
 import { applyAiPreflightToGame, verifyAiAgents } from "../ai/aiPreflight.js";
 import { normalizeDifficulty } from "../ai/aiPersona.js";
 import { AI_CONFIG } from "../ai/aiConfig.js";
@@ -57,7 +65,7 @@ import { rooms, customImagesVersions, customEraImagesVersions, customBuffImagesV
 import { sanitizeCommunityName } from "../state/communityLeaderboard.js";
 import { finalizeCommunityName } from "../state/communityNaming.js";
 import { ensureAiSeatsFilled, startGameNow, resolveSeatTarget, MAX_SEATS, MIN_PLAYERS_TO_START } from "../state/gameStart.js";
-import { armAutoHostStart, resetAutoHostState } from "../host/autoHost.js";
+import { armAutoHostStart, resetAutoHostState, syncAutoAuctionDeadline } from "../host/autoHost.js";
 import { ensureProjectsDrawnForEra } from "../state/gameEra.js";
 import { applyRoundEnergy, syncEnergyAfterRosterChange } from "../logic/energySchedule.js";
 import { useBuffCard, useForceBuyCard, ackSlackHit, FORCE_BUY_CARD_ID } from "../logic/buffLogic.js";
@@ -135,6 +143,7 @@ import {
   ensureSessionStarted,
   recordPhaseChange,
 } from "../state/sessionTelemetry.js";
+import { stopActiveLabRun } from "../lab/labRunner.js";
 
 function presencePayload(game: GameState, action: string, playerId: string) {
   return {
@@ -147,23 +156,51 @@ function presencePayload(game: GameState, action: string, playerId: string) {
   };
 }
 function buildAdminRoomList() {
-  return Object.keys(rooms).map((rid) => ({
-    roomId: rid,
-    playerCount: rooms[rid].players.length,
-    phase: rooms[rid].phase,
-  }));
+  return Object.keys(rooms)
+    .filter((rid) => !rooms[rid].isLabExperiment)
+    .map((rid) => ({
+      roomId: rid,
+      playerCount: rooms[rid].players.length,
+      phase: rooms[rid].phase,
+    }));
 }
 
 /** 向所有已登录管理员广播房间列表；若传入 socket 则同时给该连接发一份 */
-function broadcastRoomList(io: Server, socket?: Socket) {
+export function broadcastAdminRoomList(io: Server, socket?: Socket) {
   const roomList = buildAdminRoomList();
   io.to("super_admin_room").emit("adminRoomList", roomList);
   if (socket) socket.emit("adminRoomList", roomList);
 }
+const broadcastRoomList = broadcastAdminRoomList;
 
 const MAX_ROOM_ID_LENGTH = 48;
 const MAX_PLAYER_NAME_LENGTH = 24;
 const MAX_ROOMS = 50;
+
+/**
+ * 管理员解散的房间号在 TTL 内禁止再次加入/复用。
+ * 否则持有旧 reconnectToken 的客户端重连时会用同一个房号把房间重新建出来。
+ */
+const DISSOLVED_ROOM_TTL_MS = 10 * 60_000;
+const dissolvedRoomAt = new Map<string, number>();
+
+function markRoomDissolved(roomId: string): void {
+  const now = Date.now();
+  dissolvedRoomAt.set(roomId, now);
+  for (const [id, at] of dissolvedRoomAt) {
+    if (now - at >= DISSOLVED_ROOM_TTL_MS) dissolvedRoomAt.delete(id);
+  }
+}
+
+function isRecentlyDissolved(roomId: string, now = Date.now()): boolean {
+  const at = dissolvedRoomAt.get(roomId);
+  if (at == null) return false;
+  if (now - at >= DISSOLVED_ROOM_TTL_MS) {
+    dissolvedRoomAt.delete(roomId);
+    return false;
+  }
+  return true;
+}
 
 /** 房间号字符集：去掉 I/O/0/1 等易混字符，便于口头与截图转述 */
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -174,7 +211,7 @@ function generateRoomCode(): string {
     for (let i = 0; i < 5; i++) {
       code += ROOM_CODE_ALPHABET[randomInt(ROOM_CODE_ALPHABET.length)];
     }
-    if (!rooms[code]) return code;
+    if (!rooms[code] && !isRecentlyDissolved(code)) return code;
   }
   return `R${Date.now().toString(36).slice(-5).toUpperCase()}`;
 }
@@ -381,6 +418,11 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     roomId = String(roomId).trim().slice(0, MAX_ROOM_ID_LENGTH);
     const playerName = String(name).trim().slice(0, MAX_PLAYER_NAME_LENGTH);
     if (!roomId || !playerName) return;
+    // 管理员解散的房间不允许用旧房号重连/重建（防止旧 reconnectToken 把房间复活）
+    if (isRecentlyDissolved(roomId)) {
+      socket.emit("error", "房间不存在或已解散");
+      return;
+    }
     // AI 昵称前缀由服务端保留，避免真人被误判为 AI 或被脚本冒名
     if (playerName.startsWith("🤖") || /^AI[_-]/i.test(playerName) || /^AI\d+$/i.test(playerName)) {
       socket.emit("error", "该昵称使用 AI 保留前缀，请更换昵称");
@@ -1213,6 +1255,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
   socket.on("adminDissolveRoom", ({ roomId }) => {
     if (!socket.data.isSuperAdmin) return;
     if (rooms[roomId]) {
+        if (rooms[roomId].isLabExperiment) {
+          stopActiveLabRun("管理员在房间内手动终止了本场实验");
+        }
         const memberIds = io.sockets.adapter.rooms.get(roomId);
         if (memberIds) {
           for (const socketId of memberIds) {
@@ -1222,6 +1267,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         }
         io.to(roomId).emit("roomDissolved");
         delete rooms[roomId];
+        markRoomDissolved(roomId);
         forgetAiRoom(roomId);
         resetAutoHostState(roomId);
         broadcastRoomList(io);
@@ -1347,6 +1393,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     tryAdvancePhase(game);
     resetAutoHostState(game.roomId);
     game.autoHostNextActionAt = undefined;
+    syncAutoAuctionDeadline(game);
     broadcastUpdate(io, game);
     void handleAIPhase(game, io);
   });
@@ -1388,6 +1435,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       fromCardId: prev ?? null,
       toCardId: game.auctionFocusCardId ?? null,
     });
+    syncAutoAuctionDeadline(game);
     broadcastUpdate(io, game);
     void handleAIPhase(game, io);
   });
@@ -1414,6 +1462,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       cost: result.cost,
       nextFocusId: game.auctionFocusCardId ?? null,
     });
+    syncAutoAuctionDeadline(game);
     broadcastUpdate(io, game);
     io.to(game.roomId).emit("playerNotify", {
       type: "auction_sold",
@@ -1443,6 +1492,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       cardId: result.cardId,
       nextFocusId: result.nextFocusId ?? null,
     });
+    syncAutoAuctionDeadline(game);
     broadcastUpdate(io, game);
     void handleAIPhase(game, io);
   });
@@ -1498,6 +1548,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         });
       }
     }
+    syncAutoAuctionDeadline(game);
     broadcastUpdate(io, game);
     void handleAIPhase(game, io);
   });
@@ -1692,6 +1743,14 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
               settled.roll ? `（骰子 ${settled.roll}）` : ""
             }`
           );
+          if (settled.visibility === "public") {
+            const rollText =
+              typeof settled.roll === "number" ? `掷出 ${settled.roll} 点` : "已开奖";
+            io.to(roomId).emit("playerNotify", {
+              type: "lottery",
+              message: `🎲 ${settled.player.name} 公开开奖【彩票】：${rollText}`,
+            });
+          }
           appendSessionEvent(
             game,
             "lottery_settled",
@@ -1702,6 +1761,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
               goldApplied: settled.goldApplied,
               roll: settled.roll ?? null,
               source: settled.source ?? "server",
+              visibility: settled.visibility,
               accepted: true,
             },
             settled.player.id
@@ -2176,6 +2236,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       return;
     }
 
+    game.autoHostNextActionAt = undefined;
     socket.emit("playerNotify", {
       type: "investment",
       message: "已解锁投资方案，精力已退回，请调整后重新提交。",
@@ -2214,9 +2275,11 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     // 人本 AI：私信/转账留言同样扫描危机信号。原文不投递给对方、不进入 AI 观察，
     // 只给发送者固定安全回复，并记录类别（不记录原文）。
     let outboundNote = message;
+    let safetyBlocked = false;
     if (AI_SAFETY_ENABLED && message) {
       const safetyScan = detectCrisisSignals(message);
       if (safetyScan.risk) {
+        safetyBlocked = true;
         const at = Date.now();
         game.safetyCrisisUntil = Math.max(
           game.safetyCrisisUntil ?? 0,
@@ -2273,6 +2336,16 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
           message: `${sender.name}：${preview}`,
         });
       }
+      // AI 收信人：异步回一句；失败不影响游戏、不暂停阶段。
+      if (receiver.isAI && !safetyBlocked) {
+        void handleAiDirectMessage(
+          game,
+          receiver,
+          sender.id,
+          { id: tx.id, note: outboundNote },
+          io
+        );
+      }
       return;
     }
 
@@ -2311,6 +2384,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         message: `${sender.name} 向你转账 ${amt}（待确认）`,
       });
     }
+    if (receiver.isAI && !safetyBlocked) {
+      void handleAIPhase(game, io);
+    }
   });
 
   socket.on("createChatGroup", ({ memberIds, name }) => {
@@ -2335,6 +2411,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     }
     appendSessionEvent(game, "chat_group_created", { groupId: result.group.id, name: result.group.name }, player.id);
     broadcastUpdate(io, game);
+    handleAiGroupCreated(game, result.group, player.id, io);
   });
 
   socket.on("addChatGroupMembers", ({ groupId, memberIds }) => {
@@ -2405,9 +2482,11 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
 
     // 人本 AI：危机信号优先于游戏。由服务端统一发固定安全回复，
     // 不让任何模型（或无人值守房间）自由处理。
+    let safetyBlocked = false;
     if (AI_SAFETY_ENABLED) {
       const safetyScan = detectCrisisSignals(result.message.text);
       if (safetyScan.risk) {
+        safetyBlocked = true;
         const at = Date.now();
         game.safetyCrisisUntil = Math.max(
           game.safetyCrisisUntil ?? 0,
@@ -2465,6 +2544,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
         type: "chat",
         message: `${group?.name ?? "群聊"} · ${sender.name}：${result.preview}`,
       });
+    }
+    if (!safetyBlocked) {
+      handleAiGroupMessage(game, groupId, sender.id, result.message.text, io);
     }
   });
 
@@ -2633,7 +2715,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
             });
           }
         }
+        syncAutoAuctionDeadline(game);
         broadcastUpdate(io, game);
+        void handleAIPhase(game, io);
         socket.emit("playerNotify", { type: "buff", message: result.msg });
         if (result.auctionSold) {
           socket.to(roomId).emit("playerNotify", {
@@ -2660,7 +2744,16 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       socket.emit("error", "最后 2 分钟不能使用道具卡");
       return;
     }
-    const result = useBuffCard(game, player.id, cardId, data);
+    const lotteryVisibility =
+      cardId === "buff_lottery"
+        ? data?.visibility === "private"
+          ? ("private" as const)
+          : ("public" as const)
+        : undefined;
+    const result = useBuffCard(game, player.id, cardId, {
+      ...data,
+      ...(lotteryVisibility ? { visibility: lotteryVisibility } : {}),
+    });
     if (result.success) {
       if (!player.usedCards) player.usedCards = [];
       player.usedCards.push(cardId);
@@ -2705,6 +2798,9 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
             type: result.investmentAutoUnlocked ? "investment" : "buff_hit",
             message: result.notifyTargetMsg,
           });
+        }
+        if (result.investmentAutoUnlocked && target && isAiPlayer(target)) {
+          void handleAIPhase(game, io);
         }
       }
     } else {

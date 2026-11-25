@@ -98,10 +98,11 @@ export function applyInvestments(
   return true;
 }
 
-export type InvestmentRevertSource = "admin" | "self" | "slack_negative";
+export type InvestmentRevertSource = "admin" | "self" | "ai" | "slack_negative";
 
 function investmentUnlockLogLabel(playerName: string, source: InvestmentRevertSource): string {
   if (source === "admin") return `上帝解锁 ${playerName}`;
+  if (source === "ai") return `AI「${playerName}」协商后解锁投资`;
   if (source === "slack_negative") {
     return `因摸鱼精力为负，${playerName} 的投资已自动解锁`;
   }

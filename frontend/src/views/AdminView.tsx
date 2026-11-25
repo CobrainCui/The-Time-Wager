@@ -34,6 +34,7 @@ import { AdminSectionPerspectiveSelect } from "../components/admin/AdminSectionP
 import { AdminProjectAdjustPanel } from "../components/admin/AdminProjectAdjustPanel";
 import GameRoom from "../GameRoom";
 import { BuffDescText } from "../utils/buffDescEmphasis";
+import { LabLivePanel } from "../admin/lab/LabLivePanel";
 
 const AdminPlayerPdfCapture = lazy(() =>
   import("../admin/AdminPlayerPdfCapture").then((m) => ({ default: m.AdminPlayerPdfCapture }))
@@ -52,12 +53,14 @@ interface Props {
   personaImages?: Record<string, number>;
   /** 服务端是否开启 AI 玩家（AI_PLAYERS_ENABLED） */
   aiPlayersEnabled?: boolean;
+  /** 6AI 实验室多局连跑切换/完成提示 */
+  labTransition?: { kind: "switching" | "switched" | "finished"; message: string } | null;
 }
 
 const PHASE_NAMES: Record<string, string> = {
   ROOM_WAITING: "等候开局",
   ERA_INTRO: "时代介绍", TUTORIAL: "新手教程",
-  INVESTMENT: "投资与道具", BUFF_USAGE: "投资与道具(旧)", SETTLEMENT: "本轮结算",
+  INVESTMENT: "投资与道具", BUFF_USAGE: "投资与道具", SETTLEMENT: "本轮结算",
   AUCTION: "拍卖会", GAME_OVER: "游戏结束", COMMUNITY_NAMING: "社区命名",
 };
 
@@ -69,6 +72,7 @@ export const AdminView: React.FC<Props> = ({
   buffImages = {},
   personaImages = {},
   aiPlayersEnabled = true,
+  labTransition = null,
 }) => {
   const timerPausedAt = game.investmentTimerPausedAt;
   const timerPaused = typeof timerPausedAt === "number";
@@ -120,9 +124,22 @@ export const AdminView: React.FC<Props> = ({
   const gameRef = useRef(game);
   gameRef.current = game;
 
+  const isLab = Boolean(game.isLabExperiment);
   const humanPlayers = [...game.players]
     .filter((p) => !isAiPlayer(p))
     .sort((a, b) => b.wealth - a.wealth);
+  const labPlayers = [...game.players].sort(
+    (a, b) => (a.agentIndex ?? 99) - (b.agentIndex ?? 99)
+  );
+  const perspectivePlayers = isLab ? labPlayers : humanPlayers;
+  const monitorPlayers = isLab ? labPlayers : humanPlayers;
+  const perspectiveOptions = perspectivePlayers.map((p) => ({
+    id: p.id,
+    name:
+      isLab && p.agentModel
+        ? `${p.name} (${p.agentModel.split("/").pop()})`
+        : p.name,
+  }));
 
   useEffect(() => {
     adminTxMergeRef.current = new Map();
@@ -275,7 +292,7 @@ export const AdminView: React.FC<Props> = ({
       ? getRemainingSeconds(game.investmentEndsAt, clockSkewRef.current, timerPausedAt)
       : 0;
   const investmentUnlockOpen = unlockRemainingSeconds > 0;
-  const lockedHumanCount = humanPlayers.filter((p) => p.ready).length;
+  const lockedMonitorCount = monitorPlayers.filter((p) => p.ready).length;
 
   /** 与 investmentUnlockOpen 同源：含暂停冻结剩余 */
   const canUnlockInvestmentNow = () =>
@@ -429,7 +446,7 @@ export const AdminView: React.FC<Props> = ({
   }, [game, uiViewAsPlayerId]);
 
   const uiPerspectivePlayer = uiViewAsPlayerId
-    ? humanPlayers.find((p) => p.id === uiViewAsPlayerId)
+    ? perspectivePlayers.find((p) => p.id === uiViewAsPlayerId)
     : null;
 
   const handleRevokeAuctionCard = (
@@ -714,7 +731,9 @@ export const AdminView: React.FC<Props> = ({
       >
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <h1 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#fbbf24" }}>👑 上帝控制台</h1>
+            <h1 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#fbbf24" }}>
+              {isLab ? "🧪 实验室围观台" : "👑 管理控制台"}
+            </h1>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>
               Room: {game.roomId}
             </span>
@@ -732,9 +751,9 @@ export const AdminView: React.FC<Props> = ({
               )}
             </span>
             <span style={{ color: "var(--color-text-muted)" }}>Era {game.currentEra} · R{game.roundInEra}</span>
-            {game.phase === "INVESTMENT" && humanPlayers.length > 0 && (
-              <span style={{ color: lockedHumanCount === humanPlayers.length ? "#34d399" : "#fbbf24" }}>
-                已锁定 {lockedHumanCount}/{humanPlayers.length}
+            {game.phase === "INVESTMENT" && monitorPlayers.length > 0 && (
+              <span style={{ color: lockedMonitorCount === monitorPlayers.length ? "#34d399" : "#fbbf24" }}>
+                已锁定 {lockedMonitorCount}/{monitorPlayers.length}
               </span>
             )}
             {showAdminTimer && (
@@ -769,52 +788,58 @@ export const AdminView: React.FC<Props> = ({
                   ⏱ {mins}:{secs}
                   {timerPaused ? " 已暂停" : ""}
                 </span>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() =>
-                    emit("adminInvestmentTimer", { action: timerPaused ? "resume" : "pause" })
-                  }
-                  style={{ padding: "0.15rem 0.55rem", fontSize: uiRem(0.75) }}
-                >
-                  {timerPaused ? "继续" : "暂停"}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => {
-                    if (
-                      confirm(
-                        `重置投资倒计时为 ${formatInvestmentDeadlineClock(game)}？`
-                      )
-                    ) {
-                      emit("adminInvestmentTimer", { action: "reset" });
-                    }
-                  }}
-                  style={{ padding: "0.15rem 0.55rem", fontSize: uiRem(0.75) }}
-                >
-                  重置
-                </button>
+                {!isLab && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() =>
+                        emit("adminInvestmentTimer", { action: timerPaused ? "resume" : "pause" })
+                      }
+                      style={{ padding: "0.15rem 0.55rem", fontSize: uiRem(0.75) }}
+                    >
+                      {timerPaused ? "继续" : "暂停"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `重置投资倒计时为 ${formatInvestmentDeadlineClock(game)}？`
+                          )
+                        ) {
+                          emit("adminInvestmentTimer", { action: "reset" });
+                        }
+                      }}
+                      style={{ padding: "0.15rem 0.55rem", fontSize: uiRem(0.75) }}
+                    >
+                      重置
+                    </button>
+                  </>
+                )}
               </>
             )}
           </div>
         </div>
 
         <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-          <button
-            type="button"
-            className="btn btn-sm"
-            style={{
-              background: game.autoHostEnabled ? "rgba(56,189,248,0.2)" : "rgba(148,163,184,0.12)",
-              border: `1px solid ${game.autoHostEnabled ? "rgba(56,189,248,0.5)" : "rgba(148,163,184,0.35)"}`,
-              color: game.autoHostEnabled ? "#7dd3fc" : "#cbd5e1",
-            }}
-            onClick={() => emit("adminSetAutoHost", { enabled: !game.autoHostEnabled })}
-            title="开启后：自动开局、自动推进阶段、自动拍卖落槌、自动彩票开奖、命名兜底"
-          >
-            {game.autoHostEnabled ? "🤖 系统自动主持：开" : "🖐 系统自动主持：关"}
-          </button>
-          {(game.phase === "ROOM_WAITING" || game.phase === "ERA_INTRO") && (
+          {!isLab && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{
+                background: game.autoHostEnabled ? "rgba(56,189,248,0.2)" : "rgba(148,163,184,0.12)",
+                border: `1px solid ${game.autoHostEnabled ? "rgba(56,189,248,0.5)" : "rgba(148,163,184,0.35)"}`,
+                color: game.autoHostEnabled ? "#7dd3fc" : "#cbd5e1",
+              }}
+              onClick={() => emit("adminSetAutoHost", { enabled: !game.autoHostEnabled })}
+              title="开启后：自动开局、自动拍卖落槌、自动彩票开奖、命名兜底；有在线真人时阶段不自动推进，停留过久仅提醒"
+            >
+              {game.autoHostEnabled ? "🤖 系统自动主持：开" : "🖐 系统自动主持：关"}
+            </button>
+          )}
+          {!isLab && (game.phase === "ROOM_WAITING" || game.phase === "ERA_INTRO") && (
             <>
               <button className="btn btn-primary btn-sm" onClick={() => emit("adminStartTutorial")}>🎓 教程</button>
               <button
@@ -829,7 +854,7 @@ export const AdminView: React.FC<Props> = ({
               </button>
             </>
           )}
-          {game.phase === "AUCTION" ? (
+          {!isLab && (game.phase === "AUCTION" ? (
             <button
               type="button"
               className="btn btn-purple btn-sm animate-pulse"
@@ -843,8 +868,8 @@ export const AdminView: React.FC<Props> = ({
             </button>
           ) : (
             <button className="btn btn-sm" style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.4)", color: "#c084fc", display: "inline-flex", alignItems: "center", gap: "0.35rem" }} onClick={() => { if (confirm("开启拍卖阶段？")) emit("adminSkipPhase", { targetPhase: "AUCTION" }); }}><GavelIcon size={16} decorative style={{ color: "inherit" }} /> 拍卖</button>
-          )}
-          {game.phase === "COMMUNITY_NAMING" && (
+          ))}
+          {!isLab && game.phase === "COMMUNITY_NAMING" && (
             <form
               style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}
               onSubmit={(e) => {
@@ -868,7 +893,7 @@ export const AdminView: React.FC<Props> = ({
               </button>
             </form>
           )}
-          {game.phase !== "ERA_INTRO" && game.phase !== "TUTORIAL" && game.phase !== "ROOM_WAITING" && (
+          {!isLab && game.phase !== "ERA_INTRO" && game.phase !== "TUTORIAL" && game.phase !== "ROOM_WAITING" && game.phase !== "GAME_OVER" && (
             <button className="btn btn-sm" style={{ background: "rgba(249,115,22,0.15)", border: "1px solid rgba(249,115,22,0.35)", color: "#fb923c" }} onClick={() => { if (confirm(`跳过 [${game.phase}]？`)) emit("adminSkipPhase"); }}>⏭ 跳过</button>
           )}
           <button
@@ -904,11 +929,18 @@ export const AdminView: React.FC<Props> = ({
               {pdfBatchProgress ?? (pdfExporting ? "报告生成中…" : "📄 导出全部玩家报告")}
             </button>
           )}
-          <button className="btn btn-danger btn-sm" onClick={() => { if (confirm("警告：解散房间？")) emit("adminDissolveRoom"); }}>💣 解散</button>
-          <button className="btn btn-ghost btn-sm" onClick={onExit}>← 返回</button>
+          {!isLab && (
+            <button className="btn btn-danger btn-sm" onClick={() => { if (confirm("警告：解散房间？")) emit("adminDissolveRoom"); }}>💣 解散</button>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={onExit}>
+            {isLab ? "← 返回实验室" : "← 返回"}
+          </button>
         </div>
 
-        {/* AI 玩家：严格 Agent 模式。必须模型可用才能开局；失败会暂停并等待人工处理。 */}
+        {game.isLabExperiment ? (
+          <LabLivePanel game={game} />
+        ) : (
+        /* AI 玩家：严格 Agent 模式。必须模型可用才能开局；失败会暂停并等待人工处理。 */
         <div
           style={{
             marginTop: "1rem",
@@ -940,7 +972,7 @@ export const AdminView: React.FC<Props> = ({
               border: "1px solid rgba(56,189,248,0.22)",
             }}
           >
-            不预设人格 · 由模型自由发挥
+            无预设人格
           </span>
           <select
             className="input"
@@ -1052,6 +1084,7 @@ export const AdminView: React.FC<Props> = ({
             </>
           )}
         </div>
+        )}
       </div>
 
       {(Object.keys(game.aiFailures ?? {}).length > 0 || aiPreflightNote) && (
@@ -1109,6 +1142,47 @@ export const AdminView: React.FC<Props> = ({
       )}
 
       <div style={{ padding: "1.5rem", maxWidth: "1400px", margin: "0 auto" }}>
+
+        {isLab && labTransition && (
+          <div
+            role="status"
+            style={{
+              marginBottom: "1rem",
+              padding: "0.85rem 1.15rem",
+              borderRadius: "0.9rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "0.75rem",
+              flexWrap: "wrap",
+              background:
+                labTransition.kind === "switching"
+                  ? "rgba(56,189,248,0.12)"
+                  : "rgba(16,185,129,0.12)",
+              border:
+                labTransition.kind === "switching"
+                  ? "1px solid rgba(56,189,248,0.4)"
+                  : "1px solid rgba(16,185,129,0.4)",
+              color: labTransition.kind === "switching" ? "#bae6fd" : "#86efac",
+              fontSize: uiRem(0.88),
+              fontWeight: 700,
+            }}
+          >
+            <span>
+              {labTransition.kind === "switching"
+                ? "⏳ "
+                : labTransition.kind === "finished"
+                  ? "✅ "
+                  : "🔄 "}
+              {labTransition.message}
+            </span>
+            {labTransition.kind === "finished" && onExit && (
+              <button type="button" className="btn btn-primary btn-sm" onClick={onExit}>
+                返回 6AI 实验室
+              </button>
+            )}
+          </div>
+        )}
 
         {exportHint && (
           <div
@@ -1325,7 +1399,7 @@ export const AdminView: React.FC<Props> = ({
                 <div style={{ fontSize: uiRem(1.15), fontWeight: 800, color: "#d8b4fe", marginBottom: "0.65rem" }}>
                   {focusDef?.name || focusId || "（还没选）"}
                 </div>
-                {!focusId && (
+                {!isLab && !focusId && (
                   <div style={{ color: "#fbbf24", fontSize: uiRem(0.85), marginBottom: "0.75rem", fontWeight: 700 }}>
                     请在下方点「改成拍这张」，选手动开始拍哪一张。
                   </div>
@@ -1358,45 +1432,47 @@ export const AdminView: React.FC<Props> = ({
                     </span>
                   )}
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "1rem" }}>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm"
-                    disabled={!focusId || currentBid <= 0 || !highBidderCanPay}
-                    onClick={() => {
-                      if (
-                        !window.confirm(
-                          `确认成交？\n【${focusDef?.name || focusId}】将以 ${currentBid} 卖给 ${highBidderName}`
+                {!isLab && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "1rem" }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={!focusId || currentBid <= 0 || !highBidderCanPay}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `确认成交？\n【${focusDef?.name || focusId}】将以 ${currentBid} 卖给 ${highBidderName}`
+                          )
                         )
-                      )
-                        return;
-                      emit("adminHammerAuction", {
-                        expectedBidId: highBidId,
-                        expectedAmount: currentBid,
-                        expectedPlayerId: highBidderId,
-                      });
-                    }}
-                  >
-                    确认成交
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    disabled={!focusId}
-                    onClick={() => {
-                      const onlyOneLeft =
-                        currentAuctionCards.filter((c) => !distributedSet.has(c.id)).length <= 1;
-                      const name = focusDef?.name || focusId;
-                      const message = onlyOneLeft
-                        ? `这张先跳过？\n【${name}】是本场最后一张未成交的卡。当前出价会作废，并重新从起拍价开始。`
-                        : `这张先跳过？\n【${name}】暂不成交，换下一张。当前出价作废。`;
-                      if (!window.confirm(message)) return;
-                      emit("adminPassAuction");
-                    }}
-                  >
-                    这张先跳过
-                  </button>
-                </div>
+                          return;
+                        emit("adminHammerAuction", {
+                          expectedBidId: highBidId,
+                          expectedAmount: currentBid,
+                          expectedPlayerId: highBidderId,
+                        });
+                      }}
+                    >
+                      确认成交
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      disabled={!focusId}
+                      onClick={() => {
+                        const onlyOneLeft =
+                          currentAuctionCards.filter((c) => !distributedSet.has(c.id)).length <= 1;
+                        const name = focusDef?.name || focusId;
+                        const message = onlyOneLeft
+                          ? `这张先跳过？\n【${name}】是本场最后一张未成交的卡。当前出价会作废，并重新从起拍价开始。`
+                          : `这张先跳过？\n【${name}】暂不成交，换下一张。当前出价作废。`;
+                        if (!window.confirm(message)) return;
+                        emit("adminPassAuction");
+                      }}
+                    >
+                      这张先跳过
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div
@@ -1510,58 +1586,60 @@ export const AdminView: React.FC<Props> = ({
                     >
                       {def?.desc ? <BuffDescText text={def.desc} /> : null}
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                      {!sold && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-full"
-                          style={{
-                            borderColor: isFocus
-                              ? "rgba(251,191,36,0.6)"
-                              : "rgba(148,163,184,0.35)",
-                            color: isFocus ? "#fbbf24" : "var(--color-text-secondary)",
-                            background: isFocus ? "rgba(251,191,36,0.12)" : "transparent",
-                          }}
-                          onClick={() => {
-                            const name = def?.name || card.name;
-                            if (isFocus) {
+                    {!isLab && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                        {!sold && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-full"
+                            style={{
+                              borderColor: isFocus
+                                ? "rgba(251,191,36,0.6)"
+                                : "rgba(148,163,184,0.35)",
+                              color: isFocus ? "#fbbf24" : "var(--color-text-secondary)",
+                              background: isFocus ? "rgba(251,191,36,0.12)" : "transparent",
+                            }}
+                            onClick={() => {
+                              const name = def?.name || card.name;
+                              if (isFocus) {
+                                if (
+                                  currentBid > 0 &&
+                                  !window.confirm(`取消正在拍【${name}】？\n当前出价会作废。`)
+                                ) {
+                                  return;
+                                }
+                                emit("adminSetAuctionFocus", { cardId: "" });
+                                return;
+                              }
                               if (
+                                focusId &&
                                 currentBid > 0 &&
-                                !window.confirm(`取消正在拍【${name}】？\n当前出价会作废。`)
+                                !window.confirm(
+                                  `改成拍【${name}】？\n正在拍的【${focusDef?.name || focusId}】出价会作废。`
+                                )
                               ) {
                                 return;
                               }
-                              emit("adminSetAuctionFocus", { cardId: "" });
-                              return;
+                              emit("adminSetAuctionFocus", { cardId: card.id });
+                            }}
+                          >
+                            {isFocus ? "取消正在拍" : "改成拍这张"}
+                          </button>
+                        )}
+                        {sold && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm btn-full"
+                            style={{ color: "#fca5a5", borderColor: "rgba(248,113,113,0.35)" }}
+                            onClick={() =>
+                              handleRevokeAuctionCard(card.id, def?.name || card.name, "completed")
                             }
-                            if (
-                              focusId &&
-                              currentBid > 0 &&
-                              !window.confirm(
-                                `改成拍【${name}】？\n正在拍的【${focusDef?.name || focusId}】出价会作废。`
-                              )
-                            ) {
-                              return;
-                            }
-                            emit("adminSetAuctionFocus", { cardId: card.id });
-                          }}
-                        >
-                          {isFocus ? "取消正在拍" : "改成拍这张"}
-                        </button>
-                      )}
-                      {sold && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm btn-full"
-                          style={{ color: "#fca5a5", borderColor: "rgba(248,113,113,0.35)" }}
-                          onClick={() =>
-                            handleRevokeAuctionCard(card.id, def?.name || card.name, "completed")
-                          }
-                        >
-                          撤回成交
-                        </button>
-                      )}
-                    </div>
+                          >
+                            撤回成交
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1640,7 +1718,7 @@ export const AdminView: React.FC<Props> = ({
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: uiRem(0.8) }}>
                 <thead>
                   <tr style={{ background: "rgba(255,255,255,0.02)", color: "var(--color-text-muted)" }}>
-                    {["#", "昵称", "状态", "社交", "人格", "手牌", "已用", "⚡", "💰", "操作"].map((h, i) => {
+                    {["#", "昵称", "状态", "社交", "人格", "手牌", "已用", "⚡", "💰", ...(isLab ? [] : ["操作"])].map((h, i) => {
                       const isActions = h === "操作";
                       return (
                         <th
@@ -1672,7 +1750,7 @@ export const AdminView: React.FC<Props> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {humanPlayers.map((p, idx) => {
+                  {monitorPlayers.map((p, idx) => {
                     const hasLottery = p.activeBuffs?.some((b) => b.cardId === "buff_lottery");
                     const hasGold = p.activeBuffs?.some((b) => b.cardId === "buff_gold");
                     const pendingLottery = (game.pendingLotteryOffers ?? []).find((o) => o.playerId === p.id);
@@ -1706,32 +1784,45 @@ export const AdminView: React.FC<Props> = ({
                           )}
                         </td>
                         <td style={{ padding: "0.875rem" }}>
-                          <select
-                            style={{
-                              background: "rgba(15, 20, 60, 0.85)",
-                              border: `1px solid ${p.socialRank === "A" ? "rgba(212,175,55,0.6)" : "rgba(212,175,55,0.2)"}`,
-                              borderRadius: "0.375rem",
-                              color: p.socialRank === "A" ? "#d4af37" : "var(--color-text-secondary)",
-                              padding: "0.35rem 0.65rem",
-                              fontSize: uiRem(0.875),
-                              outline: "none",
-                              cursor: "pointer",
-                            }}
-                            value={p.socialRank || ""}
-                            title={
-                              p.socialRankSource === "auto"
-                                ? `系统按群聊/私信自动评定${p.socialRankReason ? `：${p.socialRankReason}` : ""}`
-                                : p.socialRankSource === "admin"
-                                  ? "管理员手动评定"
-                                  : "待评定"
-                            }
-                            onChange={(e) => handleSocialRate(p.id, e.target.value)}
-                          >
-                            <option value="">待评</option>
-                            {["A", "B", "C", "D", "E"].map((r) => (
-                              <option key={r} value={r}>{r}</option>
-                            ))}
-                          </select>
+                          {isLab ? (
+                            <span
+                              style={{
+                                fontSize: uiRem(0.8),
+                                fontWeight: 700,
+                                color: p.socialRank === "A" ? "#d4af37" : "var(--color-text-secondary)",
+                              }}
+                              title={p.socialRankReason || "终局后由系统按群聊/私信自动评定"}
+                            >
+                              {p.socialRank || "待评"}
+                            </span>
+                          ) : (
+                            <select
+                              style={{
+                                background: "rgba(15, 20, 60, 0.85)",
+                                border: `1px solid ${p.socialRank === "A" ? "rgba(212,175,55,0.6)" : "rgba(212,175,55,0.2)"}`,
+                                borderRadius: "0.375rem",
+                                color: p.socialRank === "A" ? "#d4af37" : "var(--color-text-secondary)",
+                                padding: "0.35rem 0.65rem",
+                                fontSize: uiRem(0.875),
+                                outline: "none",
+                                cursor: "pointer",
+                              }}
+                              value={p.socialRank || ""}
+                              title={
+                                p.socialRankSource === "auto"
+                                  ? `系统按群聊/私信自动评定${p.socialRankReason ? `：${p.socialRankReason}` : ""}`
+                                  : p.socialRankSource === "admin"
+                                    ? "管理员手动评定"
+                                    : "待评定"
+                              }
+                              onChange={(e) => handleSocialRate(p.id, e.target.value)}
+                            >
+                              <option value="">待评</option>
+                              {["A", "B", "C", "D", "E"].map((r) => (
+                                <option key={r} value={r}>{r}</option>
+                              ))}
+                            </select>
+                          )}
                         </td>
                         <td style={{ padding: "0.875rem" }}>
                           {p.analysisResult ? (
@@ -1755,50 +1846,54 @@ export const AdminView: React.FC<Props> = ({
                                     background: "rgba(168,85,247,0.2)",
                                     border: "1px solid rgba(168,85,247,0.4)",
                                     borderRadius: "0.25rem",
-                                    padding: "0.1rem 0.35rem 0.1rem 0.5rem",
+                                    padding: isLab ? "0.1rem 0.5rem" : "0.1rem 0.35rem 0.1rem 0.5rem",
                                     color: "#d8b4fe",
                                     fontSize: uiRem(0.7),
                                     whiteSpace: "nowrap",
                                   }}
                                 >
                                   {CARD_NAME_MAP[cid] || cid}
-                                  <button
-                                    type="button"
-                                    className="admin-inline-btn"
-                                    title="收回这一张手牌（不退款）"
-                                    onClick={() => handleRemoveCardAt(p.id, p.name, invIdx, cid)}
-                                    style={{
-                                      padding: "0.05rem 0.35rem",
-                                      fontSize: uiRem(0.62),
-                                      lineHeight: 1.2,
-                                      background: "rgba(148,163,184,0.15)",
-                                      border: "1px solid rgba(148,163,184,0.35)",
-                                      color: "#cbd5e1",
-                                    }}
-                                  >
-                                    收回
-                                  </button>
+                                  {!isLab && (
+                                    <button
+                                      type="button"
+                                      className="admin-inline-btn"
+                                      title="收回这一张手牌（不退款）"
+                                      onClick={() => handleRemoveCardAt(p.id, p.name, invIdx, cid)}
+                                      style={{
+                                        padding: "0.05rem 0.35rem",
+                                        fontSize: uiRem(0.62),
+                                        lineHeight: 1.2,
+                                        background: "rgba(148,163,184,0.15)",
+                                        border: "1px solid rgba(148,163,184,0.35)",
+                                        color: "#cbd5e1",
+                                      }}
+                                    >
+                                      收回
+                                    </button>
+                                  )}
                                 </span>
                               ))}
                               {(!p.inventory || p.inventory.length === 0) && (
                                 <span style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.75) }}>无手牌</span>
                               )}
                             </div>
-                            <button
-                              type="button"
-                              className="admin-inline-btn"
-                              title="补发道具到手牌（不经过拍卖，不扣财富）"
-                              onClick={() => openCardAddModal(p.id, p.name)}
-                              style={{
-                                alignSelf: "flex-start",
-                                background: "rgba(168,85,247,0.18)",
-                                border: "1px solid rgba(168,85,247,0.5)",
-                                color: "#d8b4fe",
-                                fontWeight: 700,
-                              }}
-                            >
-                              补发
-                            </button>
+                            {!isLab && (
+                              <button
+                                type="button"
+                                className="admin-inline-btn"
+                                title="补发道具到手牌（不经过拍卖，不扣财富）"
+                                onClick={() => openCardAddModal(p.id, p.name)}
+                                style={{
+                                  alignSelf: "flex-start",
+                                  background: "rgba(168,85,247,0.18)",
+                                  border: "1px solid rgba(168,85,247,0.5)",
+                                  color: "#d8b4fe",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                补发
+                              </button>
+                            )}
                           </div>
                         </td>
                         <td style={{ padding: "0.875rem" }}>
@@ -1813,6 +1908,7 @@ export const AdminView: React.FC<Props> = ({
                         </td>
                         <td style={{ padding: "0.875rem", fontFamily: "var(--font-mono)", fontWeight: 700, color: "#34d399" }}>{p.energy}</td>
                         <td style={{ padding: "0.875rem", fontFamily: "var(--font-mono)", fontWeight: 700, color: "#fbbf24" }}>{p.wealth}</td>
+                        {!isLab && (
                         <td
                           style={{
                             padding: "0.875rem",
@@ -1981,6 +2077,7 @@ export const AdminView: React.FC<Props> = ({
                             )}
                           </div>
                         </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -1989,7 +2086,7 @@ export const AdminView: React.FC<Props> = ({
             </div>
           </div>
 
-          <AdminProjectAdjustPanel game={game} />
+          {!isLab && <AdminProjectAdjustPanel game={game} />}
 
           {/* 日志 */}
           <div
@@ -2041,7 +2138,7 @@ export const AdminView: React.FC<Props> = ({
             onMessageScroll={onAdminTxMessageScroll}
             atBottom={adminTxAtBottom}
             onScrollToLatest={scrollAdminTxToLatest}
-            perspectivePlayers={humanPlayers}
+            perspectivePlayers={perspectiveOptions}
             viewAsPlayerId={dmViewAsPlayerId}
             onViewAsPlayerIdChange={(id) => {
               setDmViewAsPlayerId(id);
@@ -2079,53 +2176,89 @@ export const AdminView: React.FC<Props> = ({
                 flexWrap: "wrap",
               }}
             >
-              {humanPlayers.length > 0 && (
+              {perspectiveOptions.length > 0 && (
                 <AdminSectionPerspectiveSelect
                   label="视角"
                   value={uiViewAsPlayerId}
                   onChange={setUiViewAsPlayerId}
-                  players={humanPlayers}
-                  overviewLabel="总览（公共空座位）"
+                  players={perspectiveOptions}
+                  overviewLabel={isLab ? "总览（公共棋盘）" : "总览（公共空座位）"}
                 />
               )}
               <span style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)" }}>
                 {uiViewAsPlayerId
-                  ? `${uiPerspectivePlayer?.name ?? uiViewAsPlayerId} · 只读`
+                  ? `${uiPerspectivePlayer?.name ?? uiViewAsPlayerId} · 只读（左侧栏可翻看战报与速查）`
                   : "公共预览（不可操作）"}
               </span>
             </div>
           </div>
+          {isLab && perspectivePlayers.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.4rem",
+                flexWrap: "wrap",
+                padding: "0.55rem 1.25rem",
+                borderBottom: "1px solid rgba(255,255,255,0.06)",
+                background: "rgba(15, 23, 42, 0.55)",
+              }}
+            >
+              <button
+                type="button"
+                className={`btn btn-sm ${uiViewAsPlayerId === "" ? "btn-primary" : "btn-ghost"}`}
+                onClick={() => setUiViewAsPlayerId("")}
+              >
+                总览
+              </button>
+              {perspectivePlayers.map((p, idx) => {
+                const active = uiViewAsPlayerId === p.id;
+                const seatNum = p.agentIndex ?? idx + 1;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`btn btn-sm ${active ? "btn-primary" : "btn-ghost"}`}
+                    onClick={() => setUiViewAsPlayerId(p.id)}
+                  >
+                    {seatNum}号 {p.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <div
             style={{
-              maxHeight: "70vh",
-              overflow: "auto",
+              height: "min(74vh, 780px)",
+              overflow: "hidden",
               background: "#070b14",
-              transform: "translateZ(0)",
+              position: "relative",
             }}
           >
-            <div style={{ pointerEvents: "none" }}>
-              {uiViewAsPlayerId ? (
-                <GameRoom
-                  game={playerPreviewGame}
-                  myPlayerId={uiViewAsPlayerId}
-                  readOnly
-                  hidePlayerChat
-                  projectImages={projectImages}
-                  eraImages={eraImages}
-                  buffImages={buffImages}
-                  personaImages={personaImages}
-                />
-              ) : (
-                <GameRoom
-                  game={game}
-                  embed
-                  projectImages={projectImages}
-                  eraImages={eraImages}
-                  buffImages={buffImages}
-                  personaImages={personaImages}
-                />
-              )}
-            </div>
+            {uiViewAsPlayerId ? (
+              <GameRoom
+                game={playerPreviewGame}
+                myPlayerId={uiViewAsPlayerId}
+                readOnly
+                contained
+                hidePlayerChat
+                defaultSidebarPanel={isLab ? "history" : null}
+                projectImages={projectImages}
+                eraImages={eraImages}
+                buffImages={buffImages}
+                personaImages={personaImages}
+              />
+            ) : (
+              <GameRoom
+                game={game}
+                embed
+                contained
+                projectImages={projectImages}
+                eraImages={eraImages}
+                buffImages={buffImages}
+                personaImages={personaImages}
+              />
+            )}
           </div>
         </div>
       </div>

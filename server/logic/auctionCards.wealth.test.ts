@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   beginAuctionSession,
+  buildAuctionLotPublicView,
   formatAuctionSoldMessage,
   getMinimumNextBid,
   hammerAuctionLot,
@@ -10,6 +11,7 @@ import {
   playerAuctionAvailableWealth,
   playerAvailableWealth,
   playerPendingTransferOutWealth,
+  setAuctionFocusCard,
 } from "./auctionCards.js";
 import { useForceBuyCard } from "./buffLogic.js";
 import { serializeGameForClient } from "../network/broadcast.js";
@@ -413,5 +415,27 @@ describe("公开加价与确认成交", () => {
     if (resolved.ok) assert.equal(resolved.status, "rejected");
     assert.equal(sender.wealth, -70);
     assert.equal(receiver.wealth, 10);
+  });
+
+  it("跨拍卖场次同名卡牌不泄露上一场 outbid 出价记录", () => {
+    const game = createInitialGame("room-auction-isolation", []);
+    game.phase = "AUCTION";
+    game.currentEra = 2; // 第 1 场拍卖
+    game.players = [player("p1", { wealth: 200 }), player("p2", { wealth: 200 })];
+    beginAuctionSession(game);
+    assert.equal(setAuctionFocusCard(game, "buff_slack").ok, true);
+    assert.equal(placeAuctionBid(game, "p1", 10).ok, true);
+    assert.equal(placeAuctionBid(game, "p2", 55).ok, true);
+    assert.equal(hammerAuctionLot(game).ok, true);
+
+    // 切至第 2 场拍卖并重新拍卖 buff_slack
+    game.currentEra = 3;
+    beginAuctionSession(game);
+    assert.equal(setAuctionFocusCard(game, "buff_slack").ok, true);
+
+    const view = buildAuctionLotPublicView(game);
+    assert.equal(view.auctionBidHistory.length, 0);
+    assert.equal(view.auctionCurrentBid, 0);
+    assert.equal(view.auctionMinimumNextBid, 5);
   });
 });

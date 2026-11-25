@@ -199,6 +199,11 @@ export interface Player {
   aiSlot?: number;
   /** 管理端展示用：该 AI 实际使用的模型（不含 Key） */
   aiModelLabel?: string;
+  /** 6AI 实验室字段 */
+  isAgent?: boolean;
+  agentIndex?: number;
+  agentModel?: string;
+  agentProvider?: string;
 }
 
 export interface EventOption {
@@ -261,6 +266,31 @@ export interface SettlementProjectResult {
 
 export type LotterySource = "random.org" | "server" | "manual";
 
+export type LotteryVisibility = "public" | "private";
+
+export interface PublicFeedItem {
+  id: string;
+  round: number;
+  era: number;
+  phase: Phase;
+  kind: "lottery" | "auction" | "project" | "era" | "system";
+  text: string;
+  timestamp: number;
+}
+
+export interface AiTurnStatus {
+  state: "thinking" | "idle";
+  phase?: Phase;
+  updatedAt: number;
+}
+
+export interface AiChatStatusEntry {
+  playerId: string;
+  playerName: string;
+  state: "thinking" | "silent";
+  updatedAt: number;
+}
+
 export interface LotteryOffer {
   offerId: string;
   playerId: string;
@@ -269,6 +299,7 @@ export interface LotteryOffer {
   roll?: number;
   source?: LotterySource;
   drawnAt?: number;
+  visibility?: LotteryVisibility;
 }
 
 export interface AiAgentFailure {
@@ -351,6 +382,12 @@ export interface GameState {
 
   /** 仅管理端上帝视图下发，玩家端不再接收（避免泄露隐藏信息） */
   logs?: string[];
+  /** 面向全桌玩家与 AI 共享的公开信息流 */
+  publicFeed?: PublicFeedItem[];
+  /** AI 回合思考状态 */
+  aiTurnStatuses?: Record<string, AiTurnStatus>;
+  /** AI 聊天思考/沉默状态（已按当前玩家视角过滤） */
+  aiChatStatuses?: Record<string, Record<string, AiChatStatusEntry>>;
   /** 仅上帝视图：本轮道具流水（玩家视图不下发） */
   roundBuffPlays?: Record<string, unknown>[];
   /** 仅上帝视图：本轮打火机声明（玩家视图不下发） */
@@ -469,4 +506,60 @@ export interface GameState {
   pendingWealthAdjustment?: { offerId: string; playerId: string; delta: number };
   /** 仅管理端：待认领的新设备 */
   pendingDeviceClaims?: { playerId: string; requestedAt: number }[];
+  /** 6AI 实验室：仅管理端上帝视图下发 */
+  isLabExperiment?: boolean;
+  labMeta?: {
+    runId: string;
+    condition: string;
+    name: string;
+    gameIndex: number;
+    totalGames: number;
+    seedBase: number;
+    seed: number;
+    chatEnabled: boolean;
+    memoryEnabled: boolean;
+    predictionEnabled: boolean;
+    mock: boolean;
+    tokenBudgetPerAgent: number;
+  } | null;
+  labTokenUsage?: Record<string, number>;
+  labPredictions?: Array<{
+    id: string;
+    playerId: string;
+    playerName: string;
+    era: number;
+    globalRound: number;
+    ranking: string[];
+    reasoning: string;
+    model?: string;
+    timestamp: number;
+  }>;
+  labDirectMessages?: Array<{
+    id: string;
+    fromId: string;
+    fromName: string;
+    toId: string;
+    toName: string;
+    text: string;
+    timestamp: number;
+    era: number;
+    roundInEra: number;
+    globalRound: number;
+  }>;
+  labAgentDecisions?: Array<{
+    id: string;
+    timestamp: number;
+    phase: Phase;
+    era: number;
+    roundInEra: number;
+    globalRound: number;
+    playerId: string;
+    playerName: string;
+    kind: string;
+    model?: string;
+    reasoning: string;
+    action: unknown;
+    totalTokens?: number;
+    latencyMs?: number;
+  }>;
 }

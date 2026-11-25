@@ -51,6 +51,65 @@ export function normalizeSafetyText(raw: unknown): string {
   return cleanForOutput(raw).normalize("NFKC");
 }
 
+/* ------------------------------------------------------------------ */
+/* PII：AI 的输入与输出都不应携带真实联系方式 / 证件 / 账号             */
+/* ------------------------------------------------------------------ */
+
+export interface PiiMaskResult {
+  text: string;
+  reasons: string[];
+}
+
+const PII_PATTERNS: Array<{ re: RegExp; replacement: string; reason: string }> = [
+  {
+    re: /[\w.+-]+@[\w-]+\.[\w.-]+/g,
+    replacement: "[邮箱已隐藏]",
+    reason: "email",
+  },
+  {
+    re: /(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)/g,
+    replacement: "[联系方式已隐藏]",
+    reason: "phone",
+  },
+  {
+    re: /(?<![0-9Xx])\d{17}[\dXx](?![0-9Xx])/g,
+    replacement: "[证件号已隐藏]",
+    reason: "id",
+  },
+  {
+    re: /(?<!\d)\d{16,19}(?!\d)/g,
+    replacement: "[卡号已隐藏]",
+    reason: "bank",
+  },
+  {
+    // 「微信号 abc12345」「QQ 12345678」这类主动贴出的账号也一并遮住。
+    re: /(?:微信|qq|vx|v信|whatsapp|telegram|电报)(?:号|id)?\s*(?:是|为|:|：)?\s*(?:[a-z][\w.-]{4,}|\d{5,12})/gi,
+    replacement: "[联系方式已隐藏]",
+    reason: "social",
+  },
+];
+
+/**
+ * 把文本里的手机号 / 邮箱 / 证件号 / 卡号 / 社交账号替换掉。
+ * 规则助手用 reasons 做透明提示；AI 玩家观察只取 text，原文不进入模型。
+ */
+export function maskPiiWithReasons(raw: unknown): PiiMaskResult {
+  let text = typeof raw === "string" ? raw : "";
+  const reasons: string[] = [];
+  for (const rule of PII_PATTERNS) {
+    rule.re.lastIndex = 0;
+    if (!rule.re.test(text)) continue;
+    rule.re.lastIndex = 0;
+    text = text.replace(rule.re, rule.replacement);
+    if (!reasons.includes(rule.reason)) reasons.push(rule.reason);
+  }
+  return { text, reasons };
+}
+
+export function maskPiiText(raw: unknown): string {
+  return maskPiiWithReasons(raw).text;
+}
+
 const SELF_HARM_PATTERNS: RegExp[] = [
   /自杀|轻生|自尽|寻死/,
   /不想活|活不下去|活够了|活着(?:真|太)?(?:没|没有)意思|生无可恋/,
@@ -65,6 +124,8 @@ const VIOLENCE_PATTERNS: RegExp[] = [
   /杀(?:了|死|掉)(?:他|她|他们|人)|想杀(?:人|他|她)|砍死|捅死/,
   /报复社会|炸(?:学校|公司|地铁|列车)/,
   /伤害(?:别人|他人|同学|家人|舍友)/,
+  // 委婉说法也算暴力信号：「我想让欺负我的人消失」。
+  /(?:想|要|打算)?(?:让|把)(?:那个|这个)?(?:欺负我的人|霸凌我的人|他|她|他们|某人|人)[^。！？\n]{0,6}(?:消失|死|闭嘴|滚)/,
   /\b(?:kill (?:him|her|them|someone)|hurt (?:him|her|them))\b/i,
 ];
 
@@ -109,7 +170,7 @@ export function isCrisisReply(raw: unknown): boolean {
   return cleanForOutput(raw) === CRISIS_REPLY;
 }
 
-export type OutputKind = "chat" | "note" | "name";
+export type OutputKind = "chat" | "note" | "name" | "groupName";
 
 export interface OutputGuardResult {
   /** 原文是否通过检查（false 表示已被拦截或替换） */
@@ -124,6 +185,8 @@ const MAX_CHARS: Record<OutputKind, number> = {
   chat: 120,
   note: 80,
   name: 20,
+  // 群名允许标点（如「合作（3人）」），只限长度，格式交给 chatGroups 再截断。
+  groupName: 20,
 };
 
 type GuardRule = { reason: string; re: RegExp };
@@ -135,7 +198,7 @@ type GuardRule = { reason: string; re: RegExp };
 const GUARD_RULES: GuardRule[] = [
   {
     reason: "prompt_leak",
-    re: /系统提示词|system\s*prompt|开发者指令|内部指令|忽略(?:之前|以上|先前)的?指令|ignore (?:all )?(?:previous|above) instructions|我的设定是/i,
+    re: /系统提示词|system\s*prompt|开发者指令|内部指令|人设与边界（三段式）|数据分级（红黄绿）|危机协议（优先级高于游戏）|输出纪律|忽略(?:之前|以上|先前)的?指令|ignore (?:all )?(?:previous|above) instructions|我的设定是/i,
   },
   {
     reason: "harmful",

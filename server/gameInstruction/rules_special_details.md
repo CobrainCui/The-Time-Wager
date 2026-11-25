@@ -127,7 +127,7 @@
 ---
 
 ## 7. 主持（管理员）能力
-- **系统自动主持** `AUTO_HOST_ENABLED`（产品版默认开）：等待房自动开局、时代介绍/结算自动推进、拍卖自动聚焦/落槌/跳过/结束、彩票自动随机开奖、命名超时兜底。管理端可按房间开关 `adminSetAutoHost`，手动操作始终优先。
+- **系统自动主持** `AUTO_HOST_ENABLED`（产品版默认开）：等待房自动开局；有在线真人时，时代介绍/结算/投资不会自动进入下一阶段（回合等倒计时结束或玩家点击继续），只在停留过久时由系统主持人提醒；没有在线真人时才自动推进；拍卖自动聚焦/落槌/跳过/结束、彩票自动随机开奖、命名超时兜底。管理端可按房间开关 `adminSetAutoHost`，手动操作始终优先。
 - **项目调整** `adminProjectAdjust`：投资/结算阶段可 `stake`（±投入）或 `withdraw`（强制撤场退本轮精力）；带 `hostRevision` 防并发；结算阶段从基线还原重算。
 - **发牌 / 收牌** `adminPlayerCard`：向 `inventory` 追加任意卡或移除手牌（支持定位同名多张）；AI 不可操作。
 - **投资解锁 / 强制结算 / 跳转** `adminUnlockPlayer / adminForceSettle / adminSkipPhase`：跳到 `ERA_INTRO/ROOM_WAITING` 会重置；跳到 `INVESTMENT/AUCTION` 自动准备对应状态。

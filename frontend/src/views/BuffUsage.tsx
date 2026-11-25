@@ -6,12 +6,10 @@ import { useServerClockSkewRef } from "../hooks/useServerClockSkewRef";
 import { isInvestmentBuffLockout } from "../utils/investmentBuffLockout";
 import {
   HELP_BUFF_LOCKOUT,
-  HELP_BUFF_SETTLEMENT_BULLETS,
-  HELP_BUFF_USE_TIMING_BULLETS,
-  HELP_INVESTMENT_SELF_UNLOCK,
+  HELP_BUFF_PAGE_HINT,
 } from "../config/playerHelpReference";
-import { GuideBulletList } from "../components/help/GuideBulletList";
-
+import { BuffDescText, stripBuffDescEmphasis } from "../utils/buffDescEmphasis";
+import { BuffDescExpandable } from "../components/BuffDescExpandable";
 import {
   BUFF_CARD_DEFS,
   BUFF_UI_SNIPPETS,
@@ -22,7 +20,6 @@ import type { PlayerSidebarPanelId } from "../config/playerHelpReference";
 import { BuffCardArt } from "../components/BuffCardArt";
 import { BuffRoundChips } from "../components/BuffRoundChips";
 import { formatBuffTargetPlayerOption } from "../utils/buffTargetPlayerLabel";
-import { BuffDescText, stripBuffDescEmphasis } from "../utils/buffDescEmphasis";
 
 interface Props {
   game: GameState;
@@ -58,6 +55,7 @@ export const BuffUsage: React.FC<Props> = ({
   const [targetPlayer, setTargetPlayer] = useState("");
   const [targetProject, setTargetProject] = useState<number | undefined>(undefined);
   const [burnCardId, setBurnCardId] = useState("");
+  const [lotteryVisibility, setLotteryVisibility] = useState<"public" | "private">("public");
   const clockSkewRef = useServerClockSkewRef(game.serverNow);
   const [, lockoutTick] = useState(0);
 
@@ -150,11 +148,13 @@ export const BuffUsage: React.FC<Props> = ({
       targetPlayerId: effectiveTargetPlayer || undefined,
       targetProjectId: targetProject,
       burnCardId: burnCardId || undefined,
+      ...(selectedCard === "buff_lottery" ? { visibility: lotteryVisibility } : {}),
     });
     setSelection(null);
     setTargetPlayer("");
     setTargetProject(undefined);
     setBurnCardId("");
+    setLotteryVisibility("public");
   };
 
   const selectedDef = selectedCard ? getBuffDef(selectedCard) : null;
@@ -196,18 +196,12 @@ export const BuffUsage: React.FC<Props> = ({
               padding: hideDock ? "0 0.25rem" : undefined,
             }}
           >
-            <GuideBulletList
-              items={[...HELP_BUFF_USE_TIMING_BULLETS, ...HELP_BUFF_SETTLEMENT_BULLETS]}
-              fontSize={uiRem(hideDock ? 0.75 : 0.82)}
-            />
-            {!hideDock && (
-              <p style={{ margin: "0.35rem 0 0", fontSize: uiRem(0.82), color: "var(--color-text-secondary)" }}>
-                {HELP_INVESTMENT_SELF_UNLOCK}
-              </p>
-            )}
+            <p style={{ margin: 0, fontSize: uiRem(hideDock ? 0.75 : 0.82), lineHeight: 1.5 }}>
+              {HELP_BUFF_PAGE_HINT}
+            </p>
             {hideDock && !readOnly && (
               <p style={{ margin: "0.35rem 0 0", fontSize: uiRem(0.72) }}>
-                你已锁定投资时不可再发动道具。
+                锁定投资后不可再发动道具。
               </p>
             )}
             {buffLockoutActive && (
@@ -326,6 +320,19 @@ export const BuffUsage: React.FC<Props> = ({
                             </span>
                           ) : null}
                         </div>
+                        {def.tagline && (
+                          <div
+                            style={{
+                              fontSize: uiRem(0.72),
+                              color: def.color,
+                              fontWeight: 700,
+                              lineHeight: 1.35,
+                              marginBottom: "0.2rem",
+                            }}
+                          >
+                            {def.tagline}
+                          </div>
+                        )}
                         <div
                           style={{
                             fontSize: uiRem(0.72),
@@ -336,7 +343,7 @@ export const BuffUsage: React.FC<Props> = ({
                               : {
                                   overflow: "hidden",
                                   display: "-webkit-box",
-                                  WebkitLineClamp: 3,
+                                  WebkitLineClamp: 4,
                                   WebkitBoxOrient: "vertical",
                                 }),
                           }}
@@ -455,6 +462,67 @@ export const BuffUsage: React.FC<Props> = ({
                     </div>
                   )}
 
+                  {selectedCard === "buff_lottery" && (
+                    <div>
+                      <label
+                        style={{
+                          display: "block",
+                          fontSize: uiRem(0.7),
+                          fontWeight: 700,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.08em",
+                          color: "var(--color-text-muted)",
+                          marginBottom: "0.5rem",
+                        }}
+                      >
+                        开奖方式（打出前选择）
+                      </label>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                        {(
+                          [
+                            {
+                              id: "public" as const,
+                              title: "📢 公开开奖",
+                              desc: "全桌仅见掷出几点",
+                            },
+                            {
+                              id: "private" as const,
+                              title: "🤫 私密开奖",
+                              desc: "仅自己可见",
+                            },
+                          ] as const
+                        ).map((opt) => {
+                          const active = lotteryVisibility === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => setLotteryVisibility(opt.id)}
+                              style={{
+                                textAlign: "left",
+                                padding: "0.55rem 0.65rem",
+                                borderRadius: "0.625rem",
+                                cursor: "pointer",
+                                border: active
+                                  ? "1.5px solid #ec4899"
+                                  : "1px solid var(--color-border)",
+                                background: active
+                                  ? "rgba(236,72,153,0.16)"
+                                  : "rgba(15,23,42,0.45)",
+                                color: active ? "#f9a8d4" : "var(--color-text-secondary)",
+                              }}
+                            >
+                              <div style={{ fontWeight: 700, fontSize: uiRem(0.82) }}>{opt.title}</div>
+                              <div style={{ fontSize: uiRem(0.7), opacity: 0.85, marginTop: "0.15rem" }}>
+                                {opt.desc}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {selectedDef && (
                     <div
                       style={{
@@ -467,7 +535,13 @@ export const BuffUsage: React.FC<Props> = ({
                         padding: "0.75rem",
                       }}
                     >
-                      <BuffDescText text={selectedDef.desc} />
+                      <BuffDescExpandable
+                        desc={selectedDef.desc}
+                        tagline={selectedDef.tagline}
+                        color={selectedDef.color}
+                        fontSize={uiRem(0.825)}
+                        defaultOpen
+                      />
                     </div>
                   )}
 

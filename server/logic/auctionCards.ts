@@ -7,6 +7,7 @@ import {
   GameState,
 } from "../state/gameState.js";
 import { buffCards } from "../data/game_data.js";
+import { appendPublicFeed } from "../util/publicFeed.js";
 
 export type PublicAuctionSoldSource = "hammer" | "force_buy";
 
@@ -78,6 +79,11 @@ export function recordAuctionCompletedDeal(
     (d) => !(d.cardId === cardId && d.auctionRound === round)
   );
   game.auctionCompletedDeals.push({ cardId, playerId, cost, source, auctionRound: round });
+  appendPublicFeed(
+    game,
+    "auction",
+    formatAuctionSoldMessage(game, { cardId, playerId, cost, source })
+  );
 }
 
 export function unmarkAuctionCardDistributed(game: GameState, cardId: string): void {
@@ -114,7 +120,10 @@ export function ensureAuctionBids(game: GameState): AuctionBidRecord[] {
 export function getLeadingBidOnFocus(game: GameState): AuctionBidRecord | undefined {
   const focusId = game.auctionFocusCardId;
   if (!focusId) return undefined;
-  return (game.auctionBids ?? []).find((b) => b.cardId === focusId && b.status === "leading");
+  const round = getAuctionRound(game);
+  return (game.auctionBids ?? []).find(
+    (b) => b.cardId === focusId && b.status === "leading" && (b.auctionRound ?? round) === round
+  );
 }
 
 /** 现在最高价；还没人出价时为 0 */
@@ -130,8 +139,12 @@ export function getMinimumNextBid(game: GameState): number {
 }
 
 export function getOpenBidsOnCard(game: GameState, cardId: string): AuctionBidRecord[] {
+  const round = getAuctionRound(game);
   return (game.auctionBids ?? []).filter(
-    (b) => b.cardId === cardId && (b.status === "leading" || b.status === "outbid")
+    (b) =>
+      b.cardId === cardId &&
+      (b.auctionRound ?? round) === round &&
+      (b.status === "leading" || b.status === "outbid")
   );
 }
 
@@ -140,9 +153,10 @@ export function voidOpenBidsOnCard(
   cardId: string,
   status: Extract<AuctionBidStatus, "void_passed" | "void_force_buy" | "void_lot_changed">
 ): number {
+  const round = getAuctionRound(game);
   let n = 0;
   for (const b of ensureAuctionBids(game)) {
-    if (b.cardId !== cardId) continue;
+    if (b.cardId !== cardId || (b.auctionRound ?? round) !== round) continue;
     if (b.status === "leading" || b.status === "outbid") {
       b.status = status;
       n += 1;
@@ -534,8 +548,9 @@ export function publicBidHistoryForCard(
   status: "leading" | "outbid" | "won" | "void_passed" | "void_force_buy" | "void_lot_changed";
 }[] {
   if (!cardId) return [];
+  const round = getAuctionRound(game);
   const bids = (game.auctionBids ?? [])
-    .filter((b) => b.cardId === cardId)
+    .filter((b) => b.cardId === cardId && (b.auctionRound ?? round) === round)
     .filter((b) => b.status === "leading" || b.status === "outbid")
     .sort((a, b) => a.timestamp - b.timestamp);
   let prevAmount = AUCTION_STARTING_BID;

@@ -5,6 +5,9 @@ import { GameState } from "../types";
 import { AdminView } from "../views/AdminView";
 import { AdminImageManager } from "./AdminImageManager";
 import { AdminSessionHistory } from "./AdminSessionHistory";
+import AdminFeedback from "./AdminFeedback";
+import { AdminLab } from "./lab/AdminLab";
+import { fetchLabStatus } from "./lab/labApi";
 import { AdminLogin } from "./AdminLogin";
 import { clearAdminToken, getAdminToken, setAdminToken } from "./adminToken";
 import { ConnectionGate } from "../components/ConnectionGate";
@@ -12,7 +15,7 @@ import { handleServerClientUpdateRequired } from "../bootstrapAppUpdate";
 import { useSocketConnection } from "../hooks/useSocketConnection";
 
 type AuthState = "connecting" | "login" | "authenticated";
-type AdminScreen = "rooms" | "images" | "sessions";
+type AdminScreen = "rooms" | "images" | "sessions" | "feedback" | "lab";
 
 interface AdminRoomSummary {
   roomId: string;
@@ -21,6 +24,19 @@ interface AdminRoomSummary {
 }
 
 const AUTH_TIMEOUT_MS = 15_000;
+
+/** 房间列表阶段名（与 AdminView 顶部一致，避免向管理员暴露枚举值） */
+const ADMIN_PHASE_NAMES: Record<string, string> = {
+  ROOM_WAITING: "等候开局",
+  ERA_INTRO: "时代介绍",
+  TUTORIAL: "新手教程",
+  INVESTMENT: "投资与道具",
+  BUFF_USAGE: "投资与道具",
+  SETTLEMENT: "本轮结算",
+  AUCTION: "拍卖会",
+  GAME_OVER: "游戏结束",
+  COMMUNITY_NAMING: "社区命名",
+};
 
 export default function AdminApp() {
   const { connected, everConnected, error: connectError, retry: retryConnect } = useSocketConnection();
@@ -35,12 +51,35 @@ export default function AdminApp() {
   const [personaImages, setPersonaImages] = useState<Record<string, number>>({});
   const [adminScreen, setAdminScreen] = useState<AdminScreen>("rooms");
   const [aiPlayersEnabled, setAiPlayersEnabled] = useState(true);
+  const [labTransition, setLabTransition] = useState<{
+    kind: "switching" | "switched" | "finished";
+    message: string;
+  } | null>(null);
 
+  const gameRef = useRef<GameState | null>(null);
+  gameRef.current = game;
   const spectatingRoomIdRef = useRef<string | null>(null);
+  const returnScreenRef = useRef<AdminScreen>("rooms");
   const authTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const labPollSeqRef = useRef(0);
+  const labPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const labToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 进行中的鉴权序号；null 表示无等待 */
   const pendingAuthSeqRef = useRef<number | null>(null);
   const authSeqRef = useRef(0);
+
+  const cancelLabTransition = useCallback((clearBanner = true) => {
+    labPollSeqRef.current += 1;
+    if (labPollTimerRef.current) {
+      clearTimeout(labPollTimerRef.current);
+      labPollTimerRef.current = null;
+    }
+    if (labToastTimerRef.current) {
+      clearTimeout(labToastTimerRef.current);
+      labToastTimerRef.current = null;
+    }
+    if (clearBanner) setLabTransition(null);
+  }, []);
 
   const clearAuthTimeout = useCallback(() => {
     if (authTimeoutRef.current) {
@@ -163,8 +202,78 @@ export default function AdminApp() {
     const onGameUpdate = (newGame: GameState) => setGame(newGame);
     const onAdminRoomList = (list: AdminRoomSummary[]) => setAdminRoomList(list);
     const onRoomDissolved = () => {
-      alert("房间已解散");
-      setGame(null);
+      const cur = gameRef.current;
+      const isLabSpectating = Boolean(cur?.isLabExperiment || returnScreenRef.current === "lab");
+      if (!isLabSpectating) {
+        alert("房间已解散");
+        spectatingRoomIdRef.current = null;
+        setGame(null);
+        return;
+      }
+
+      cancelLabTransition(false);
+      const seq = labPollSeqRef.current;
+      const prevRoomId = cur?.roomId ?? spectatingRoomIdRef.current;
+      const prevMeta = cur?.labMeta ?? null;
+      const hasNextGame = prevMeta ? prevMeta.gameIndex + 1 < prevMeta.totalGames : true;
+
+      setLabTransition({
+        kind: "switching",
+        message:
+          prevMeta && hasNextGame
+            ? `第 ${prevMeta.gameIndex + 1}/${prevMeta.totalGames} 局已归档，正在自动切入第 ${prevMeta.gameIndex + 2}/${prevMeta.totalGames} 局…`
+            : "本局已结束并归档，正在同步实验状态…",
+      });
+
+      const finishMsg = prevMeta
+        ? `本批实验（共 ${prevMeta.totalGames} 局）已全部完成并归档，可点击返回实验室查看结果。`
+        : "本批实验已结束并归档，可点击返回实验室查看结果。";
+
+      const pollNext = (attempt: number) => {
+        if (labPollSeqRef.current !== seq) return;
+        void fetchLabStatus()
+          .then((status) => {
+            if (labPollSeqRef.current !== seq) return;
+            if (status.running && status.roomId && status.roomId !== prevRoomId) {
+              spectatingRoomIdRef.current = status.roomId;
+              socket.emit("adminSpectate", { targetRoomId: status.roomId });
+              socket.emit("requestGameState");
+              setLabTransition({
+                kind: "switched",
+                message: `已自动切入第 ${status.currentGameIndex + 1}/${status.totalGames} 局`,
+              });
+              labToastTimerRef.current = setTimeout(() => {
+                if (labPollSeqRef.current === seq) setLabTransition(null);
+              }, 3500);
+              return;
+            }
+            if (!status.running) {
+              setLabTransition({ kind: "finished", message: finishMsg });
+              return;
+            }
+            if (attempt + 1 >= 30) {
+              setLabTransition({
+                kind: "finished",
+                message: "等待下一局超时，请点击返回实验室查看最新运行状态。",
+              });
+              return;
+            }
+            labPollTimerRef.current = setTimeout(() => pollNext(attempt + 1), 500);
+          })
+          .catch(() => {
+            if (labPollSeqRef.current !== seq) return;
+            if (attempt + 1 >= 30) {
+              setLabTransition({
+                kind: "finished",
+                message: "无法获取实验室最新状态，请点击返回实验室查看。",
+              });
+              return;
+            }
+            labPollTimerRef.current = setTimeout(() => pollNext(attempt + 1), 500);
+          });
+      };
+
+      labPollTimerRef.current = setTimeout(() => pollNext(0), 500);
     };
     const onSocketError = (msg: string) => {
       alert(typeof msg === "string" ? msg : "操作失败");
@@ -193,6 +302,7 @@ export default function AdminApp() {
 
     return () => {
       clearAuthTimeout();
+      cancelLabTransition(false);
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("gameUpdate", onGameUpdate);
@@ -205,7 +315,7 @@ export default function AdminApp() {
       socket.off("syncBuffImages", onSyncBuffImages);
       socket.off("syncPersonaImages", onSyncPersonaImages);
     };
-  }, [authenticate, clearAuthTimeout]);
+  }, [authenticate, clearAuthTimeout, cancelLabTransition]);
 
   useEffect(() => {
     const onVisible = () => {
@@ -217,7 +327,9 @@ export default function AdminApp() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [authState, game]);
 
-  const handleSpectate = (roomId: string) => {
+  const handleSpectate = (roomId: string, returnTo: AdminScreen = "rooms") => {
+    cancelLabTransition(true);
+    returnScreenRef.current = returnTo;
     spectatingRoomIdRef.current = roomId;
     socket.emit("adminSpectate", { targetRoomId: roomId });
     // 确保拿到 god 视图完整字段（pendingAuctionOffers 等）
@@ -225,10 +337,11 @@ export default function AdminApp() {
   };
 
   const handleExitRoom = () => {
+    cancelLabTransition(true);
     spectatingRoomIdRef.current = null;
     if (game) socket.emit("adminLeaveRoom", { roomId: game.roomId });
     setGame(null);
-    setAdminScreen("rooms");
+    setAdminScreen(returnScreenRef.current);
   };
 
   const handleLogin = (token: string) => {
@@ -240,6 +353,7 @@ export default function AdminApp() {
   };
 
   const handleLogout = () => {
+    cancelLabTransition(true);
     pendingAuthSeqRef.current = null;
     clearAuthTimeout();
     clearAdminToken();
@@ -278,7 +392,15 @@ export default function AdminApp() {
           buffImages={buffImages}
           personaImages={personaImages}
           aiPlayersEnabled={aiPlayersEnabled}
+          labTransition={labTransition}
         />
+      ) : adminScreen === "lab" ? (
+        <AdminLab
+          onBack={() => setAdminScreen("rooms")}
+          onSpectateLabRoom={(roomId) => handleSpectate(roomId, "lab")}
+        />
+      ) : adminScreen === "feedback" ? (
+        <AdminFeedback onBack={() => setAdminScreen("rooms")} />
       ) : adminScreen === "sessions" ? (
         <AdminSessionHistory onBack={() => setAdminScreen("rooms")} />
       ) : adminScreen === "images" ? (
@@ -315,13 +437,33 @@ export default function AdminApp() {
           >
             <div>
               <h1 style={{ fontSize: "2.5rem", fontWeight: 900, color: "#fbbf24", marginBottom: "0.375rem" }}>
-                上帝视角控制台
+                管理控制台
               </h1>
               <p style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.9) }}>
                 当前活跃房间 ({adminRoomList.length})
               </p>
             </div>
             <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{
+                  background: "rgba(16,185,129,0.16)",
+                  border: "1px solid rgba(16,185,129,0.45)",
+                  color: "#6ee7b7",
+                  fontWeight: 700,
+                }}
+                onClick={() => setAdminScreen("lab")}
+              >
+                🧪 6AI 实验室
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setAdminScreen("feedback")}
+              >
+                玩家评价
+              </button>
               <button
                 type="button"
                 className="btn btn-primary btn-sm"
@@ -372,7 +514,7 @@ export default function AdminApp() {
                 </div>
                 <div style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.85), marginBottom: "1.25rem" }}>
                   <div>人数：{room.playerCount} / 6</div>
-                  <div>阶段：{room.phase}</div>
+                  <div>阶段：{ADMIN_PHASE_NAMES[room.phase] || room.phase}</div>
                 </div>
                 <button
                   type="button"

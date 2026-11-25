@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { uiRem } from "../utils/typography";
 import { GameState, Player } from "../types";
 import { socket } from "../socket";
+import { AutoHostCountdown } from "../components/AutoHostCountdown";
 import { ProjectCard } from "../components/ProjectCard";
 import { EraThemeBanner } from "../components/EraThemeBanner";
 import { useActionCountdown } from "../hooks/useActionCountdown";
@@ -409,13 +410,13 @@ export const Investment: React.FC<Props> = ({
 
   const showCoffeePurchaseSuccess = useCallback((cupsAfter: number) => {
     setCoffeeSuccessToast(
-      `咖啡购买成功（本轮第 ${cupsAfter} 杯）：花费 ${COFFEE_WEALTH_COST} 财富，获得 ${COFFEE_ENERGY_GAIN} 精力`
+      `咖啡购买成功（本轮第 ${cupsAfter} 杯）：-${COFFEE_WEALTH_COST} 财富，+${COFFEE_ENERGY_GAIN} 精力`
     );
   }, []);
 
   const showCoffeeRefundSuccess = useCallback((refunded: number, cupsRemaining: number) => {
     setCoffeeSuccessToast(
-      `咖啡退订成功（${refunded} 杯）：返还 ${refunded * COFFEE_WEALTH_COST} 财富，减少 ${refunded * COFFEE_ENERGY_GAIN} 精力；本轮剩余 ${cupsRemaining} 杯`
+      `已退订 ${refunded} 杯：+${refunded * COFFEE_WEALTH_COST} 财富，-${refunded * COFFEE_ENERGY_GAIN} 精力；本轮剩 ${cupsRemaining} 杯`
     );
   }, []);
 
@@ -495,7 +496,7 @@ export const Investment: React.FC<Props> = ({
     if (abandonWarnings.length > 0) {
       if (
         !window.confirm(
-          `确认提交？注意：你对 ${abandonWarnings.join(", ")} 本轮投入不足 ${LONG_CONTINUE_MIN_ENERGY} 点精力，将视为放弃：累计投入的每 1 点精力返还 1 点财富，并退出该项目完成时的排名与时代加成。`
+          `确认提交？你对 ${abandonWarnings.join(", ")} 本轮投入不足 ${LONG_CONTINUE_MIN_ENERGY} 点，将视为放弃：累计每点返还 1 财富，并退出排名与时代加成。`
         )
       ) {
         return;
@@ -503,7 +504,9 @@ export const Investment: React.FC<Props> = ({
     } else {
       if (
         !window.confirm(
-          `确认提交投资方案吗？提交后将锁定方案；倒计时结束前可自行解锁修改。${HELP_INVESTMENT_ADVANCE_WHEN_ALL_LOCKED}`
+          game.autoHostEnabled
+            ? `确认提交？锁定后倒计时结束前仍可解锁修改；全员锁定后约 4 秒自动进入结算。`
+            : `确认提交？锁定后倒计时结束前仍可解锁修改；本轮在倒计时结束后进入结算。`
         )
       ) {
         return;
@@ -668,7 +671,7 @@ export const Investment: React.FC<Props> = ({
       coffeePendingRef.current = 0;
       coffeeAttemptSnapRef.current = null;
       setCoffeeLoading(false);
-      alert("购买咖啡未确认。若财富已扣除仍无 ☕ 图标，请硬刷新页面；持续异常请联系主持检查服务端是否已部署最新版本。");
+      alert("购买未确认，请刷新页面重试。");
     }, 4_000);
     return () => window.clearTimeout(t);
   }, [coffeeLoading]);
@@ -855,8 +858,8 @@ export const Investment: React.FC<Props> = ({
               animation: investSecondsLeft <= 20 ? "pulse 0.8s infinite" : undefined,
             }}
           >
-            倒计时结束将自动提交当前方案：{longAbandonRiskNames.join("、")} 未满 {LONG_CONTINUE_MIN_ENERGY}{" "}
-            点精力，将视为放弃（累计投入的每 1 点精力返还 1 点财富，并退出完成排名）。
+            倒计时结束将自动提交：{longAbandonRiskNames.join("、")} 未满 {LONG_CONTINUE_MIN_ENERGY}{" "}
+            点，将视为放弃（累计每点返还 1 财富，并退出排名）。
           </div>
         )}
 
@@ -920,7 +923,11 @@ export const Investment: React.FC<Props> = ({
       </div>
 
         {/* 提交区域；置于主内容外，避免挤占滚动高度计算 */}
-        {!embed && (
+        {!embed && (() => {
+          const thinkingNames = Object.entries(game.aiTurnStatuses ?? {})
+            .filter(([, st]) => st.state === "thinking")
+            .map(([pid]) => game.players.find((p) => p.id === pid)?.name ?? pid);
+          return (
         <div
           ref={submitDockRef}
           className="investment-submit-dock"
@@ -933,10 +940,39 @@ export const Investment: React.FC<Props> = ({
             borderTop: "1px solid var(--color-border)",
             backdropFilter: "blur(20px)",
             display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
             justifyContent: "center",
+            gap: "0.45rem",
             zIndex: 50,
           }}
         >
+          {thinkingNames.length > 0 && (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.35rem",
+                padding: "0.2rem 0.65rem",
+                borderRadius: "9999px",
+                background: "rgba(234, 179, 8, 0.12)",
+                border: "1px solid rgba(234, 179, 8, 0.32)",
+                color: "#fde047",
+                fontSize: uiRem(0.75),
+                fontWeight: 600,
+              }}
+            >
+              ⏳ {thinkingNames.join("、")} 正在思考投资方案…
+            </div>
+          )}
+          {game.autoHostEnabled && game.autoHostNextActionAt && (
+            <AutoHostCountdown
+              at={game.autoHostNextActionAt}
+              serverNow={game.serverNow}
+              label="全员已锁定，即将进入结算（可解锁）"
+              compact
+            />
+          )}
           {formLocked ? (
             <div
               style={{
@@ -969,7 +1005,11 @@ export const Investment: React.FC<Props> = ({
                   }}
                 />
                 <span style={{ fontWeight: 700, color: "#34d399", fontSize: uiRem(1) }}>
-                  {isSubmitted ? "已锁定，等待其他在线玩家…" : "正在提交…"}
+                  {isSubmitted
+                    ? game.autoHostEnabled
+                      ? "已锁定，等待其他玩家或全员锁定后自动结算"
+                      : "已锁定，本轮将在倒计时结束后结算"
+                    : "正在提交…"}
                 </span>
               </div>
               {isSubmitted && (
@@ -1021,7 +1061,8 @@ export const Investment: React.FC<Props> = ({
             </button>
           )}
         </div>
-        )}
+          );
+        })()}
     </div>
   );
 };

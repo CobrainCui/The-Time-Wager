@@ -123,7 +123,7 @@ export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
             </button>
           </div>
           <div className="waiting-mode">
-            {game.autoHostEnabled ? "系统主持 · 自动推进" : "等待主持人"}
+            {game.autoHostEnabled ? "系统主持 · 自动开局" : "等待主持人"}
           </div>
         </header>
 
@@ -249,7 +249,7 @@ export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
             )}
             {error && <p className="waiting-error" role="alert">{error}</p>}
             <p className="waiting-note waiting-note--muted">
-              房主是你：设置只影响本房间，开局后不能再改。
+              设置仅本房间生效，开局后锁定。
             </p>
           </section>
         ) : (
@@ -262,7 +262,9 @@ export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
         )}
 
         <div className="waiting-foot">
-          {game.autoStartAt != null && <AutoHostCountdown at={game.autoStartAt} label="自动开局" />}
+          {game.autoStartAt != null && (
+            <AutoHostCountdown at={game.autoStartAt} serverNow={game.serverNow} label="自动开局" />
+          )}
           {isOwner && (
             <button
               type="button"

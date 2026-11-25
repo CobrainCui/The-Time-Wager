@@ -6,6 +6,11 @@
  * - 严格模式（默认）下，AI 必须全程由模型决策；未配置/未连通模型时拒绝添加与开局，不退回本地启发式策略。
  * - 单次决策有硬超时；超过宽限时间由看门狗强制 ready。
  */
+import {
+  DEFAULT_LAB_SIX_SEAT_MODELS,
+  SILICONFLOW_DEFAULT_BASE_URL,
+  SILICONFLOW_PLACEHOLDER_KEY,
+} from "../lab/siliconflowModels.js";
 
 function envBool(name: string, fallback: boolean): boolean {
   const raw = (process.env[name] ?? "").trim().toLowerCase();
@@ -52,6 +57,8 @@ function isPlaceholderKey(key: string): boolean {
   const k = key.trim().toLowerCase();
   if (!k) return true;
   return (
+    k === SILICONFLOW_PLACEHOLDER_KEY ||
+    k.includes("siliconflow-placeholder") ||
     k.includes("placeholder") ||
     k.includes("your_api_key") ||
     k.includes("your-key") ||
@@ -63,20 +70,50 @@ function isPlaceholderKey(key: string): boolean {
 /**
  * 共享模型配置优先级：
  *   AI_API_KEY / AI_BASE_URL / AI_MODEL
+ *   → SILICONFLOW_API_KEY / SILICONFLOW_BASE_URL / SILICONFLOW_MODEL
  *   → OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
- *   → DEEPSEEK_API_KEY（无 AI/OPENAI Key 时）
+ *   → DEEPSEEK_API_KEY（无 AI/SILICONFLOW/OPENAI Key 时）
  */
 function resolveSharedModelConfig(): AiModelConfig | null {
   const explicitKey = firstNonEmpty(process.env.AI_API_KEY);
+  const siliconflowKey = firstNonEmpty(process.env.SILICONFLOW_API_KEY);
   const openaiKey = firstNonEmpty(process.env.OPENAI_API_KEY);
   const deepseekKey = firstNonEmpty(process.env.DEEPSEEK_API_KEY, process.env.RULE_AGENT_API_KEY);
 
   if (explicitKey && !isPlaceholderKey(explicitKey)) {
+    const rawBaseUrl =
+      firstNonEmpty(process.env.AI_BASE_URL, process.env.SILICONFLOW_BASE_URL, process.env.OPENAI_BASE_URL) ||
+      undefined;
+    const rawProvider = firstNonEmpty(process.env.AI_PROVIDER);
+    const looksSiliconFlow =
+      rawProvider.toLowerCase() === "siliconflow" ||
+      (rawBaseUrl ?? "").toLowerCase().includes("siliconflow");
     return {
       apiKey: explicitKey,
-      baseURL: firstNonEmpty(process.env.AI_BASE_URL, process.env.OPENAI_BASE_URL) || undefined,
-      model: firstNonEmpty(process.env.AI_MODEL, process.env.OPENAI_MODEL, "gpt-4o"),
-      provider: firstNonEmpty(process.env.AI_PROVIDER, "custom"),
+      baseURL: rawBaseUrl || (looksSiliconFlow ? SILICONFLOW_DEFAULT_BASE_URL : undefined),
+      model: firstNonEmpty(
+        process.env.AI_MODEL,
+        process.env.SILICONFLOW_MODEL,
+        process.env.OPENAI_MODEL,
+        looksSiliconFlow ? DEFAULT_LAB_SIX_SEAT_MODELS[0] : "gpt-4o"
+      ),
+      provider: rawProvider || (looksSiliconFlow ? "siliconflow" : "custom"),
+      source: "shared",
+    };
+  }
+
+  if (siliconflowKey && !isPlaceholderKey(siliconflowKey)) {
+    return {
+      apiKey: siliconflowKey,
+      baseURL:
+        firstNonEmpty(process.env.SILICONFLOW_BASE_URL, process.env.AI_BASE_URL, SILICONFLOW_DEFAULT_BASE_URL) ||
+        SILICONFLOW_DEFAULT_BASE_URL,
+      model: firstNonEmpty(
+        process.env.AI_MODEL,
+        process.env.SILICONFLOW_MODEL,
+        DEFAULT_LAB_SIX_SEAT_MODELS[0]
+      ),
+      provider: firstNonEmpty(process.env.AI_PROVIDER, "siliconflow"),
       source: "shared",
     };
   }
@@ -97,13 +134,20 @@ function resolveSharedModelConfig(): AiModelConfig | null {
       baseURL:
         firstNonEmpty(process.env.AI_BASE_URL, process.env.DEEPSEEK_BASE_URL, "https://api.deepseek.com") ||
         undefined,
-      model: firstNonEmpty(process.env.AI_MODEL, process.env.DEEPSEEK_MODEL, "deepseek-chat"),
+      model: firstNonEmpty(process.env.AI_MODEL, process.env.DEEPSEEK_MODEL, "deepseek-v4-pro"),
       provider: "deepseek",
       source: "shared",
     };
   }
 
   return null;
+}
+
+/** 6AI 实验室 1～6 号座位默认模型列表（优先读取 LAB_PLAYER_<1..6>_MODEL，未填则用不同厂商默认阵容）。 */
+export function resolveLabDefaultSeatModels(): string[] {
+  return DEFAULT_LAB_SIX_SEAT_MODELS.map((fallback, idx) =>
+    firstNonEmpty(process.env[`LAB_PLAYER_${idx + 1}_MODEL`], fallback)
+  );
 }
 
 function slotEnv(slot: number, field: string): string {
@@ -179,15 +223,20 @@ export const AI_CONFIG = {
     return envBool("AI_STRICT_AGENT", true);
   },
   /** 开局前单次连通性检测超时 */
-  preflightTimeoutMs: envInt("AI_PREFLIGHT_TIMEOUT_MS", 12_000, 2_000),
+  preflightTimeoutMs: envInt("AI_PREFLIGHT_TIMEOUT_MS", 20_000, 2_000),
   /** 连通性检测成功缓存时长；避免每次开局都重复消耗 token */
   preflightCacheMs: envInt("AI_PREFLIGHT_CACHE_MS", 5 * 60_000, 10_000),
   /** 连续失败达到该次数后停止自动重试，等待管理员处理 */
   maxConsecutiveFailures: envInt("AI_MAX_CONSECUTIVE_FAILURES", 2, 1),
   /** 采样温度；产品默认 0.7，实验版请用 agent-edition 的统一温度 */
   temperature: envNumber("AI_TEMPERATURE", 0.7, 0),
+  /**
+   * 推理链开关（DeepSeek v4 系列支持 thinking 开关）。
+   * 默认开启适度思考，让 AI 在复杂博弈/投资/竞拍时充分推算；需要极速模式时可设 AI_DISABLE_THINKING=true。
+   */
+  disableThinking: envBool("AI_DISABLE_THINKING", false),
   /** 单次模型调用超时 */
-  decisionTimeoutMs: envInt("AI_DECISION_TIMEOUT_MS", 8_000, 1_000),
+  decisionTimeoutMs: envInt("AI_DECISION_TIMEOUT_MS", 20_000, 1_000),
   /** 允许模型重试次数（不含首次） */
   maxRetries: envInt("AI_MAX_RETRIES", 2, 0),
   /**
@@ -196,12 +245,19 @@ export const AI_CONFIG = {
    * 实测单次可到 1.8 万；上限过低会把 JSON 截断，默认给足余量。
    */
   maxOutputTokens: envInt("AI_MAX_OUTPUT_TOKENS", 32_000, 100),
-  /** 每名 AI 每局 token 上限；超出后本局只走启发式 */
-  tokenBudgetPerGame: envInt("AI_TOKEN_BUDGET_PER_GAME", 120_000, 0),
-  /** 看门狗：阶段开始后多久仍未 ready，强制用启发式落子 */
-  maxTurnMs: envInt("AI_MAX_TURN_MS", 15_000, 2_000),
-  /** 同一房间同时进行的模型调用数 */
-  maxConcurrentPerRoom: envInt("AI_MAX_CONCURRENT", 3, 1),
+  /** 每名 AI 每局 token 上限；0 表示不限制（旧 .env 遗留 1..999,999 小预算时自动视为不限，避免半局中断） */
+  tokenBudgetPerGame: (() => {
+    const raw = envInt("AI_TOKEN_BUDGET_PER_GAME", 0, 0);
+    return raw > 0 && raw < 1_000_000 ? 0 : raw;
+  })(),
+  /**
+   * 看门狗宽限：阶段开始后多久仍未 ready，才判定「模型没响应」。
+   * 这只是下限；实际看门狗还会给正在进行中的调用留足「单次超时 ×（重试数 + 1）」的预算，
+   * 不会在模型正常重试途中误判超时。
+   */
+  maxTurnMs: envInt("AI_MAX_TURN_MS", 60_000, 2_000),
+  /** 同一房间同时进行的模型调用数（至少 5，确保 5 个 AI 单波次并行思考） */
+  maxConcurrentPerRoom: envInt("AI_MAX_CONCURRENT", 5, 5),
   /** 房间 AI 上限（6 人局最多 5 个 AI，至少留 1 个真人） */
   maxAiPerRoom: envInt("AI_MAX_PER_ROOM", 5, 1),
   /** 是否允许 AI 公开发言 */
@@ -217,6 +273,20 @@ export const AI_CONFIG = {
   /** 行动前的拟人延迟 */
   actionDelayMinMs: envInt("AI_ACTION_DELAY_MIN_MS", 250, 0),
   actionDelayMaxMs: envInt("AI_ACTION_DELAY_MAX_MS", 900, 0),
+  /** 私信拟人延迟与防抖窗口 */
+  dmDebounceMs: envInt("AI_DM_DEBOUNCE_MS", 1_400, 0),
+  dmDelayMinMs: envInt("AI_DM_DELAY_MIN_MS", 3_000, 0),
+  dmDelayMaxMs: envInt("AI_DM_DELAY_MAX_MS", 5_500, 0),
+  /** 群聊/全场发言拟人延迟与防抖窗口 */
+  groupDebounceMs: envInt("AI_GROUP_DEBOUNCE_MS", 1_600, 0),
+  groupChatDelayMinMs: envInt("AI_GROUP_CHAT_DELAY_MIN_MS", 2_500, 0),
+  groupChatDelayMaxMs: envInt("AI_GROUP_CHAT_DELAY_MAX_MS", 5_500, 0),
+  /** 收到转账后的拟人思考延迟（避免秒收） */
+  transferDelayMinMs: envInt("AI_TRANSFER_DELAY_MIN_MS", 3_000, 0),
+  transferDelayMaxMs: envInt("AI_TRANSFER_DELAY_MAX_MS", 5_000, 0),
+  /** 拍卖出价节拍延迟（错峰避免同时抢最低价） */
+  auctionDelayMinMs: envInt("AI_AUCTION_DELAY_MIN_MS", 250, 0),
+  auctionDelayMaxMs: envInt("AI_AUCTION_DELAY_MAX_MS", 600, 0),
   /** 拍卖单张卡最多决策次数 */
   auctionMaxDecisions: envInt("AI_AUCTION_MAX_DECISIONS", 3, 1),
   /** AI 自动补位目标人数 */

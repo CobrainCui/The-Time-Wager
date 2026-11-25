@@ -51,6 +51,8 @@ interface Props {
   overlayWhenOpen?: boolean;
   /** 教程「动手试一试」内嵌：不占满视口高度，与主内容横排 */
   embedInTutorial?: boolean;
+  /** 管理端预览框内嵌：自适应父容器高度与宽度，独立滚轮不跨出外框 */
+  contained?: boolean;
 }
 
 const thStyle: React.CSSProperties = {
@@ -89,20 +91,22 @@ const PLAYER_HELP_WIDTH_KEY = "player-help-sidebar-width";
 const PLAYER_HELP_MIN_WIDTH = 300;
 const PLAYER_HELP_MAX_WIDTH_DESKTOP = 900;
 
-function defaultOpenWidthPx(isDrawer: boolean): number {
+function defaultOpenWidthPx(isDrawer: boolean, contained = false): number {
   const vw = window.innerWidth;
+  if (contained) return Math.min(400, Math.round(vw * 0.36));
   if (isDrawer) return Math.min(360, Math.round(vw * 0.92));
   return Math.min(560, Math.round(vw * 0.58));
 }
 
-function maxOpenWidthPx(isDrawer: boolean): number {
+function maxOpenWidthPx(isDrawer: boolean, contained = false): number {
   const vw = window.innerWidth;
+  if (contained) return Math.min(460, Math.round(vw * 0.48));
   if (isDrawer) return Math.round(vw * 0.92);
   return Math.min(PLAYER_HELP_MAX_WIDTH_DESKTOP, Math.round(vw * 0.85));
 }
 
-function clampOpenWidthPx(px: number, isDrawer: boolean): number {
-  return Math.round(Math.max(PLAYER_HELP_MIN_WIDTH, Math.min(maxOpenWidthPx(isDrawer), px)));
+function clampOpenWidthPx(px: number, isDrawer: boolean, contained = false): number {
+  return Math.round(Math.max(PLAYER_HELP_MIN_WIDTH, Math.min(maxOpenWidthPx(isDrawer, contained), px)));
 }
 
 function readStoredOpenWidth(): number | null {
@@ -237,10 +241,15 @@ export const PlayerGameHelp: React.FC<Props> = ({
   me,
   overlayWhenOpen = false,
   embedInTutorial = false,
+  contained = false,
 }) => {
   const open = panel !== null;
+  const feedLength = game.publicFeed?.length ?? 0;
+  const [seenFeedLength, setSeenFeedLength] = useState(0);
+  const unreadFeedCount =
+    panel === "feed" ? 0 : Math.max(0, feedLength - Math.min(seenFeedLength, feedLength));
   const [openWidthPx, setOpenWidthPx] = useState<number | null>(() =>
-    embedInTutorial ? null : readStoredOpenWidth()
+    embedInTutorial || contained ? null : readStoredOpenWidth()
   );
   const [isResizing, setIsResizing] = useState(false);
   const isDesktopLayout = useMediaQuery("(min-width: 1024px)", true);
@@ -291,13 +300,13 @@ export const PlayerGameHelp: React.FC<Props> = ({
   const hasAuctionSessionWins = (game.auctionSessionWins?.length ?? 0) > 0;
 
   useEffect(() => {
-    if (embedInTutorial || !open || isDesktopLayout) return;
+    if (embedInTutorial || contained || !open || isDesktopLayout) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [open, isDesktopLayout, embedInTutorial]);
+  }, [open, isDesktopLayout, embedInTutorial, contained]);
 
   useEffect(() => {
     if (!open) return;
@@ -321,7 +330,59 @@ export const PlayerGameHelp: React.FC<Props> = ({
   useEffect(() => {
     if (!open || !panel) return;
     sidebarBodyRef.current?.scrollTo({ top: 0 });
-  }, [open, panel]);
+  }, [open, panel, me.id]);
+
+  // 防止左侧栏（尤其是个人战报与横向表格）滚轮事件链式穿透到右侧投资页面或外层容器
+  useEffect(() => {
+    if (!open || embedInTutorial) return;
+    const aside = asideRef.current;
+    if (!aside) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) return;
+      const target = e.target as Node | null;
+      const tableWrap =
+        target instanceof Element
+          ? (target.closest(".player-help-table-wrap, .player-guide-mini-table-wrap") as HTMLElement | null)
+          : null;
+      if (
+        tableWrap &&
+        tableWrap.scrollWidth > tableWrap.clientWidth + 1 &&
+        Math.abs(e.deltaX) > Math.abs(e.deltaY)
+      ) {
+        const atLeft = tableWrap.scrollLeft <= 0 && e.deltaX < 0;
+        const atRight =
+          tableWrap.scrollLeft + tableWrap.clientWidth >= tableWrap.scrollWidth - 1 && e.deltaX > 0;
+        if (atLeft || atRight) {
+          e.preventDefault();
+        }
+        return;
+      }
+      if (e.deltaY === 0) return;
+      const body = sidebarBodyRef.current;
+      if (!body) {
+        e.preventDefault();
+        return;
+      }
+      const canScrollBody = body.scrollHeight > body.clientHeight + 1;
+      if (!target || !body.contains(target)) {
+        e.preventDefault();
+        if (canScrollBody) body.scrollTop += e.deltaY;
+        return;
+      }
+      if (!canScrollBody) {
+        e.preventDefault();
+        return;
+      }
+      const atTop = body.scrollTop <= 0 && e.deltaY < 0;
+      const atBottom =
+        body.scrollTop + body.clientHeight >= body.scrollHeight - 1 && e.deltaY > 0;
+      if (atTop || atBottom) {
+        e.preventDefault();
+      }
+    };
+    aside.addEventListener("wheel", onWheel, { passive: false });
+    return () => aside.removeEventListener("wheel", onWheel);
+  }, [open, panel, embedInTutorial]);
 
   useEffect(() => {
     if (prevOpenRef.current && !open) {
@@ -348,6 +409,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
   };
 
   const selectActivity = (id: PlayerSidebarPanelId) => {
+    if (id === "feed") setSeenFeedLength(feedLength);
     if (panel === id) onPanelChange(null);
     else onPanelChange(id);
   };
@@ -359,34 +421,36 @@ export const PlayerGameHelp: React.FC<Props> = ({
       ? "本局尚未发牌，开战后这里会显示你仍可投的项目"
       : "当前没有仍可投的项目";
 
-  const useDrawerOverlay = open && !isDesktopLayout && !embedInTutorial;
-  const useDesktopOverlay = open && overlayWhenOpen && isDesktopLayout && !embedInTutorial;
+  const useDrawerOverlay = open && !isDesktopLayout && !embedInTutorial && !contained;
+  const useDesktopOverlay = open && overlayWhenOpen && isDesktopLayout && !embedInTutorial && !contained;
   const isDrawerMode = useDrawerOverlay;
 
   const openSidebarWidthPx = useMemo(() => {
     if (!open) return null;
     const base =
       openWidthPx ??
-      (embedInTutorial ? Math.min(420, Math.round(window.innerWidth * 0.42)) : defaultOpenWidthPx(isDrawerMode));
-    return clampOpenWidthPx(base, isDrawerMode);
-  }, [open, openWidthPx, isDrawerMode, embedInTutorial]);
+      (embedInTutorial
+        ? Math.min(420, Math.round(window.innerWidth * 0.42))
+        : defaultOpenWidthPx(isDrawerMode, contained));
+    return clampOpenWidthPx(base, isDrawerMode, contained);
+  }, [open, openWidthPx, isDrawerMode, embedInTutorial, contained]);
 
   useEffect(() => {
     if (!open) return;
     const onWindowResize = () => {
       setOpenWidthPx((prev) => {
-        const base = prev ?? defaultOpenWidthPx(isDrawerMode);
-        return clampOpenWidthPx(base, isDrawerMode);
+        const base = prev ?? defaultOpenWidthPx(isDrawerMode, contained);
+        return clampOpenWidthPx(base, isDrawerMode, contained);
       });
     };
     window.addEventListener("resize", onWindowResize);
     return () => window.removeEventListener("resize", onWindowResize);
-  }, [open, isDrawerMode]);
+  }, [open, isDrawerMode, contained]);
 
   const persistOpenWidth = (w: number) => {
-    const clamped = clampOpenWidthPx(w, isDrawerMode);
+    const clamped = clampOpenWidthPx(w, isDrawerMode, contained);
     setOpenWidthPx(clamped);
-    if (embedInTutorial) return;
+    if (embedInTutorial || contained) return;
     try {
       localStorage.setItem(PLAYER_HELP_WIDTH_KEY, String(clamped));
     } catch {
@@ -409,7 +473,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
   const onResizeHandlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!resizeDragRef.current) return;
     const delta = e.clientX - resizeDragRef.current.startX;
-    const next = clampOpenWidthPx(resizeDragRef.current.startWidth + delta, isDrawerMode);
+    const next = clampOpenWidthPx(resizeDragRef.current.startWidth + delta, isDrawerMode, contained);
     setOpenWidthPx(next);
   };
 
@@ -736,7 +800,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
           useDrawerOverlay ? " player-help-sidebar--drawer" : ""
         }${useDesktopOverlay ? " player-help-sidebar--overlay" : ""}${
           embedInTutorial ? " player-help-sidebar--tutorial-embed" : ""
-        }${isResizing ? " player-help-sidebar--resizing" : ""}`}
+        }${contained ? " player-help-sidebar--contained" : ""}${isResizing ? " player-help-sidebar--resizing" : ""}`}
         style={openSidebarWidthPx != null ? { width: openSidebarWidthPx } : undefined}
         aria-label="玩家侧栏"
       >
@@ -766,7 +830,30 @@ export const PlayerGameHelp: React.FC<Props> = ({
                 title={item.title}
                 onClick={() => selectActivity(item.id)}
               >
-                <span className="player-help-activity-icon" aria-hidden>{item.icon}</span>
+                <span className="player-help-activity-icon" aria-hidden style={{ position: "relative" }}>
+                  {item.icon}
+                  {item.id === "feed" && unreadFeedCount > 0 && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: "-0.25rem",
+                        right: "-0.45rem",
+                        minWidth: "0.95rem",
+                        height: "0.95rem",
+                        padding: "0 0.2rem",
+                        borderRadius: "9999px",
+                        background: "#ef4444",
+                        color: "white",
+                        fontSize: "0.62rem",
+                        fontWeight: 800,
+                        lineHeight: "0.95rem",
+                        textAlign: "center",
+                      }}
+                    >
+                      {unreadFeedCount > 9 ? "9+" : unreadFeedCount}
+                    </span>
+                  )}
+                </span>
                 <span className="player-help-activity-label">{item.label}</span>
               </button>
             );
@@ -794,6 +881,56 @@ export const PlayerGameHelp: React.FC<Props> = ({
             <div ref={sidebarBodyRef} className="player-help-sidebar-body">
               {panel === "projects" && renderTabBody("projects_table")}
               {panel === "buffs" && renderTabBody("buffs")}
+              {panel === "feed" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+                  <p style={{ margin: 0, fontSize: uiRem(0.76), color: "var(--color-text-muted)", lineHeight: 1.5 }}>
+                    全场公开信息流：仅记录阶段推进、公开抽奖骰子点数（不含倍数或点石成金等私密加成）、拍卖成交及项目结算事件；私密抽奖与私聊不在此显示。
+                  </p>
+                  {!(game.publicFeed && game.publicFeed.length > 0) ? (
+                    <div
+                      style={{
+                        padding: "1.5rem 1rem",
+                        textAlign: "center",
+                        color: "var(--color-text-muted)",
+                        fontSize: uiRem(0.84),
+                        border: "1px dashed var(--color-border)",
+                        borderRadius: "0.65rem",
+                      }}
+                    >
+                      暂无公开动态
+                    </div>
+                  ) : (
+                    [...game.publicFeed].reverse().map((item) => (
+                      <div
+                        key={item.id}
+                        style={{
+                          padding: "0.55rem 0.7rem",
+                          borderRadius: "0.55rem",
+                          background: "rgba(15, 23, 42, 0.55)",
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          fontSize: uiRem(0.82),
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: "0.2rem",
+                            fontSize: uiRem(0.7),
+                            color: "var(--color-text-muted)",
+                          }}
+                        >
+                          <span>第 {item.round} 轮 · 时代 {item.era}</span>
+                          <span>{new Date(item.timestamp).toLocaleTimeString("zh-CN", { hour12: false })}</span>
+                        </div>
+                        <div style={{ color: "var(--color-text-primary)" }}>{item.text}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
               {panel === "guide" && renderGuidePanel()}
               {panel === "history" && <PlayerSettlementHistory game={game} me={me} />}
             </div>

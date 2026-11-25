@@ -11,6 +11,7 @@ import { resolveRoundBuffsAtSettlement } from "./roundBuffResolve.js";
 import { ERA_BONUS_POOL_LONG, ERA_BONUS_POOL_SHORT } from "../config/eraBonus.js";
 import { captureSettlementBaseline } from "./settlementBaseline.js";
 import { replaceSettlementRound } from "../state/sessionTelemetry.js";
+import { appendPublicFeed } from "../util/publicFeed.js";
 
 // 辅助：创建零收益对象
 const zeroGain = (): GainBreakdown => ({ total: 0, base: 0, rank: 0, era: 0 });
@@ -64,6 +65,25 @@ export function settlePhase(game: GameState, options?: SettlePhaseOptions) {
 
     const result = settleOneProject(game, project, logs);
     snapshot.push(result);
+    if (!replacePrevious) {
+      if (result.shortSold) {
+        appendPublicFeed(game, "project", `📉 项目「${project.name}」被做空，累计清零`);
+      } else if (result.isCompleted) {
+        if (project.type === "short" && result.isExploded) {
+          appendPublicFeed(game, "project", `💥 短期项目「${project.name}」超额投爆，移出牌桌`);
+        } else if (project.type === "long" && result.isExploded) {
+          appendPublicFeed(
+            game,
+            "project",
+            `✅ 长期项目「${project.name}」超额完成（${result.totalInvested}/${project.maxEnergy}）`
+          );
+        } else {
+          appendPublicFeed(game, "project", `✅ 项目「${project.name}」已完成结算`);
+        }
+      } else if (result.isExploded) {
+        appendPublicFeed(game, "project", `💥 项目「${project.name}」超额爆掉，移出牌桌`);
+      }
+    }
 
     // 检查连续空投（做空当轮当作新发，不计无人投）
     if (result.shortSold) {

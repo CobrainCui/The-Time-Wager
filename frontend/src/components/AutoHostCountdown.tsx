@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { uiRem } from "../utils/typography";
+import { useServerClockSkewRef } from "../hooks/useServerClockSkewRef";
+import { computeClockSkewMs } from "../utils/actionCountdown";
 
 type Props = {
   /** 目标时间戳；为空则不显示 */
   at?: number | null;
+  /** 服务端基准时间戳，用于校准本地时钟偏移 */
+  serverNow?: number;
   /** 例如「自动开局」「进入下一阶段」 */
   label: string;
   /** 是否显示「系统自动主持」前缀 */
@@ -11,26 +15,39 @@ type Props = {
   compact?: boolean;
 };
 
+function calcCountdownSeconds(at: number | null | undefined, skewMs: number): number {
+  if (at == null) return 0;
+  return Math.max(0, Math.ceil((at - (Date.now() + skewMs)) / 1000));
+}
+
 /**
  * 系统自动主持倒计时。
- * 用本地时钟平滑显示，服务端每次广播的 autoHostNextActionAt 会校正误差。
+ * 用服务端 serverNow 校准本地时钟偏移，服务端每次广播的 autoHostNextActionAt 会即时同步。
  */
 export const AutoHostCountdown: React.FC<Props> = ({
   at,
+  serverNow,
   label,
   showPrefix = true,
   compact = false,
 }) => {
-  const [now, setNow] = useState(() => Date.now());
+  const skewRef = useServerClockSkewRef(serverNow);
+  const [seconds, setSeconds] = useState(() =>
+    calcCountdownSeconds(at, serverNow != null ? computeClockSkewMs(serverNow) : 0)
+  );
 
   useEffect(() => {
     if (at == null) return;
-    const timer = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(timer);
-  }, [at]);
+    const sync = () => setSeconds(calcCountdownSeconds(at, skewRef.current));
+    const immediate = setTimeout(sync, 0);
+    const timer = setInterval(sync, 500);
+    return () => {
+      clearTimeout(immediate);
+      clearInterval(timer);
+    };
+  }, [at, serverNow, skewRef]);
 
   if (at == null) return null;
-  const seconds = Math.max(0, Math.ceil((at - now) / 1000));
 
   return (
     <div

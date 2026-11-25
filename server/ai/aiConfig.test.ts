@@ -11,6 +11,9 @@ const AI_KEYS = [
   "AI_BASE_URL",
   "AI_MODEL",
   "AI_PROVIDER",
+  "SILICONFLOW_API_KEY",
+  "SILICONFLOW_BASE_URL",
+  "SILICONFLOW_MODEL",
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "OPENAI_MODEL",
@@ -19,6 +22,9 @@ const AI_KEYS = [
   "DEEPSEEK_MODEL",
   "RULE_AGENT_API_KEY",
 ];
+for (let slot = 1; slot <= 6; slot++) {
+  AI_KEYS.push(`LAB_PLAYER_${slot}_MODEL`);
+}
 for (let slot = 1; slot <= MAX_AI_PLAYER_SLOTS; slot++) {
   for (const field of ["API_KEY", "BASE_URL", "MODEL", "PROVIDER"]) {
     AI_KEYS.push(`AI_PLAYER_${slot}_${field}`);
@@ -72,7 +78,7 @@ test("每个座位可以用不同的 Key / 模型 / 供应商地址", () => {
       AI_PLAYER_1_PROVIDER: "openai",
       AI_PLAYER_2_API_KEY: "sk-slot-2",
       AI_PLAYER_2_BASE_URL: "https://api.deepseek.com",
-      AI_PLAYER_2_MODEL: "deepseek-chat",
+      AI_PLAYER_2_MODEL: "deepseek-v4-pro",
       AI_PLAYER_2_PROVIDER: "deepseek",
     },
     () => {
@@ -87,7 +93,7 @@ test("每个座位可以用不同的 Key / 模型 / 供应商地址", () => {
 
       assert.equal(two?.apiKey, "sk-slot-2");
       assert.equal(two?.baseURL, "https://api.deepseek.com");
-      assert.equal(two?.model, "deepseek-chat");
+      assert.equal(two?.model, "deepseek-v4-pro");
       assert.equal(two?.provider, "deepseek");
 
       // 未单独配置的座位仍然回退到共享 Key
@@ -130,5 +136,17 @@ test("座位号超出范围时使用共享配置", () => {
     assert.equal(resolveAiModelConfigForSlot(0)?.source, "shared");
     assert.equal(resolveAiModelConfigForSlot(99)?.source, "shared");
     assert.equal(resolveAiModelConfigForSlot(undefined)?.source, "shared");
+  });
+});
+
+test("硅基流动共享密钥与占位符识别", () => {
+  withEnv({ SILICONFLOW_API_KEY: "sk-siliconflow-placeholder" }, () => {
+    assert.equal(resolveAiModelConfig(), null);
+  });
+  withEnv({ SILICONFLOW_API_KEY: "sk-real-siliconflow-test" }, () => {
+    const cfg = resolveAiModelConfig();
+    assert.equal(cfg?.apiKey, "sk-real-siliconflow-test");
+    assert.equal(cfg?.baseURL, "https://api.siliconflow.cn/v1");
+    assert.equal(cfg?.provider, "siliconflow");
   });
 });

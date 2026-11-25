@@ -1,5 +1,6 @@
 import React, { memo, useEffect, useRef, useState } from "react";
 import { uiRem } from "../../utils/typography";
+import type { AiChatStatusEntry } from "../../types";
 import type { ChatMessage, ChatThread } from "./types";
 import { formatBubbleText, messageStatusMeta } from "./chatMessageUtils";
 import type { ComposerDraft } from "./chatComposerDraft";
@@ -36,6 +37,7 @@ export type ChatPanelProps = {
   onComposerFocus: (peerId: string) => void;
   onComposerBlur: (peerId: string) => void;
   onComposerImeChange?: (active: boolean) => void;
+  aiChatStatuses?: Record<string, AiChatStatusEntry>;
   readOnly?: boolean;
 };
 
@@ -55,6 +57,7 @@ export const ChatPanel = memo<ChatPanelProps>(function ChatPanel({
   onComposerFocus,
   onComposerBlur,
   onComposerImeChange,
+  aiChatStatuses,
   readOnly = false,
 }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -80,6 +83,12 @@ export const ChatPanel = memo<ChatPanelProps>(function ChatPanel({
     }
     prevCountRef.current = displayMessages.length;
   }, [displayMessages, stickToBottom]);
+
+  const statusEntries = Object.values(aiChatStatuses ?? {});
+  const thinkingStatus = statusEntries.find((s) => s.state === "thinking");
+  const silentStatus = !thinkingStatus
+    ? statusEntries.find((s) => s.state === "silent")
+    : undefined;
 
   return (
     <div className="player-chat-panel">
@@ -157,6 +166,22 @@ export const ChatPanel = memo<ChatPanelProps>(function ChatPanel({
           </div>
         )}
       </div>
+      {(thinkingStatus || silentStatus) && (
+        <div
+          className="player-chat-ai-status"
+          style={{
+            padding: "0.28rem 0.65rem",
+            fontSize: "0.74rem",
+            color: thinkingStatus ? "var(--gold, #eab308)" : "var(--text-muted, #94a3b8)",
+            borderTop: "1px solid rgba(255,255,255,0.06)",
+            background: "rgba(15, 23, 42, 0.35)",
+          }}
+        >
+          {thinkingStatus
+            ? `⏳ ${thinkingStatus.playerName} 正在思考…`
+            : `👀 ${silentStatus!.playerName} 已读，暂保持沉默`}
+        </div>
+      )}
       {!readOnly && (
         <QuickComposer
           peerId={playerId}

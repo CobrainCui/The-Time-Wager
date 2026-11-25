@@ -28,12 +28,19 @@ export async function finalizeCommunityName(
   appendSessionEvent(game, "community_named", { communityName, source });
   recordPhaseChange(game, prevPhase, game.phase, source);
   if (io) broadcastUpdate(io, game);
-  try {
-    await autoRateSocialFromChats(game, io);
-  } catch (error) {
-    console.error("[finalize] social auto-score failed", error);
+  const runSocial = !game.isLabExperiment || game.labMeta?.autoSocialScore !== false;
+  if (runSocial) {
+    try {
+      await autoRateSocialFromChats(game, io);
+    } catch (error) {
+      console.error("[finalize] social auto-score failed", error);
+    }
   }
   analyzeGamePersona(game);
+  if (game.isLabExperiment) {
+    if (io) broadcastUpdate(io, game);
+    return;
+  }
   archiveCompletedSession(game);
   if (io) {
     broadcastUpdate(io, game);

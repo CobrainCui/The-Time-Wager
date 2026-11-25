@@ -776,7 +776,12 @@ export const Settlement: React.FC<Props> = ({ game, me, embed = false }) => {
       >
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.4rem", padding: "0.35rem 0" }}>
           {game.autoHostEnabled && (
-            <AutoHostCountdown at={game.autoHostNextActionAt} label="自动进入下一阶段" compact />
+            <AutoHostCountdown
+              at={game.autoHostNextActionAt}
+              serverNow={game.serverNow}
+              label="自动进入下一阶段"
+              compact
+            />
           )}
           <button
             onClick={() => socket.emit("playerReady")}

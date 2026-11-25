@@ -182,17 +182,19 @@ export function chooseInvestment(
     } else if (type === "long") {
       // 已经参与中的长期项目优先续投，避免因为转投新项目而被判定「放弃」
       const activeLong = longs.filter(
-        (p) => ai.longTerm?.[p.id]?.status === "active" && headroom(p) > 0
+        (p) => ai.longTerm?.[p.id]?.status === "active" && p.accumulatedInvested < p.maxEnergy
       );
       const first =
         bestProject(game, activeLong, longScore, `${ai.id}:long-active:${game.globalRound}`) ??
         bestProject(game, longs, longScore, `${ai.id}:long:${game.globalRound}`);
       if (first) {
         const room = headroom(first);
-        // 能补完就补完；已有 active 长期至少续 3 点，避免被判定放弃
-        const minContinue = activeLong.length > 0 ? 3 : 0;
-        const target = room <= share ? room : Math.min(6, Math.max(share, minContinue));
-        const cap = Math.min(target, room);
+        // 能补完就补完；已有 active 长期哪怕 headroom < 3 也要续 >=3，避免被判定 1:1 放弃
+        const isActiveForAi = ai.longTerm?.[first.id]?.status === "active";
+        const minContinue = isActiveForAi ? 3 : 0;
+        const target =
+          room > 0 && room <= share ? Math.max(room, minContinue) : Math.min(6, Math.max(share, minContinue));
+        const cap = isActiveForAi ? Math.max(minContinue, target) : Math.min(target, room);
         remaining -= allocate(out, first, cap, cap, remaining);
       }
     } else {
@@ -234,7 +236,7 @@ export function chooseInvestment(
       );
       if (!candidate) continue;
       const room = headroom(candidate);
-      let take = Math.min(remaining, room);
+      let take = candidate.type === "long" ? remaining : Math.min(remaining, room);
       if (candidate.type === "long") {
         take = Math.min(take, sanitizeLongContribution(ai.longTerm?.[candidate.id]?.status, take));
       }
@@ -479,6 +481,7 @@ export function buildFallbackInvestmentPlan(
     transfer,
     coffee,
     useCard,
+    useCards: useCard ? [useCard] : [],
     investment,
   };
 }
@@ -504,34 +507,39 @@ export function sanitizeInvestmentPlan(
       profile.difficulty === "easy" ? 0 : 2
     )
   );
-  const budget = spendableEnergy(ai) + coffee * COFFEE_ENERGY_GAIN;
 
-  const investment: Record<number, number> = {};
-  let remaining = budget;
-  for (const [key, value] of Object.entries(raw?.investment ?? {})) {
-    const id = Number(key);
-    const amount = Math.floor(Number(value) || 0);
-    if (!Number.isSafeInteger(id) || amount <= 0) continue;
-    const project = game.activeProjects.find((p) => p.id === id);
-    if (!project) continue;
-    let take = Math.min(amount, remaining, headroom(project));
-    if (project.type === "long") {
-      take = Math.min(take, sanitizeLongContribution(ai.longTerm?.[project.id]?.status, take));
-    }
-    if (take <= 0) continue;
-    investment[id] = (investment[id] ?? 0) + take;
-    remaining -= take;
+  const stockByCard = new Map<string, number>();
+  for (const id of ai.inventory ?? []) {
+    stockByCard.set(id, (stockByCard.get(id) ?? 0) + 1);
   }
+  const rawCards: Array<Partial<AiBuffPlan> | null | undefined> = [];
+  if (Array.isArray((raw as { useCards?: unknown })?.useCards)) {
+    rawCards.push(...((raw as { useCards: Array<Partial<AiBuffPlan>> }).useCards));
+  }
+  if (raw?.useCard) rawCards.push(raw.useCard);
+  const alreadyHasWorkRest = (ai.activeBuffs ?? []).some((b) => b.cardId === "buff_work_rest");
+  const hasWorkRestPlanned = () =>
+    alreadyHasWorkRest ||
+    rawCards.some(
+      (c) =>
+        c?.cardId === "buff_work_rest" &&
+        (c?.targetPlayerId == null || c?.targetPlayerId === ai.id)
+    );
 
-  let useCard: AiBuffPlan | null = null;
-  const rawCard = raw?.useCard;
-  if (rawCard && typeof rawCard.cardId === "string" && (ai.inventory ?? []).includes(rawCard.cardId)) {
+  const useCards: AiBuffPlan[] = [];
+  for (const rawCard of rawCards) {
+    if (!rawCard || typeof rawCard.cardId !== "string") continue;
     const cardId = rawCard.cardId;
-    const targetPlayerId =
+    const stock = stockByCard.get(cardId) ?? 0;
+    if (stock <= 0) continue;
+    const resolvedTargetId =
       typeof rawCard.targetPlayerId === "string" &&
       game.players.some((p) => p.id === rawCard.targetPlayerId)
         ? rawCard.targetPlayerId
-        : undefined;
+        : cardId === "buff_work_rest"
+          ? ai.id
+          : undefined;
+    const targetPlayerId = resolvedTargetId;
     const targetProjectId =
       Number.isSafeInteger(Number(rawCard.targetProjectId)) &&
       game.activeProjects.some((p) => p.id === Number(rawCard.targetProjectId))
@@ -539,16 +547,112 @@ export function sanitizeInvestmentPlan(
         : undefined;
     const burnCardId =
       typeof rawCard.burnCardId === "string" ? rawCard.burnCardId : undefined;
+    const visibility =
+      cardId === "buff_lottery"
+        ? rawCard.visibility === "private"
+          ? ("private" as const)
+          : ("public" as const)
+        : undefined;
+    const hasWorkRestActive = hasWorkRestPlanned();
     const valid =
       cardId !== "buff_force_buy" &&
       (["buff_gold", "buff_insurance", "buff_lottery"].includes(cardId) || !!targetPlayerId || !!targetProjectId) &&
-      (cardId !== "buff_slack" || (!!targetPlayerId && targetPlayerId !== ai.id)) &&
+      (cardId !== "buff_slack" || (!!targetPlayerId && (targetPlayerId !== ai.id || hasWorkRestActive))) &&
       (cardId !== "buff_work_rest" || !!targetPlayerId) &&
       (cardId !== "buff_short" || !!targetProjectId) &&
       (cardId !== "buff_lighter" || (!!targetPlayerId && !!burnCardId && targetPlayerId !== ai.id));
-    useCard = valid
-      ? { cardId, ...(targetPlayerId ? { targetPlayerId } : {}), ...(targetProjectId ? { targetProjectId } : {}), ...(burnCardId ? { burnCardId } : {}) }
-      : null;
+    if (!valid) continue;
+    stockByCard.set(cardId, stock - 1);
+    useCards.push({
+      cardId,
+      ...(targetPlayerId ? { targetPlayerId } : {}),
+      ...(targetProjectId ? { targetProjectId } : {}),
+      ...(burnCardId ? { burnCardId } : {}),
+      ...(visibility ? { visibility } : {}),
+    });
+  }
+  const useCard: AiBuffPlan | null = useCards[0] ?? null;
+
+  // 若本轮打出 劳逸结合(自己) 或 劳逸结合+摸鱼(自己)，预先把将要获得的精力计入本轮预算，避免合法投资被误裁
+  let plannedEnergyBonus = 0;
+  const selfWorkRestPlanned =
+    !alreadyHasWorkRest &&
+    useCards.some((c) => c.cardId === "buff_work_rest" && c.targetPlayerId === ai.id);
+  if (selfWorkRestPlanned) {
+    const lostArr = ai.slackEnergyLost ?? [];
+    if (lostArr.length > 0) {
+      for (const lost of lostArr) plannedEnergyBonus += Math.max(0, lost) + 8;
+    } else if ((ai.slackedBy?.length ?? 0) > 0) {
+      plannedEnergyBonus += (ai.slackedBy?.length ?? 0) * 16;
+    }
+  }
+  const selfWorkRestActive = alreadyHasWorkRest || selfWorkRestPlanned;
+  if (selfWorkRestActive) {
+    const selfSlackCount = useCards.filter(
+      (c) => c.cardId === "buff_slack" && c.targetPlayerId === ai.id
+    ).length;
+    plannedEnergyBonus += selfSlackCount * 8;
+  }
+
+  const budget = spendableEnergy(ai) + coffee * COFFEE_ENERGY_GAIN + plannedEnergyBonus;
+
+  const investment: Record<number, number> = {};
+  let remaining = budget;
+  let clippedSurplus = 0;
+  for (const [key, value] of Object.entries(raw?.investment ?? {})) {
+    const id = Number(key);
+    const amount = Math.floor(Number(value) || 0);
+    if (!Number.isSafeInteger(id) || amount <= 0) continue;
+    const project = game.activeProjects.find((p) => p.id === id);
+    if (!project) continue;
+    const desired = Math.min(amount, remaining);
+    // 长期项目允许超额累积且有 >=3 续投门槛，绝不能用 headroom 截断（否则剩 1-2 格会被 >=3 规则整笔清 0 导致 1:1 放弃）
+    let take = project.type === "long" ? desired : Math.min(desired, headroom(project));
+    if (project.type === "long") {
+      take = Math.min(take, sanitizeLongContribution(ai.longTerm?.[project.id]?.status, take));
+    } else if (desired > take) {
+      clippedSurplus += desired - take;
+    }
+    if (take <= 0) continue;
+    investment[id] = (investment[id] ?? 0) + take;
+    remaining -= take;
+  }
+
+  // 若合法 short/risk 方案因超过 headroom 被截断而留下未花出的余量，顺延补入最安全的备选项目避免白白浪费精力
+  let refillLeft = Math.min(remaining, clippedSurplus);
+  if (refillLeft > 0) {
+    const candidates = game.activeProjects
+      .filter((p) => p.type === "long" || headroom(p) - (investment[p.id] ?? 0) > 0)
+      .sort((a, b) => {
+        const aScore =
+          (a.type === "long" && ai.longTerm?.[a.id]?.status === "active" ? 100 : 0) +
+          (a.type === "long" ? 40 : a.type === "short" ? 25 : -20) +
+          (a.era && game.currentEraCard?.era === a.era ? 15 : 0) +
+          Math.max(0, headroom(a) - (investment[a.id] ?? 0));
+        const bScore =
+          (b.type === "long" && ai.longTerm?.[b.id]?.status === "active" ? 100 : 0) +
+          (b.type === "long" ? 40 : b.type === "short" ? 25 : -20) +
+          (b.era && game.currentEraCard?.era === b.era ? 15 : 0) +
+          Math.max(0, headroom(b) - (investment[b.id] ?? 0));
+        return bScore - aScore;
+      });
+    for (const p of candidates) {
+      if (refillLeft <= 0) break;
+      const cur = investment[p.id] ?? 0;
+      if (p.type === "long") {
+        const minValid = sanitizeLongContribution(ai.longTerm?.[p.id]?.status, cur + refillLeft);
+        if (minValid <= cur) continue;
+        const add = minValid - cur;
+        investment[p.id] = cur + add;
+        refillLeft -= add;
+      } else if (p.type === "short") {
+        const availRoom = Math.max(0, headroom(p) - cur);
+        const add = Math.min(refillLeft, availRoom);
+        if (add <= 0) continue;
+        investment[p.id] = cur + add;
+        refillLeft -= add;
+      }
+    }
   }
 
   let transfer: AiTransferPlan | null = null;
@@ -556,16 +660,16 @@ export function sanitizeInvestmentPlan(
   if (rawTx && typeof rawTx.toPlayerId === "string") {
     const target = game.players.find((p) => p.id === rawTx.toPlayerId);
     const amount = Math.floor(Number(rawTx.amount) || 0);
+    const note = String(rawTx.note ?? "").trim().slice(0, 60);
     if (
       target &&
       target.id !== ai.id &&
-      amount > 0 &&
-      amount <= playerAvailableWealth(game, ai)
+      ((amount > 0 && amount <= playerAvailableWealth(game, ai)) || (amount === 0 && note.length > 0))
     ) {
       transfer = {
         toPlayerId: target.id,
         amount,
-        note: String(rawTx.note ?? "").slice(0, 60),
+        note,
       };
     }
   }
@@ -630,6 +734,7 @@ export function sanitizeInvestmentPlan(
     transfer,
     coffee,
     useCard,
+    useCards,
     investment,
   };
 }

@@ -167,6 +167,26 @@ export function filterGameForPlayerView(
       );
       return (game.groupMessages ?? []).filter((m) => visibleIds.has(m.groupId));
     })(),
+    aiChatStatuses: (() => {
+      const visibleGroupIds = new Set(
+        (game.chatGroups ?? [])
+          .filter((g) => g.memberIds.includes(viewerPlayerId))
+          .map((g) => g.id)
+      );
+      const out: NonNullable<GameState["aiChatStatuses"]> = {};
+      for (const [k, v] of Object.entries(game.aiChatStatuses ?? {})) {
+        if (!v) continue;
+        if (k.startsWith("group:")) {
+          const gid = k.slice("group:".length);
+          if (visibleGroupIds.has(gid)) out[k] = v;
+        } else if (k.startsWith(`dm:${viewerPlayerId}:`)) {
+          out[`peer:${k.slice(`dm:${viewerPlayerId}:`.length)}`] = v;
+        } else if (k.startsWith("peer:")) {
+          out[k] = v;
+        }
+      }
+      return out;
+    })(),
     ...(ownLotteryOffer ? { pendingLotteryOffer: ownLotteryOffer } : {}),
     ...(ownWealthAdjust ? { pendingWealthAdjustment: ownWealthAdjust } : {}),
     ...(myPendingAuctionOffers.length > 0

@@ -23,6 +23,7 @@ coverage/
 .env.local
 .env.development.local
 .env.test.local
+.env.production
 .env.production.local
 !.env.example
 
@@ -41,6 +42,9 @@ coverage/
 # Runtime leaderboard (persisted on server)
 server/data/community_leaderboard.json
 server/data/session_archive.json
+server/data/feedback.json*
+server/data/lab_*.json*
+server/data/lab_memory/
 
 # Misc
 .npm

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { uiRem } from "../utils/typography";
 import { socket } from "../socket";
-import type { LotterySource } from "../types";
+import type { LotterySource, LotteryVisibility } from "../types";
 
 export type LotterySettleRequest = {
   offerId: string;
@@ -10,6 +10,7 @@ export type LotterySettleRequest = {
   roll?: number | null;
   source?: LotterySource;
   drawnAt?: number | null;
+  visibility?: LotteryVisibility;
 };
 
 type Props = {
@@ -146,6 +147,29 @@ export const LotteryConfirmModal: React.FC<Props> = ({
         >
           🎲 彩票开奖
         </h3>
+        <div
+          style={{
+            display: "inline-block",
+            marginBottom: "0.5rem",
+            padding: "0.18rem 0.65rem",
+            borderRadius: "9999px",
+            fontSize: uiRem(0.75),
+            fontWeight: 700,
+            background:
+              pending.visibility === "private"
+                ? "rgba(148,163,184,0.16)"
+                : "rgba(236,72,153,0.18)",
+            border:
+              pending.visibility === "private"
+                ? "1px solid rgba(148,163,184,0.35)"
+                : "1px solid rgba(236,72,153,0.4)",
+            color: pending.visibility === "private" ? "#cbd5e1" : "#f9a8d4",
+          }}
+        >
+          {pending.visibility === "private"
+            ? "🤫 私密开奖（仅你可见，他人不知你用过）"
+            : "📢 公开开奖（全桌仅见掷骰点数）"}
+        </div>
         <p style={{ color: "var(--color-text-muted)", margin: "0 0 1rem", fontSize: uiRem(0.8) }}>
           {rolling ? "正在掷骰…" : sourceLabel || "开奖结果已生成"}
         </p>

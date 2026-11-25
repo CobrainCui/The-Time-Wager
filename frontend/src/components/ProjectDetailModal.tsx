@@ -139,7 +139,7 @@ function RulesSection({
         </div>
         {rankRows.length > 0 && (
           <div>
-            <div style={ruleLabel}>排名奖励（恰好满额时，按历史总投入；投入相同则并列共享）</div>
+            <div style={ruleLabel}>排名奖励（恰好满额时，按历史累计；并列共享）</div>
             <RankRewardPlayerCountNote tierCount={tierCount} seatedCount={seatedCount} />
             <table style={{ width: "100%", fontSize: uiRem(0.8), borderCollapse: "collapse" }}>
               <tbody>
@@ -160,7 +160,7 @@ function RulesSection({
         )}
         {penaltyRows.length > 0 && (
           <div>
-            <div style={ruleLabel}>超过上限的投资失败惩罚（按历史总投入；投入相同则并列共享）</div>
+            <div style={ruleLabel}>超额失败惩罚（按历史累计；并列共享）</div>
             <table style={{ width: "100%", fontSize: uiRem(0.8), borderCollapse: "collapse" }}>
               <tbody>
                 {penaltyRows.map(({ rank, value }) => (
@@ -180,7 +180,7 @@ function RulesSection({
         )}
         <div>
           <div style={ruleLabel}>时代加成</div>
-          <p style={ruleValue}>主题契合且历史总投入第 1（并列则均分）：+{ERA_BONUS_SHORT}（仅恰好满额；超过上限投资失败则没有）</p>
+          <p style={ruleValue}>主题契合且历史总投入第 1（并列均分）：+{ERA_BONUS_SHORT}（需恰好满额；爆掉没有）</p>
         </div>
       </div>
     );
@@ -193,16 +193,16 @@ function RulesSection({
         <div>
           <div style={ruleLabel}>跟投要求</div>
           <p style={ruleValue}>
-            参与投资后，每轮至少投入 {LONG_CONTINUE_MIN_ENERGY} 点精力，否则视为放弃：累计投入的每 1 点精力返还 1 点财富，并退出完成时的排名与时代加成
+            参与后每轮至少投 {LONG_CONTINUE_MIN_ENERGY} 点，否则视为放弃：累计每点返还 1 财富，并退出排名与时代加成
           </p>
         </div>
         <div>
           <div style={ruleLabel}>完成回报</div>
-          <p style={ruleValue}>达到或超过上限后：个人历史累计投入的每 1 点精力回报 15 财富（超额完成同样发放，没有短期项目那种超额投资惩罚）</p>
+          <p style={ruleValue}>达到上限后：个人累计每点精力回报 15 财富（超额同样发放，无超额惩罚）</p>
         </div>
         {rankRows.length > 0 && (
           <div>
-            <div style={ruleLabel}>排名奖励（完成时，按历史总投入；投入相同则并列共享）</div>
+            <div style={ruleLabel}>排名奖励（完成时，按历史累计；并列共享）</div>
             <RankRewardPlayerCountNote tierCount={tierCount} seatedCount={seatedCount} />
             <table style={{ width: "100%", fontSize: uiRem(0.8), borderCollapse: "collapse" }}>
               <tbody>
@@ -223,7 +223,7 @@ function RulesSection({
         )}
         <div>
           <div style={ruleLabel}>时代加成</div>
-          <p style={ruleValue}>主题契合且历史总投入第 1（并列则均分）：+{ERA_BONUS_LONG}（满额或超填）</p>
+          <p style={ruleValue}>主题契合且历史总投入第 1（并列均分）：+{ERA_BONUS_LONG}（满额或超填）</p>
         </div>
       </div>
     );

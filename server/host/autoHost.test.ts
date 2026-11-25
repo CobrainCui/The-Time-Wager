@@ -5,9 +5,12 @@ import {
   armAutoHostStart,
   ensureAutoHost,
   resetAutoHostState,
+  syncAutoAuctionDeadline,
 } from "./autoHost.js";
 import { AUTO_HOST_CONFIG } from "./autoHostConfig.js";
 import { placeAuctionBid } from "../logic/auctionCards.js";
+import { tryAdvancePhase } from "../state/phaseController.js";
+import { handleActionTimeExpired } from "../state/actionTimeExpiry.js";
 
 function player(id: string, overrides: Partial<Player> = {}): Player {
   return {
@@ -40,7 +43,7 @@ function roomId(suffix: string): string {
   return `auto-host-${suffix}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-test("auto host starts a ready waiting room and advances era intro", () => {
+test("auto host starts a ready waiting room; with humans it waits at era intro and reminds", () => {
   const game = createInitialGame(roomId("start"), []);
   game.autoHostEnabled = true;
   // 产品版正式开局固定 6 席；本用例用 6 名真人避免依赖 AI Key
@@ -61,15 +64,146 @@ test("auto host starts a ready waiting room and advances era intro", () => {
   assert.equal(game.phase, "ERA_INTRO");
   assert.equal(game.autoStartAt, undefined);
 
-  // 第一次进入时代介绍：只开始倒计时，不立刻推进
+  // 有真人在线：不自动替玩家点继续，也不自动推进
   ensureAutoHost(game, null, t0);
-  assert.ok(game.autoHostNextActionAt != null);
+  assert.equal(game.autoHostNextActionAt, undefined);
   assert.equal(game.phase, "ERA_INTRO");
 
-  ensureAutoHost(game, null, (game.autoHostNextActionAt ?? 0) + 1);
+  // 停留过久：系统主持人只发提醒
+  ensureAutoHost(game, null, t0 + AUTO_HOST_CONFIG.phaseReminderMs + 1);
+  assert.equal(game.phase, "ERA_INTRO");
+  assert.ok(
+    game.logs.some((line) => line.includes("系统主持人提醒")),
+    "应记录停留提醒"
+  );
+
+  // 真人自己点「继续」后才进入投资
+  for (const p of game.players) {
+    p.ready = true;
+    game.readyPlayers.add(p.id);
+  }
+  tryAdvancePhase(game);
   assert.equal(game.phase, "INVESTMENT");
   assert.ok(game.investmentEndsAt != null);
 
+  resetAutoHostState(game.roomId);
+});
+
+test("with humans and autoHostEnabled, all-locked advances after short grace period unless unlocked", () => {
+  const game = createInitialGame(roomId("invest-wait"), []);
+  game.autoHostEnabled = true;
+  game.phase = "INVESTMENT";
+  game.activeProjects = [
+    {
+      id: 1,
+      name: "P1",
+      type: "short",
+      maxEnergy: 20,
+      accumulatedInvested: 0,
+      currentInvested: 0,
+      roundsNoInvestment: 0,
+      investedThisRound: false,
+      investorRecords: {},
+      earningRecords: {},
+      totalPayout: 0,
+    },
+  ];
+  game.players = [player("h1"), player("h2")];
+  for (const p of game.players) {
+    p.ready = true;
+    game.readyPlayers.add(p.id);
+  }
+  const t0 = Date.now();
+  game.investmentEndsAt = t0 + 10 * 60_000;
+
+  // 刚全员锁定时只启动缓冲倒计时，不立即结算，玩家仍可解锁
+  assert.equal(ensureAutoHost(game, null, t0), true);
+  tryAdvancePhase(game);
+  assert.equal(game.phase, "INVESTMENT");
+  assert.equal(game.autoHostNextActionAt, t0 + AUTO_HOST_CONFIG.allLockedGraceMs);
+
+  // 若有人在缓冲期内解锁，立即取消自动结算
+  game.players[0].ready = false;
+  game.readyPlayers.delete("h1");
+  ensureAutoHost(game, null, t0 + 1_000);
+  assert.equal(game.phase, "INVESTMENT");
+  assert.equal(game.autoHostNextActionAt, undefined);
+
+  // 重新全员锁定并经过缓冲期，自动进入结算
+  game.players[0].ready = true;
+  game.readyPlayers.add("h1");
+  const t1 = t0 + 2_000;
+  ensureAutoHost(game, null, t1);
+  assert.equal(game.phase, "INVESTMENT");
+  assert.equal(ensureAutoHost(game, null, t1 + AUTO_HOST_CONFIG.allLockedGraceMs + 1), true);
+  assert.equal(game.phase, "SETTLEMENT");
+  resetAutoHostState(game.roomId);
+});
+
+test("with autoHostEnabled=false, all-locked investment still waits for timer", () => {
+  const game = createInitialGame(roomId("invest-manual"), []);
+  game.autoHostEnabled = false;
+  game.phase = "INVESTMENT";
+  game.activeProjects = [
+    {
+      id: 1,
+      name: "P1",
+      type: "short",
+      maxEnergy: 20,
+      accumulatedInvested: 0,
+      currentInvested: 0,
+      roundsNoInvestment: 0,
+      investedThisRound: false,
+      investorRecords: {},
+      earningRecords: {},
+      totalPayout: 0,
+    },
+  ];
+  game.players = [player("h1"), player("h2")];
+  for (const p of game.players) {
+    p.ready = true;
+    game.readyPlayers.add(p.id);
+  }
+  game.investmentEndsAt = Date.now() + 10 * 60_000;
+
+  ensureAutoHost(game, null, Date.now());
+  tryAdvancePhase(game);
+  assert.equal(game.phase, "INVESTMENT");
+
+  game.investmentEndsAt = Date.now() - 1;
+  assert.equal(handleActionTimeExpired(game), true);
+  assert.equal(game.phase, "SETTLEMENT");
+  resetAutoHostState(game.roomId);
+});
+
+test("without connected humans the auto host still advances a fully locked investment", () => {
+  const game = createInitialGame(roomId("invest-ai"), []);
+  game.autoHostEnabled = true;
+  game.phase = "INVESTMENT";
+  game.activeProjects = [
+    {
+      id: 1,
+      name: "P1",
+      type: "short",
+      maxEnergy: 20,
+      accumulatedInvested: 0,
+      currentInvested: 0,
+      roundsNoInvestment: 0,
+      investedThisRound: false,
+      investorRecords: {},
+      earningRecords: {},
+      totalPayout: 0,
+    },
+  ];
+  game.players = [
+    player("ai-1", { isAI: true, ready: true }),
+    player("ai-2", { isAI: true, ready: true }),
+  ];
+  for (const p of game.players) game.readyPlayers.add(p.id);
+  game.investmentEndsAt = Date.now() + 10 * 60_000;
+
+  assert.equal(ensureAutoHost(game, null, Date.now()), true);
+  assert.equal(game.phase, "SETTLEMENT");
   resetAutoHostState(game.roomId);
 });
 
@@ -224,4 +358,47 @@ test("AI richest player names the community when no model is configured (non-str
       else process.env[key] = value;
     }
   }
+});
+
+test("autoAuction updates and signals new deadline immediately when a bid arrives", () => {
+  const game = createInitialGame(roomId("auction-sync"), []);
+  game.autoHostEnabled = true;
+  const h1 = player("h1");
+  const h2 = player("h2");
+  game.players = [h1, h2];
+  game.phase = "AUCTION";
+  game.currentEra = 2;
+  game.roundInEra = 1;
+  const t0 = Date.now();
+  game.auctionFocusCardId = "buff_gold";
+  game.auctionFocusSetAt = t0;
+  game.auctionDistributedCardIds = [];
+  game.auctionCompletedDeals = [];
+  game.auctionBids = [];
+  game.auctionPassedCardIds = [];
+
+  assert.equal(syncAutoAuctionDeadline(game, t0), true);
+  assert.equal(game.autoHostNextActionAt, t0 + AUTO_HOST_CONFIG.auctionIdleMs);
+
+  const bidTime = t0 + 3_000;
+  const bid = placeAuctionBid(game, h1.id, 5);
+  assert.equal(bid.ok, true);
+  bid.bid.timestamp = bidTime;
+
+  // ensureAutoHost 必须在未到期前也因 deadline 延后返回 true，使 tick 立即广播最新倒计时
+  assert.equal(ensureAutoHost(game, null, bidTime + 500), true);
+  assert.equal(
+    game.autoHostNextActionAt,
+    Math.min(
+      bidTime + AUTO_HOST_CONFIG.auctionIdleMs,
+      t0 + AUTO_HOST_CONFIG.auctionLotMaxMs
+    )
+  );
+  // 同一时间戳再 tick 应无变化
+  assert.equal(ensureAutoHost(game, null, bidTime + 1_000), false);
+  // 到达该截止时间立即落槌
+  assert.equal(ensureAutoHost(game, null, game.autoHostNextActionAt!), true);
+  assert.equal(h1.wealth, 95);
+  assert.ok(h1.inventory.includes("buff_gold"));
+  resetAutoHostState(game.roomId);
 });

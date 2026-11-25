@@ -1,11 +1,9 @@
-import React, { useEffect, useState, lazy, Suspense } from "react";
+import React, { useEffect, useState } from "react";
 import { socket } from "../socket";
 import { clearGameSession, loadGameSession, saveGameSession } from "../gameSession";
 import { LobbyTutorial } from "./LobbyTutorial";
 import { RuleAgentChat } from "../components/ruleAgent/RuleAgentChat";
-const DevicePreviewShell = lazy(() =>
-  import("../devicePreview/DevicePreviewShell").then((m) => ({ default: m.DevicePreviewShell }))
-);
+import { FeedbackWall } from "../components/feedback/FeedbackWall";
 
 const NICKNAME_KEY = "gydd_nickname";
 
@@ -48,8 +46,8 @@ export const Lobby: React.FC<Props> = () => {
   const [roomId, setRoomId] = useState(() => invitedRoom || stored?.roomId || "");
   const [busy, setBusy] = useState<"create" | "join" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [devicePreviewOpen, setDevicePreviewOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [hasStoredSession, setHasStoredSession] = useState(() => Boolean(stored));
 
   useEffect(() => {
@@ -145,11 +143,6 @@ export const Lobby: React.FC<Props> = () => {
   return (
     <>
       {tutorialOpen && <LobbyTutorial playerName={name} onClose={() => setTutorialOpen(false)} />}
-      {devicePreviewOpen && (
-        <Suspense fallback={null}>
-          <DevicePreviewShell onClose={() => setDevicePreviewOpen(false)} />
-        </Suspense>
-      )}
       <div className="lobby-page">
         <div className="lobby-glow" aria-hidden />
         <main className="lobby-shell">
@@ -173,8 +166,8 @@ export const Lobby: React.FC<Props> = () => {
               <li>
                 <span className="lobby-point-icon" aria-hidden>👥</span>
                 <span>
-                  <strong>2–6 人同桌</strong>
-                  <em>把房号发给朋友，空位自动补齐。</em>
+                  <strong>1–6 人开房</strong>
+                  <em>把房号发给朋友，空位自动补 AI。</em>
                 </span>
               </li>
               <li>
@@ -266,8 +259,8 @@ export const Lobby: React.FC<Props> = () => {
                 玩法说明
               </button>
               <span aria-hidden>·</span>
-              <button type="button" onClick={() => setDevicePreviewOpen(true)}>
-                设备预览
+              <button type="button" onClick={() => setFeedbackOpen(true)}>
+                玩家评价
               </button>
               {hasStoredSession && (
                 <>
@@ -283,6 +276,11 @@ export const Lobby: React.FC<Props> = () => {
         <p className="lobby-footnote">无需下载 · 手机与电脑都能玩 · 无需主持人</p>
       </div>
       <RuleAgentChat />
+      <FeedbackWall
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        source="lobby"
+      />
     </>
   );
 };

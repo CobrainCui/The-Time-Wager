@@ -3,12 +3,22 @@ import assert from "node:assert/strict";
 import { createInitialGame, type GameState, type Player } from "../state/gameState.js";
 import { addAiPlayer, countAiPlayers, fillAiPlayers, removeAiPlayer } from "./aiRoster.js";
 import { buildFallbackInvestmentPlan, chooseAuctionAction, sanitizeInvestmentPlan } from "./aiPolicy.js";
-import { handleAIPhase } from "./aiOrchestrator.js";
+import {
+  getAiPhaseKey,
+  handleAIPhase,
+  pruneGroupThinkingStatuses,
+  sweepStaleChatThinkingStatuses,
+} from "./aiOrchestrator.js";
 import { profileFor, profileForPlayer } from "./aiPersona.js";
 import { buildAiObservation } from "./aiObservation.js";
 import { buildSystemPrompt } from "./aiPrompt.js";
 import { getCommunityNamer } from "../state/gameState.js";
 import { applyInvestments } from "../logic/investmentLogic.js";
+import { unlockSubmittedInvestment } from "../state/gameActions.js";
+import { createLotteryOffer } from "../logic/lotterySettle.js";
+import { acceptLotteryOffer } from "../logic/lotteryDraw.js";
+import { serializeGameForClient } from "../network/broadcast.js";
+import { createCustomChatGroup } from "../logic/chatGroups.js";
 import {
   shortTermProjects,
   longTermProjects,
@@ -293,4 +303,283 @@ test("AI can become the community namer when it is the richest online player", (
   ai.connected = true;
   ai.wealth = 999;
   assert.equal(getCommunityNamer(game)?.id, ai.id);
+});
+
+test("lottery public visibility feeds publicFeed without buff_gold leak, private stays hidden", () => {
+  const { game, human, ai } = makeGame();
+  human.inventory.push("buff_gold", "buff_lottery");
+  human.activeBuffs.push({ cardId: "buff_gold" }, { cardId: "buff_lottery" });
+  ai.inventory.push("buff_lottery");
+  ai.activeBuffs.push({ cardId: "buff_lottery" });
+
+  const pubDraw = createLotteryOffer(game, human.id, 30, {
+    roll: 5,
+    source: "server",
+    visibility: "public",
+  });
+  const pubRes = acceptLotteryOffer(game, human.id, pubDraw.offer.offerId);
+  assert.equal(pubRes.ok, true);
+  assert.equal(game.publicFeed?.length, 1);
+  assert.ok(game.publicFeed?.[0].text.includes("公开开奖【彩票】：掷出 5 点"));
+  assert.ok(!game.publicFeed?.[0].text.includes("点石成金"));
+  assert.ok(!game.publicFeed?.[0].text.includes("60"));
+
+  const privDraw = createLotteryOffer(game, ai.id, 100, {
+    roll: 6,
+    source: "server",
+    visibility: "private",
+  });
+  const privRes = acceptLotteryOffer(game, ai.id, privDraw.offer.offerId);
+  assert.equal(privRes.ok, true);
+  assert.equal(game.publicFeed?.length, 1, "私密开奖不应写入 publicFeed");
+
+  const obs = buildAiObservation(game, ai);
+  assert.equal(obs.publicFeed.length, 1);
+  assert.ok(obs.publicFeed[0].text.includes("公开开奖"));
+});
+
+test("AI observation retains accepted/rejected transfers in directHistory", () => {
+  const { game, human, ai } = makeGame();
+  game.transactions.push({
+    id: "tx-1yuan",
+    fromId: human.id,
+    fromName: human.name,
+    toId: ai.id,
+    toName: ai.name,
+    amount: 1,
+    note: "转1块钱试试",
+    status: "accepted",
+    timestamp: Date.now() - 1000,
+  });
+  const obs = buildAiObservation(game, ai);
+  assert.equal(obs.directHistory.length, 1);
+  assert.equal(obs.directHistory[0].amount, 1);
+  assert.equal(obs.directHistory[0].status, "accepted");
+  assert.equal(obs.directHistory[0].direction, "in");
+});
+
+test("AI can unlock its own submitted investment via source='ai'", () => {
+  const { game, ai } = makeGame();
+  game.phase = "INVESTMENT";
+  game.investmentEndsAt = Date.now() + 60_000;
+  const projId = game.activeProjects[0].id;
+  const applied = applyInvestments(game, ai.id, { [projId]: 6 });
+  assert.equal(applied, true);
+  ai.ready = true;
+  game.readyPlayers.add(ai.id);
+
+  const blockedSelf = unlockSubmittedInvestment(game, ai.id, "self");
+  assert.deepEqual(blockedSelf, { ok: false, reason: "ai_player" });
+
+  const unlockedByAi = unlockSubmittedInvestment(game, ai.id, "ai");
+  assert.deepEqual(unlockedByAi, { ok: true });
+  assert.equal(ai.ready, false);
+  assert.equal(ai.energy, 15);
+  assert.equal(ai.investmentDraft?.[projId], 6);
+});
+
+test("serializeGameForClient scopes aiChatStatuses for group membership and 1v1 DMs", () => {
+  const { game, human, ai } = makeGame();
+  game.phase = "ROOM_WAITING";
+  const added2 = addAiPlayer(game);
+  const added3 = addAiPlayer(game);
+  assert.ok(added2.ok && added3.ok);
+  game.phase = "INVESTMENT";
+  const ai2 = added2.player;
+  const ai3 = added3.player;
+
+  const shared = createCustomChatGroup(game, human.id, [ai.id, ai2.id], "公开联盟");
+  const secret = createCustomChatGroup(game, ai.id, [ai2.id, ai3.id], "AI密聊");
+  assert.ok(shared.ok && secret.ok);
+
+  game.aiChatStatuses = {
+    [`group:${shared.group.id}`]: {
+      [ai.id]: { playerId: ai.id, playerName: ai.name, state: "silent", updatedAt: Date.now() },
+    },
+    [`group:${secret.group.id}`]: {
+      [ai2.id]: { playerId: ai2.id, playerName: ai2.name, state: "thinking", updatedAt: Date.now() },
+    },
+    [`dm:${human.id}:${ai.id}`]: {
+      [ai.id]: { playerId: ai.id, playerName: ai.name, state: "thinking", updatedAt: Date.now() },
+    },
+  };
+
+  const humanPayload = serializeGameForClient(game, {}, human.id) as {
+    aiChatStatuses?: Record<string, Record<string, { state: string }>>;
+  };
+  assert.equal(humanPayload.aiChatStatuses?.[`group:${shared.group.id}`]?.[ai.id]?.state, "silent");
+  assert.equal(humanPayload.aiChatStatuses?.[`group:${secret.group.id}`], undefined);
+  assert.equal(humanPayload.aiChatStatuses?.[`peer:${ai.id}`]?.[ai.id]?.state, "thinking");
+
+  const otherPayload = serializeGameForClient(game, {}, ai3.id) as {
+    aiChatStatuses?: Record<string, Record<string, { state: string }>>;
+  };
+  assert.equal(otherPayload.aiChatStatuses?.[`group:${shared.group.id}`], undefined);
+  assert.equal(otherPayload.aiChatStatuses?.[`group:${secret.group.id}`]?.[ai2.id]?.state, "thinking");
+  assert.equal(otherPayload.aiChatStatuses?.[`peer:${ai.id}`], undefined);
+});
+
+test("sanitizeInvestmentPlan preserves multi-card useCards combos within inventory stock", () => {
+  const { game, ai } = makeGame();
+  ai.inventory = ["buff_gold", "buff_lottery"];
+  const plan = sanitizeInvestmentPlan(game, ai, {
+    useCards: [
+      { cardId: "buff_gold" },
+      { cardId: "buff_lottery", visibility: "private" },
+      { cardId: "buff_gold" }, // 超过库存的第二张点石成金应被过滤
+    ],
+    investment: { [game.activeProjects[0].id]: 5 },
+  } as unknown as Parameters<typeof sanitizeInvestmentPlan>[2]);
+  assert.equal(plan.useCards?.length, 2);
+  assert.deepEqual(
+    plan.useCards?.map((c) => ({ cardId: c.cardId, visibility: c.visibility })),
+    [
+      { cardId: "buff_gold", visibility: undefined },
+      { cardId: "buff_lottery", visibility: "private" },
+    ]
+  );
+  assert.equal(plan.useCard?.cardId, "buff_gold");
+});
+
+test("AI observation strictly hides opponents' private energy, hand, drafts, and current investments", () => {
+  const { game, human, ai } = makeGame();
+  human.energy = 11;
+  human.inventory = ["buff_gold", "buff_short"];
+  human.activeBuffs = [{ cardId: "buff_gold" }];
+  human.investmentDraft = { [game.activeProjects[0].id]: 9 };
+  human.investment = { [game.activeProjects[1].id]: 4 };
+  human.coffeePurchasesThisRound = 2;
+
+  const obs = buildAiObservation(game, ai);
+  const opponent = obs.players.find((p) => p.id === human.id)!;
+  assert.equal(opponent.isMe, false);
+  for (const forbidden of [
+    "energy",
+    "inventory",
+    "inventoryCount",
+    "activeBuffs",
+    "usedCards",
+    "investment",
+    "investmentDraft",
+    "longTerm",
+    "riskGains",
+    "coffeePurchases",
+  ]) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(opponent, forbidden),
+      false,
+      `opponent observation must not expose ${forbidden}`
+    );
+  }
+  for (const proj of obs.projects) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(proj, "investorRecords"),
+      false,
+      "projects must not expose other players' investorRecords"
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(proj, "currentInvested"),
+      false,
+      "projects must not expose current-round hidden investments"
+    );
+  }
+});
+
+test("sanitizeInvestmentPlan does not clip long investments by headroom (prevents 1:1 abandon)", () => {
+  const { game, ai } = makeGame();
+  game.phase = "INVESTMENT";
+  const lp = project(longTermProjects[0]);
+  lp.accumulatedInvested = lp.maxEnergy - 2; // 仅剩 2 格 headroom
+  game.activeProjects = [lp];
+  ai.energy = 10;
+  ai.longTerm = {
+    [lp.id]: { totalInvested: 12, status: "active" },
+  };
+
+  const sanitized = sanitizeInvestmentPlan(game, ai, {
+    coffee: 0,
+    investment: { [lp.id]: 5 },
+  });
+  assert.equal(
+    sanitized.investment[lp.id],
+    5,
+    "长期项目仅余 2 格时续投 5 点不应被 headroom 裁成 2 后被 >=3 规则清零"
+  );
+});
+
+test("sanitizeInvestmentPlan counts self work_rest+slack (+8) and retroactive work_rest (+16) energy", () => {
+  const { game, human, ai } = makeGame();
+  game.phase = "INVESTMENT";
+  const sp = project(shortTermProjects[0]);
+  sp.maxEnergy = 40;
+  game.activeProjects = [sp];
+  ai.energy = 10;
+  ai.inventory = ["buff_work_rest", "buff_slack"];
+  ai.slackEnergyLost = [8];
+  ai.slackedBy = [human.id];
+
+  const sanitized = sanitizeInvestmentPlan(game, ai, {
+    coffee: 0,
+    useCards: [
+      { cardId: "buff_work_rest" }, // 省略 targetPlayerId 时应默认自身，且追溯恢复 +16
+      { cardId: "buff_slack", targetPlayerId: ai.id }, // 自摸鱼再 +8
+    ],
+    investment: { [sp.id]: 34 }, // 10 + 16 + 8 = 34
+  });
+  assert.equal(sanitized.useCards?.length, 2);
+  assert.equal(sanitized.useCards?.[0]?.targetPlayerId, ai.id);
+  assert.equal(sanitized.investment[sp.id], 34);
+});
+
+test("getAiPhaseKey changes across auction focus cards and status cleaners clear stale thinking", () => {
+  const { game, ai } = makeGame();
+  game.phase = "AUCTION";
+  game.globalRound = 3;
+  game.currentEra = 2;
+  game.roundInEra = 1;
+  game.auctionFocusCardId = "buff_gold";
+  const k1 = getAiPhaseKey(game);
+  game.auctionFocusCardId = "buff_slack";
+  const k2 = getAiPhaseKey(game);
+  assert.notEqual(k1, k2, "拍卖切换焦点卡时 phaseKey 必须变化以防看门狗误杀");
+
+  const ai2: Player = {
+    ...ai,
+    id: "ai_2",
+    name: "AI2",
+    aiSlot: 2,
+  };
+  const baseNow = Date.now();
+  game.aiChatStatuses = {
+    "group:public": {
+      [ai.id]: { playerId: ai.id, playerName: ai.name, state: "thinking", updatedAt: baseNow - 10_000 },
+      [ai2.id]: { playerId: ai2.id, playerName: ai2.name, state: "thinking", updatedAt: baseNow - 120_000 },
+    },
+  };
+  assert.equal(pruneGroupThinkingStatuses(game, "group:public", new Set([ai2.id])), true);
+  assert.equal(game.aiChatStatuses["group:public"]?.[ai.id], undefined);
+  assert.ok(game.aiChatStatuses["group:public"]?.[ai2.id]);
+  assert.equal(sweepStaleChatThinkingStatuses(game, 90_000, baseNow), true);
+  assert.equal(game.aiChatStatuses["group:public"], undefined);
+});
+
+test("sanitizeInvestmentPlan redistributes energy clipped from over-headroom short/risk bets", () => {
+  const { game, ai } = makeGame();
+  game.phase = "INVESTMENT";
+  const shortSmall = project(shortTermProjects[0]);
+  shortSmall.accumulatedInvested = shortSmall.maxEnergy - 6; // 仅余 6 格
+  const safeLong = project(longTermProjects[0]);
+  game.activeProjects = [shortSmall, safeLong];
+  ai.energy = 15;
+
+  const sanitized = sanitizeInvestmentPlan(game, ai, {
+    coffee: 0,
+    investment: { [shortSmall.id]: 15 },
+  });
+  assert.equal(sanitized.investment[shortSmall.id], 6);
+  assert.equal(sanitized.investment[safeLong.id], 9);
+  assert.equal(
+    (sanitized.investment[shortSmall.id] ?? 0) + (sanitized.investment[safeLong.id] ?? 0),
+    15
+  );
 });

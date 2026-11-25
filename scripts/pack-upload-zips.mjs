@@ -10,11 +10,14 @@ import { spawnSync } from "child_process";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+const includeEnv = !process.argv.includes("--no-env");
+
 const py = `
 import os, sys, zipfile
 from pathlib import Path
 
 root = Path(sys.argv[1])
+include_env = sys.argv[2] == "1"
 
 def zip_dir(src: Path, dest: Path, arc_prefix: str = ""):
     if dest.exists():
@@ -45,11 +48,13 @@ with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
         (stage / "dist", "dist"),
         (stage / "package.json", "package.json"),
         (stage / "package-lock.json", "package-lock.json"),
-        (stage / ".env.example", ".env.example"),
         (stage / "data", "data"),
         # 规则助手知识库：ruleAgent 运行时按 dist/logic → ../../gameInstruction 读取
         (root / "server" / "gameInstruction", "gameInstruction"),
     ]
+    if include_env:
+        # runtime env (content from server/.env.production)
+        items.append((stage / ".env", ".env"))
     for src, arc_base in items:
         if not src.exists():
             raise SystemExit(f"missing {src}")
@@ -72,7 +77,7 @@ with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
 print("ok", (root / "dist_upload.zip").stat().st_size, (root / "server_upload.zip").stat().st_size)
 `;
 
-const r = spawnSync("python", ["-c", py, root], { encoding: "utf8" });
+const r = spawnSync("python", ["-c", py, root, includeEnv ? "1" : "0"], { encoding: "utf8" });
 if (r.stdout) process.stdout.write(r.stdout);
 if (r.stderr) process.stderr.write(r.stderr);
 if (r.status !== 0) process.exit(r.status || 1);

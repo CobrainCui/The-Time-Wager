@@ -3,6 +3,7 @@ import { uiRem } from "../../utils/typography";
 import {
   askRuleAgent,
   fetchRuleAgentHealth,
+  type RuleAgentGuardKind,
   type RuleAgentTurn,
 } from "../../api/ruleAgent";
 
@@ -15,6 +16,28 @@ import {
 
 const STORAGE_KEY = "ruleAgentChat.v1";
 const MAX_STORED_TURNS = 40;
+
+const GUARD_KINDS: RuleAgentGuardKind[] = [
+  "crisis",
+  "prompt_injection",
+  "rule_tampering",
+  "pii",
+  "off_topic",
+  "unsafe_output",
+];
+
+/** 护栏命中的小标签：透明告知，不打断对话。 */
+const GUARD_LABELS: Partial<Record<RuleAgentGuardKind, string>> = {
+  crisis: "安全提示",
+  prompt_injection: "边界提示",
+  rule_tampering: "边界提示",
+  pii: "隐私提示",
+  unsafe_output: "安全提示",
+};
+
+function isGuardKind(value: unknown): value is RuleAgentGuardKind {
+  return typeof value === "string" && (GUARD_KINDS as string[]).includes(value);
+}
 
 function loadStoredTurns(): RuleAgentTurn[] {
   try {
@@ -29,6 +52,11 @@ function loadStoredTurns(): RuleAgentTurn[] {
           (m.role === "user" || m.role === "assistant") &&
           typeof m.content === "string" &&
           m.content.length > 0
+      )
+      .map((m) =>
+        isGuardKind((m as { guardrail?: unknown }).guardrail)
+          ? { ...m, guardrail: (m as { guardrail: RuleAgentGuardKind }).guardrail }
+          : { role: m.role, content: m.content }
       )
       .slice(-MAX_STORED_TURNS);
   } catch {
@@ -78,6 +106,21 @@ export const RuleAgentChat: React.FC = () => {
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns, open, loading]);
 
+  // 旋转屏幕 / 软键盘 / 拖动窗口改变面板高度后，重新贴到最新一条。
+  useEffect(() => {
+    if (!open) return;
+    const stickToBottom = () => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    };
+    window.addEventListener("resize", stickToBottom);
+    window.visualViewport?.addEventListener("resize", stickToBottom);
+    return () => {
+      window.removeEventListener("resize", stickToBottom);
+      window.visualViewport?.removeEventListener("resize", stickToBottom);
+    };
+  }, [open]);
+
   const send = useCallback(async () => {
     const question = input.trim();
     if (!question || loading) return;
@@ -87,7 +130,10 @@ export const RuleAgentChat: React.FC = () => {
     setLoading(true);
     try {
       const res = await askRuleAgent(history, question);
-      setTurns((prev) => [...prev, { role: "assistant", content: res.reply }]);
+      setTurns((prev) => [
+        ...prev,
+        { role: "assistant", content: res.reply, ...(res.guardrail ? { guardrail: res.guardrail } : {}) },
+      ]);
     } catch (e) {
       setTurns((prev) => [
         ...prev,
@@ -121,7 +167,7 @@ export const RuleAgentChat: React.FC = () => {
           <div className="rule-agent-panel-header">
             <div className="rule-agent-panel-title">
               <span className="rule-agent-panel-name">📖 规则助手</span>
-              <span className="rule-agent-panel-sub">只答游戏相关问题</span>
+              <span className="rule-agent-panel-sub">只答游戏相关问题 · AI 生成</span>
             </div>
             <button
               type="button"
@@ -150,16 +196,20 @@ export const RuleAgentChat: React.FC = () => {
                 {WELCOME_HINT}
               </div>
             )}
-            {turns.map((m, i) => (
-              <div
-                key={i}
-                className={`rule-agent-bubble ${
-                  m.role === "user" ? "rule-agent-bubble--user" : "rule-agent-bubble--assistant"
-                }`}
-              >
-                {m.content}
-              </div>
-            ))}
+            {turns.map((m, i) => {
+              const guardLabel = m.role === "assistant" && m.guardrail ? GUARD_LABELS[m.guardrail] : "";
+              return (
+                <div
+                  key={i}
+                  className={`rule-agent-bubble ${
+                    m.role === "user" ? "rule-agent-bubble--user" : "rule-agent-bubble--assistant"
+                  }${guardLabel ? " rule-agent-bubble--guard" : ""}`}
+                >
+                  {guardLabel && <span className="rule-agent-guard-tag">{guardLabel}</span>}
+                  {m.content}
+                </div>
+              );
+            })}
             {loading && (
               <div className="rule-agent-bubble rule-agent-bubble--assistant rule-agent-bubble--typing">
                 <span className="animate-spin" style={{ display: "inline-block", marginRight: "0.35rem" }}>⟳</span>
@@ -168,7 +218,7 @@ export const RuleAgentChat: React.FC = () => {
             )}
             {!gate.configured && (
               <div className="rule-agent-hint">
-                服务端尚未配置 API 密钥，规则助手可能无法回答（.env 中的 DEEPSEEK_API_KEY）。
+                规则助手暂未开启，可先查看左侧「指南」。
               </div>
             )}
           </div>

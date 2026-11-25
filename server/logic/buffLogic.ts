@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { GameState, ActiveBuff, BuffRoundNote, Player } from "../state/gameState.js";
+import { GameState, ActiveBuff, BuffRoundNote, LotteryVisibility, Player } from "../state/gameState.js";
 import { buffCards } from "../data/game_data.js";
 import { appendSessionEvent } from "../state/sessionTelemetry.js";
 import { resolveInventoryIndexForCard } from "./adminPlayerCard.js";
@@ -76,6 +76,7 @@ export function useBuffCard(
     burnFromInventory?: boolean;
     burnCardId?: string;
     inventoryIndex?: unknown;
+    visibility?: LotteryVisibility;
     extraData?: unknown;
   }
 ): UseBuffResult {
@@ -110,6 +111,9 @@ export function useBuffCard(
     cardId,
     targetPlayerId: params.targetPlayerId,
     targetProjectId: params.targetProjectId,
+    ...(cardId === "buff_lottery"
+      ? { visibility: params.visibility === "private" ? "private" : "public" }
+      : {}),
     extraData: params.extraData,
   };
   let roundPlayEnergyDeltas: { playerId: string; delta: number }[] = [];
@@ -327,8 +331,14 @@ export function useBuffCard(
   } else if (cardId === FORCE_BUY_CARD_ID) {
     return { success: false, msg: "强买强卖请在拍卖阶段对当前焦点卡使用" };
   } else if (cardId === "buff_lottery" || cardId === "buff_gold" || cardId === "buff_insurance") {
-    game.logs.push(`🃏 ${player.name} 使用了卡牌【${cardDef.name}】，将在结算或开奖时生效`);
-    usedText = `使用【${cardDef.name}】（待结算/开奖生效）`;
+    if (cardId === "buff_lottery") {
+      const visLabel = buff.visibility === "private" ? "私密开奖" : "公开开奖";
+      game.logs.push(`🃏 ${player.name} 使用了卡牌【${cardDef.name}】（${visLabel}），待开奖`);
+      usedText = `使用【${cardDef.name}】（${visLabel}）`;
+    } else {
+      game.logs.push(`🃏 ${player.name} 使用了卡牌【${cardDef.name}】，将在结算或开奖时生效`);
+      usedText = `使用【${cardDef.name}】（待结算/开奖生效）`;
+    }
   } else {
     return { success: false, msg: "未知或不可用的道具" };
   }

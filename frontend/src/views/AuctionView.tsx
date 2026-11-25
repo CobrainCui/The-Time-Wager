@@ -4,6 +4,7 @@ import { GameState, Player } from "../types";
 import { BUFF_CARD_DEFS, getAuctionCardsForEra } from "../config/buffCards";
 import { AuctionResultsPanel } from "../components/AuctionResultsPanel";
 import { BuffCardArt } from "../components/BuffCardArt";
+import { BuffDescExpandable } from "../components/BuffDescExpandable";
 import { GavelIcon } from "../components/icons/GavelIcon";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { socket } from "../socket";
@@ -18,7 +19,6 @@ import {
   normalizeDigitsNonNegativeInt,
   parseNormalizedNonNegativeInt,
 } from "../utils/nonNegativeIntInput";
-import { BuffDescText } from "../utils/buffDescEmphasis";
 
 interface Props {
   game: GameState;
@@ -218,6 +218,19 @@ export const AuctionView: React.FC<Props> = ({
               <GavelIcon size={56} decorative />
             </div>
             <h1 style={{ fontSize: "2rem", fontWeight: 900, color: "#c084fc", margin: 0 }}>拍卖会</h1>
+            <p
+              style={{
+                margin: "0.6rem auto 0",
+                maxWidth: "38rem",
+                fontSize: uiRem(0.82),
+                lineHeight: 1.6,
+                color: "var(--color-text-muted)",
+              }}
+            >
+              逐张拍卖 · 用财富出价 · 价高者得 · 成交价从财富扣除
+              <br />
+              起拍 5，每次至少加 5；出价只是暂时冻结，没拍到不扣钱。
+            </p>
           </div>
         )}
 
@@ -225,11 +238,39 @@ export const AuctionView: React.FC<Props> = ({
           <div style={{ textAlign: "center", marginBottom: "0.75rem" }}>
             <AutoHostCountdown
               at={game.autoHostNextActionAt}
+              serverNow={game.serverNow}
               label={focusId ? "自动落槌 / 跳过" : "自动选出下一张"}
               compact
             />
           </div>
         )}
+
+        {(() => {
+          const thinkingNames = Object.entries(game.aiTurnStatuses ?? {})
+            .filter(([, st]) => st.state === "thinking")
+            .map(([pid]) => game.players.find((p) => p.id === pid)?.name ?? pid);
+          if (thinkingNames.length === 0) return null;
+          return (
+            <div style={{ textAlign: "center", marginBottom: "0.75rem" }}>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.35rem",
+                  padding: "0.25rem 0.75rem",
+                  borderRadius: "9999px",
+                  background: "rgba(234, 179, 8, 0.12)",
+                  border: "1px solid rgba(234, 179, 8, 0.35)",
+                  color: "#fde047",
+                  fontSize: uiRem(0.76),
+                  fontWeight: 600,
+                }}
+              >
+                ⏳ {thinkingNames.join("、")} 正在思考出价…
+              </span>
+            </div>
+          );
+        })()}
 
         {!showResultsRail && (
           <div style={{ marginBottom: compact ? "0.75rem" : "1.25rem" }}>
@@ -323,15 +364,17 @@ export const AuctionView: React.FC<Props> = ({
                 >
                   {focusDef?.name || focusId}
                 </div>
-                <div
-                  style={{
-                    fontSize: uiRem(0.88),
-                    color: "var(--color-text-secondary)",
-                    lineHeight: 1.55,
-                  }}
-                >
-                  {focusDef?.desc ? <BuffDescText text={focusDef.desc} /> : "—"}
-                </div>
+                {focusDef?.desc ? (
+                  <BuffDescExpandable
+                    desc={focusDef.desc}
+                    tagline={focusDef.tagline}
+                    color={focusDef.color}
+                    fontSize={uiRem(0.88)}
+                    collapsedLines={3}
+                  />
+                ) : (
+                  "—"
+                )}
               </div>
               {!embed && hasForceBuy && (
                 <button
@@ -343,7 +386,7 @@ export const AuctionView: React.FC<Props> = ({
                     const name = focusDef?.name || focusId;
                     if (
                       !window.confirm(
-                        `使用强买强卖？\n将免费拿走正在拍的【${name}】。该卡牌（强买强卖）只能用一次。`
+                        `使用强买强卖，免费拿走【${name}】？每张限一次。`
                       )
                     ) {
                       return;
@@ -356,10 +399,10 @@ export const AuctionView: React.FC<Props> = ({
                   }}
                 >
                   {forceBuyUsed
-                    ? "该卡牌（强买强卖）只能用一次"
+                    ? "已用过"
                     : forceBuyTargetsSelf
                       ? "不能强买正在拍的强买强卖"
-                      : "强买强卖：免费拿走正在拍的这张"}
+                      : "免费拿走这张"}
                 </button>
               )}
             </div>
@@ -680,15 +723,17 @@ export const AuctionView: React.FC<Props> = ({
                     >
                       {def?.name || card.name}
                     </div>
-                    <div
-                      style={{
-                        fontSize: uiRem(0.82),
-                        color: "var(--color-text-secondary)",
-                        lineHeight: 1.55,
-                      }}
-                    >
-                      {def?.desc ? <BuffDescText text={def.desc} /> : "—"}
-                    </div>
+                    {def?.desc ? (
+                      <BuffDescExpandable
+                        desc={def.desc}
+                        tagline={def.tagline}
+                        color={def.color}
+                        fontSize={uiRem(0.82)}
+                        collapsedLines={2}
+                      />
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 );
               })}

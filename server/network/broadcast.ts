@@ -95,6 +95,16 @@ export function serializeGameForClient(
     lighterBurnDeclarations: _lighterBurnDeclarations,
     roundBuffPlays: _roundBuffPlays,
     playerLogs: _playerLogs,
+    publicFeed: rawPublicFeed,
+    aiTurnStatuses: rawAiTurnStatuses,
+    aiChatStatuses: rawAiChatStatuses,
+    labRngState: _labRngState,
+    labPredictions: rawLabPredictions,
+    labDirectMessages: rawLabDirectMessages,
+    labAgentDecisions: rawLabAgentDecisions,
+    labTokenUsage: rawLabTokenUsage,
+    labMeta: rawLabMeta,
+    isLabExperiment: rawIsLabExperiment,
     ...gamePublic
   } = game;
   const hideInvestments = HIDDEN_INVESTMENT_PHASES.has(game.phase);
@@ -125,8 +135,28 @@ export function serializeGameForClient(
     ? groupMessagesForViewer(game, viewerPlayerId ?? null, isGodView)
     : [];
 
+  const visibleGroupIds = new Set(chatGroups.map((g) => g.id));
+  const aiChatStatusesForViewer: NonNullable<GameState["aiChatStatuses"]> = {};
+  for (const [channelKey, entries] of Object.entries(rawAiChatStatuses ?? {})) {
+    if (!entries || Object.keys(entries).length === 0) continue;
+    if (channelKey.startsWith("group:")) {
+      const gid = channelKey.slice("group:".length);
+      if (isGodView || visibleGroupIds.has(gid)) {
+        aiChatStatusesForViewer[channelKey] = { ...entries };
+      }
+      continue;
+    }
+    if (!isGodView && viewerPlayerId && channelKey.startsWith(`dm:${viewerPlayerId}:`)) {
+      const peerAiId = channelKey.slice(`dm:${viewerPlayerId}:`.length);
+      aiChatStatusesForViewer[`peer:${peerAiId}`] = { ...entries };
+    }
+  }
+
   return {
     ...gamePublic,
+    publicFeed: (rawPublicFeed ?? []).slice(-80),
+    aiTurnStatuses: rawAiTurnStatuses ?? {},
+    aiChatStatuses: aiChatStatusesForViewer,
     ...(game.lastSettlement ? { lastSettlement: lastSettlementForViewer } : {}),
     activeProjects: projectsForViewer(game.activeProjects, viewerPlayerId ?? null, isGodView),
     uncompletedProjects: projectsForViewer(
@@ -166,6 +196,16 @@ export function serializeGameForClient(
           roundBuffPlays: game.roundBuffPlays ?? [],
           lighterBurnDeclarations: game.lighterBurnDeclarations ?? [],
           playerLogs: game.playerLogs,
+          ...(rawIsLabExperiment
+            ? {
+                isLabExperiment: true,
+                labMeta: rawLabMeta ?? null,
+                labTokenUsage: rawLabTokenUsage ?? {},
+                labPredictions: rawLabPredictions ?? [],
+                labDirectMessages: (rawLabDirectMessages ?? []).slice(-120),
+                labAgentDecisions: (rawLabAgentDecisions ?? []).slice(-120),
+              }
+            : {}),
         }
       : {
           ...(ownLotteryOffer ? { pendingLotteryOffer: ownLotteryOffer } : {}),

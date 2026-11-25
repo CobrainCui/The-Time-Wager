@@ -1083,6 +1083,9 @@ export const PlayerChatSystem: React.FC<{
                 thread={thread}
                 displayMessages={thread.messages}
                 draftsRef={draftsRef}
+                aiChatStatuses={
+                  thread.groupId ? game.aiChatStatuses?.[`group:${thread.groupId}`] : undefined
+                }
                 onCollapse={getCollapseHandler(playerId, thread.playerName)}
                 onLeaveGroup={
                   thread.groupKind === "custom" && thread.groupId
@@ -1115,6 +1118,7 @@ export const PlayerChatSystem: React.FC<{
               onComposerFocus={onComposerFocus}
               onComposerBlur={onComposerBlur}
               onComposerImeChange={onComposerImeChange}
+              aiChatStatuses={game.aiChatStatuses?.[`peer:${playerId}`]}
               readOnly={readOnly}
             />
           );

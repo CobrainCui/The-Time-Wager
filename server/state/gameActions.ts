@@ -92,9 +92,9 @@ export type UnlockInvestmentResult =
 export type AdminUnlockResult = UnlockInvestmentResult;
 
 /**
- * 投资阶段、倒计时未结束时，回退单个已锁定玩家到可再编辑状态（玩家自解锁与主持解锁共用）。
+ * 投资阶段、倒计时未结束时，回退单个已锁定玩家到可再编辑状态（玩家自解锁、AI 协商解锁与主持解锁共用）。
  */
-export type InvestmentUnlockSource = "admin" | "self";
+export type InvestmentUnlockSource = "admin" | "self" | "ai";
 
 export function unlockSubmittedInvestment(
   game: GameState,
@@ -103,7 +103,7 @@ export function unlockSubmittedInvestment(
 ): UnlockInvestmentResult {
   const player = game.players.find((p) => p.id === playerId);
   if (!player) return { ok: false, reason: "not_found" };
-  if (isAiPlayer(player)) return { ok: false, reason: "ai_player" };
+  if (isAiPlayer(player) && source !== "ai") return { ok: false, reason: "ai_player" };
   if (!player.ready) return { ok: false, reason: "not_ready" };
 
   if (game.phase !== "INVESTMENT") return { ok: false, reason: "wrong_phase" };

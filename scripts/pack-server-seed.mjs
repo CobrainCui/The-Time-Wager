@@ -31,9 +31,15 @@ function copyDirRecursive(srcDir, dstDir) {
 if (fs.existsSync(stage)) rim(stage);
 mkdirp(path.join(stage, "dist"));
 copyDirRecursive(path.join(root, "server", "dist"), path.join(stage, "dist"));
-for (const f of ["package.json", "package-lock.json", ".env.example"]) {
+for (const f of ["package.json", "package-lock.json"]) {
   fs.copyFileSync(path.join(root, "server", f), path.join(stage, f));
 }
+// 生产环境变量随包发布：.env.production → 包内 .env（服务端 dotenv 只读取 .env）
+const prodEnv = path.join(root, "server", ".env.production");
+if (!fs.existsSync(prodEnv)) {
+  throw new Error("missing server/.env.production (production env for packaging)");
+}
+fs.copyFileSync(prodEnv, path.join(stage, ".env"));
 
 const buffsDir = path.join(root, "frontend", "public", "images", "buffs");
 const stagedBuffsDir = path.join(stage, "data", "uploads_buffs");

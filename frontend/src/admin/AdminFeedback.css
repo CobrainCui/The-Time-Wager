@@ -1,0 +1,208 @@
+/* 管理端 · 玩家评价 */
+
+.admin-feedback-page {
+  min-height: 100vh;
+  background: #070b14;
+  padding: 2rem 1.5rem;
+  color: #e2e8f0;
+}
+
+.admin-feedback-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.admin-feedback-heading {
+  min-width: 0;
+}
+
+.admin-feedback-back {
+  margin-bottom: 0.75rem;
+}
+
+.admin-feedback-title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 900;
+  color: #fbbf24;
+}
+
+.admin-feedback-count {
+  margin: 0.35rem 0 0;
+  color: var(--color-text-muted);
+  font-size: calc(0.85rem * var(--text-ui-scale));
+}
+
+.admin-feedback-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.admin-feedback-error {
+  margin: 0 0 1rem;
+  color: #f87171;
+  font-size: calc(0.85rem * var(--text-ui-scale));
+}
+
+.admin-feedback-error-auth {
+  font-weight: 700;
+}
+
+.admin-feedback-state {
+  margin: 0;
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  background: var(--color-bg-card);
+  border: 2px dashed var(--color-border);
+  border-radius: 1rem;
+}
+
+.admin-feedback-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+}
+
+.admin-feedback-card {
+  min-width: 0;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  padding: 1rem 1.25rem;
+}
+
+.admin-feedback-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  color: var(--color-text-muted);
+  font-size: calc(0.78rem * var(--text-ui-scale));
+}
+
+.admin-feedback-stars {
+  font-size: calc(0.95rem * var(--text-ui-scale));
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+}
+
+.admin-feedback-badge {
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  font-weight: 700;
+  font-size: calc(0.68rem * var(--text-ui-scale));
+}
+
+.admin-feedback-badge.is-visible {
+  background: rgba(45, 122, 90, 0.85);
+  color: #eafff5;
+}
+
+.admin-feedback-badge.is-hidden {
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.admin-feedback-source {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+.admin-feedback-time {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.admin-feedback-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+}
+
+.admin-feedback-tag {
+  padding: 0.1rem 0.45rem;
+  border-radius: 9999px;
+  background: rgba(201, 151, 58, 0.12);
+  border: 1px solid rgba(201, 151, 58, 0.25);
+  color: var(--color-text-secondary);
+  font-size: calc(0.7rem * var(--text-ui-scale));
+}
+
+.admin-feedback-content {
+  margin: 0.6rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.6;
+  font-size: calc(0.88rem * var(--text-ui-scale));
+  color: var(--color-text-primary);
+}
+
+.admin-feedback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.admin-feedback-delete {
+  color: #f87171;
+}
+
+.admin-feedback-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+@media (max-width: 640px) {
+  .admin-feedback-page {
+    padding: 1rem;
+  }
+
+  .admin-feedback-header {
+    align-items: center;
+  }
+
+  .admin-feedback-title {
+    font-size: 1.5rem;
+  }
+
+  .admin-feedback-card {
+    padding: 0.85rem 1rem;
+  }
+
+  .admin-feedback-time {
+    margin-left: 0;
+  }
+
+  .admin-feedback-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 390px) {
+  .admin-feedback-page {
+    padding: 0.75rem;
+  }
+
+  .admin-feedback-toolbar .btn {
+    flex: 1 1 auto;
+  }
+}

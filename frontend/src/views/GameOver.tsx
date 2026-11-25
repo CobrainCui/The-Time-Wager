@@ -39,6 +39,7 @@ import {
   PersonaSecondaryHints,
 } from "../components/PersonaReportSections";
 import { PersonaTypeModal } from "../components/PersonaTypeModal";
+import { FeedbackWall } from "../components/feedback/FeedbackWall";
 
 ChartJS.register(RadialLinearScale, PointElement, LineElement, BarElement, Filler, Tooltip, Legend, CategoryScale, LinearScale, Title);
 
@@ -55,6 +56,7 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
   const [pdfProgress, setPdfProgress] = useState<string | null>(null);
   const [pdfFeedback, setPdfFeedback] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [personaModalName, setPersonaModalName] = useState<string | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   /** 房主不在线时，任何在线真人都可以重开一局 */
   const roomOwner = game.players.find((p) => p.id === game.roomOwnerId);
   const canRematch = Boolean(me) && (!roomOwner || roomOwner.id === me!.id || !roomOwner.connected);
@@ -252,7 +254,7 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
           <div style={{ marginBottom: "2rem" }}>
             <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
               <p style={{ fontSize: uiRem(0.8), color: "var(--color-text-muted)", margin: 0 }}>
-                根据本局行为判断的风格类型
+                由本局行为推断
               </p>
             </div>
 
@@ -330,7 +332,7 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
 
         {!embed && !myResult && me && (
           <p style={{ textAlign: "center", color: "var(--color-text-muted)", fontSize: uiRem(0.85), marginBottom: "1.5rem" }}>
-            人格分析数据尚未就绪，请稍候刷新或联系管理员。
+            人格分析生成中，请稍后刷新。
           </p>
         )}
 
@@ -372,6 +374,20 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
                 🔄 再来一局
               </button>
             )}
+
+            <button
+              onClick={() => setFeedbackOpen(true)}
+              className="btn"
+              type="button"
+              style={{
+                background: "rgba(201,151,58,0.1)",
+                border: "1px solid var(--color-border)",
+                color: "var(--color-text-primary)",
+                minWidth: "10rem",
+              }}
+            >
+              💬 评价这局
+            </button>
           </div>
 
           {pdfFeedback && (
@@ -459,6 +475,16 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
           personaName={personaModalName}
           personaImages={personaImages}
           onClose={() => setPersonaModalName(null)}
+        />
+      )}
+
+      {!embed && (
+        <FeedbackWall
+          open={feedbackOpen}
+          onClose={() => setFeedbackOpen(false)}
+          source="game_over"
+          initialMode="write"
+          initialRating={5}
         />
       )}
     </div>

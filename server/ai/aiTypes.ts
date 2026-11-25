@@ -5,6 +5,7 @@ export interface AiBuffPlan {
   targetPlayerId?: string;
   targetProjectId?: number;
   burnCardId?: string;
+  visibility?: "public" | "private";
 }
 
 export interface AiTransferPlan {
@@ -33,6 +34,7 @@ export interface AiInvestmentPlan {
   transfer: AiTransferPlan | null;
   coffee: number;
   useCard: AiBuffPlan | null;
+  useCards?: AiBuffPlan[];
   investment: Record<number, number>;
 }
 
@@ -45,6 +47,16 @@ export interface AiAuctionPlan {
 export interface AiTransferDecision {
   accept: boolean;
   reasoning: string;
+  reply?: string;
+  unlockToReinvest?: boolean;
+}
+
+export interface AiChatReplyPlan {
+  reasoning: string;
+  silent: boolean;
+  reply: string;
+  unlockToReinvest?: boolean;
+  transfer?: { toPlayerId?: string; amount: number; note: string } | null;
 }
 
 export type { AiDifficulty, AiPersonaKey };

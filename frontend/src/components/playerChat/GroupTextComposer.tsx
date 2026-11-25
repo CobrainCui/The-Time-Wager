@@ -22,6 +22,8 @@ export const GroupTextComposer = memo<Props>(function GroupTextComposer({
   onSend,
 }) {
   const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const composingRef = useRef(false);
 
   useEffect(() => {
@@ -34,19 +36,25 @@ export const GroupTextComposer = memo<Props>(function GroupTextComposer({
   };
 
   const trimmed = normalizeNoteInput(note);
-  const canSend = trimmed.length > 0;
+  const canSend = !sending && trimmed.length > 0;
 
   return (
     <form
       className="player-chat-composer"
       onSubmit={(e) => {
         e.preventDefault();
-        if (composingRef.current || !canSend) return;
+        if (composingRef.current || sendingRef.current || !trimmed.length) return;
+        sendingRef.current = true;
+        setSending(true);
         const text = sanitizeTransactionNote(note);
         if (onSend(threadId, text)) {
           setNote("");
           persistDraft("");
         }
+        window.setTimeout(() => {
+          sendingRef.current = false;
+          setSending(false);
+        }, 350);
       }}
     >
       <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
@@ -73,7 +81,7 @@ export const GroupTextComposer = memo<Props>(function GroupTextComposer({
             persistDraft(v);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !composingRef.current) {
+            if (e.key === "Enter" && !e.shiftKey && !composingRef.current && !sendingRef.current) {
               e.preventDefault();
               (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit();
             }
@@ -85,7 +93,7 @@ export const GroupTextComposer = memo<Props>(function GroupTextComposer({
           disabled={!canSend}
           style={{ padding: "0.35rem 0.65rem", fontSize: uiRem(0.75), flexShrink: 0 }}
         >
-          发送
+          {sending ? "…" : "发送"}
         </button>
       </div>
     </form>
