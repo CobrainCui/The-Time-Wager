@@ -35,6 +35,7 @@ import { AdminProjectAdjustPanel } from "../components/admin/AdminProjectAdjustP
 import GameRoom from "../GameRoom";
 import { BuffDescText } from "../utils/buffDescEmphasis";
 import { LabLivePanel } from "../admin/lab/LabLivePanel";
+import { stopLabRunApi } from "../admin/lab/labApi";
 
 const AdminPlayerPdfCapture = lazy(() =>
   import("../admin/AdminPlayerPdfCapture").then((m) => ({ default: m.AdminPlayerPdfCapture }))
@@ -96,6 +97,7 @@ export const AdminView: React.FC<Props> = ({
   /** 浏览器常拦截同一次点击的第二次下载：先 JSON，再点一次导出 Excel */
   const [exportAwaitingXlsx, setExportAwaitingXlsx] = useState(false);
   const [exportHint, setExportHint] = useState<string | null>(null);
+  const [stoppingLab, setStoppingLab] = useState(false);
   const [pdfJob, setPdfJob] = useState<AdminPdfCaptureJob | null>(null);
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfBatchProgress, setPdfBatchProgress] = useState<string | null>(null);
@@ -400,6 +402,19 @@ export const AdminView: React.FC<Props> = ({
   };
 
   const emit = (event: string, extra?: object) => socket.emit(event, { roomId: game.roomId, ...extra });
+
+  const handleStopLabRun = async () => {
+    if (stoppingLab) return;
+    if (!window.confirm("确认停止当前 6AI 实验批次？已完成的局会保留归档。")) return;
+    setStoppingLab(true);
+    try {
+      await stopLabRunApi();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "停止实验失败");
+    } finally {
+      setStoppingLab(false);
+    }
+  };
 
   const scrollAdminTxToLatest = useCallback(() => {
     const el = adminTxScrollRef.current;
@@ -932,14 +947,22 @@ export const AdminView: React.FC<Props> = ({
           {!isLab && (
             <button className="btn btn-danger btn-sm" onClick={() => { if (confirm("警告：解散房间？")) emit("adminDissolveRoom"); }}>💣 解散</button>
           )}
+          {isLab && labTransition?.kind !== "finished" && (
+            <button
+              type="button"
+              className="btn btn-danger btn-sm"
+              disabled={stoppingLab}
+              onClick={() => void handleStopLabRun()}
+            >
+              {stoppingLab ? "正在停止…" : "⏹ 停止本场实验"}
+            </button>
+          )}
           <button className="btn btn-ghost btn-sm" onClick={onExit}>
             {isLab ? "← 返回实验室" : "← 返回"}
           </button>
         </div>
 
-        {game.isLabExperiment ? (
-          <LabLivePanel game={game} />
-        ) : (
+        {!game.isLabExperiment && (
         /* AI 玩家：严格 Agent 模式。必须模型可用才能开局；失败会暂停并等待人工处理。 */
         <div
           style={{
@@ -1181,6 +1204,12 @@ export const AdminView: React.FC<Props> = ({
                 返回 6AI 实验室
               </button>
             )}
+          </div>
+        )}
+
+        {isLab && (
+          <div style={{ marginBottom: "1.25rem" }}>
+            <LabLivePanel game={game} />
           </div>
         )}
 
@@ -2237,6 +2266,7 @@ export const AdminView: React.FC<Props> = ({
           >
             {uiViewAsPlayerId ? (
               <GameRoom
+                key={uiViewAsPlayerId}
                 game={playerPreviewGame}
                 myPlayerId={uiViewAsPlayerId}
                 readOnly

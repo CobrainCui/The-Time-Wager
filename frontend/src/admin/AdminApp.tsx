@@ -57,7 +57,9 @@ export default function AdminApp() {
   } | null>(null);
 
   const gameRef = useRef<GameState | null>(null);
-  gameRef.current = game;
+  useEffect(() => {
+    gameRef.current = game;
+  }, [game]);
   const spectatingRoomIdRef = useRef<string | null>(null);
   const returnScreenRef = useRef<AdminScreen>("rooms");
   const authTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

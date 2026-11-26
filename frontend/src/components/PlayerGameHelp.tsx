@@ -339,6 +339,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
     if (!aside) return;
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey) return;
+      e.stopPropagation();
       const target = e.target as Node | null;
       const tableWrap =
         target instanceof Element

@@ -704,28 +704,6 @@ h1, h2, h3, h4, h5, h6 {
   max-height: 100%;
 }
 
-.player-help-sidebar--contained {
-  position: relative;
-  top: auto;
-  align-self: stretch;
-  height: 100%;
-  max-height: 100%;
-  z-index: 25;
-}
-
-.player-help-sidebar--contained.player-help-sidebar--open {
-  max-width: min(460px, 52%);
-}
-
-.player-help-sidebar--contained .player-help-sidebar-panel {
-  height: 100%;
-  max-height: 100%;
-}
-
-.player-help-sidebar--contained .player-help-sidebar-body {
-  padding-bottom: 2.5rem;
-}
-
 .player-help-sidebar {
   --player-help-rail-width: 3.75rem;
   flex-shrink: 0;
@@ -760,6 +738,29 @@ h1, h2, h3, h4, h5, h6 {
 
 .player-help-sidebar--resizing {
   transition: none !important;
+}
+
+.player-help-sidebar.player-help-sidebar--contained {
+  position: relative;
+  top: auto;
+  align-self: stretch;
+  height: 100%;
+  max-height: 100%;
+  z-index: 25;
+}
+
+.player-help-sidebar.player-help-sidebar--contained.player-help-sidebar--open {
+  max-width: min(460px, 52%);
+  z-index: 25;
+}
+
+.player-help-sidebar.player-help-sidebar--contained .player-help-sidebar-panel {
+  height: 100%;
+  max-height: 100%;
+}
+
+.player-help-sidebar.player-help-sidebar--contained .player-help-sidebar-body {
+  padding-bottom: 3.5rem;
 }
 
 .player-help-rail-spacer {
@@ -1078,7 +1079,7 @@ h1, h2, h3, h4, h5, h6 {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  touch-action: pan-y;
+  touch-action: pan-x pan-y;
   scrollbar-gutter: stable;
   /* 侧栏层级高于底部栏，留足底部空白确保最末一张战报卡片完整可见且不被左下角浮窗遮挡 */
   padding: 0 0.85rem calc(7.5rem + env(safe-area-inset-bottom, 0px));
