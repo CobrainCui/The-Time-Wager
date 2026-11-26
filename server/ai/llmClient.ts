@@ -54,10 +54,36 @@ export interface AiLlmOptions {
   config?: AiModelConfig | null;
   /** 用于日志；不要包含敏感信息 */
   label?: string;
-  /** 关闭推理链（DeepSeek v4 thinking 开关）；默认取 AI_CONFIG.disableThinking */
+  /** 关闭推理链（DeepSeek v4 thinking / SiliconFlow enable_thinking）；默认取 AI_CONFIG.disableThinking */
   disableThinking?: boolean;
-  /** 推理强度提示（开启思考且 DeepSeek 时透传 reasoning_effort: low / medium） */
+  /** 推理预算（SiliconFlow thinking_budget，范围 128..32768） */
+  thinkingBudget?: number;
+  /** 推理强度提示（开启思考且非 SiliconFlow DeepSeek 时透传 reasoning_effort: low / medium） */
   reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  /** 外部取消信号（例如实验室单拍硬截止） */
+  signal?: AbortSignal;
+}
+
+/**
+ * 判断配置是否指向硅基流动（SiliconFlow）或托管于其上的国产模型。
+ */
+export function isSiliconFlowConfig(cfg: AiModelConfig): boolean {
+  return (
+    /siliconflow/i.test(cfg.provider) ||
+    /siliconflow\./i.test(cfg.baseURL ?? "") ||
+    /^(?:Pro\/)?(?:deepseek-ai|Qwen|zai-org|THUDM|moonshotai|MiniMaxAI|stepfun-ai|tencent)\//i.test(
+      cfg.model
+    )
+  );
+}
+
+/**
+ * 判断模型是否属于推理 / 思考链模型（开启思考时需流式保活，避免长推理断连）。
+ */
+export function isReasoningModel(cfg: AiModelConfig): boolean {
+  return /deepseek|qwen3|qwq|glm-z1|glm-4\.5|glm-5|kimi-k2|kimi-k3|minimax-m|step-?3|hy[34]|hunyuan-a13b/i.test(
+    cfg.model
+  );
 }
 
 function stripJsonFence(text: string): string {
@@ -137,6 +163,15 @@ function isRetryable(error: unknown): boolean {
   );
 }
 
+function isThinkingParamBadRequest(error: unknown): boolean {
+  const status = (error as { status?: number } | undefined)?.status;
+  const message = error instanceof Error ? error.message : String(error);
+  if (status === 400) return true;
+  return /\b400\b|invalid.*param|unknown.*field|extra_forbidden|unrecognized|thinking_budget|enable_thinking/i.test(
+    message
+  );
+}
+
 /** 只保留用户可读的错误摘要，避免把请求体/Key 写进日志。 */
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -150,16 +185,44 @@ async function requestOnce(
   options: Required<Pick<AiLlmOptions, "timeoutMs" | "maxOutputTokens">> & {
     useJsonMode: boolean;
     disableThinking: boolean;
+    thinkingBudget?: number;
     reasoningEffort?: AiLlmOptions["reasoningEffort"];
+    omitSiliconFlowThinkingParams?: boolean;
+    externalSignal?: AbortSignal;
   }
 ): Promise<{ raw: string; usage?: AiLlmUsage }> {
   const startedAt = Date.now();
+  if (options.externalSignal?.aborted) {
+    throw new Error("aborted");
+  }
   const isDeepSeek = /deepseek/i.test(`${cfg.provider} ${cfg.model}`);
-  // thinking 是 DeepSeek v4 系列的扩展字段，OpenAI SDK 类型里没有；用断言透传。
-  // 只在 DeepSeek 供应商上发送，避免 OpenAI 等接口因未知字段直接 400。
-  const useNoThinking = options.disableThinking && isDeepSeek;
-  // DeepSeek 开启思考链时使用流式接收，防止长推理期间静默连接被网关/undici 断开（terminated）。
-  const useStreaming = isDeepSeek && !options.disableThinking;
+  const isSiliconFlow = isSiliconFlowConfig(cfg);
+  const isReasoning = isReasoningModel(cfg);
+  // 开启思考链时使用流式接收，防止长推理期间静默连接被网关/undici 断开（terminated）。
+  const useStreaming = !options.disableThinking && (isDeepSeek || isSiliconFlow || isReasoning);
+
+  const clampedBudget =
+    options.thinkingBudget != null
+      ? Math.min(32_768, Math.max(128, Math.floor(options.thinkingBudget)))
+      : undefined;
+
+  const thinkingBody: Record<string, unknown> = {};
+  if (isSiliconFlow) {
+    if (!options.omitSiliconFlowThinkingParams) {
+      if (options.disableThinking) {
+        thinkingBody.enable_thinking = false;
+      } else if (clampedBudget != null) {
+        thinkingBody.enable_thinking = true;
+        thinkingBody.thinking_budget = clampedBudget;
+      }
+    }
+  } else if (isDeepSeek) {
+    if (options.disableThinking) {
+      thinkingBody.thinking = { type: "disabled" as const };
+    } else if (options.reasoningEffort) {
+      thinkingBody.reasoning_effort = options.reasoningEffort;
+    }
+  }
 
   const baseBody = {
     model: cfg.model,
@@ -170,20 +233,32 @@ async function requestOnce(
       { role: "user", content: user },
     ],
     ...(options.useJsonMode ? { response_format: { type: "json_object" as const } } : {}),
-    ...(useNoThinking ? { thinking: { type: "disabled" as const } } : {}),
-    ...(!options.disableThinking && isDeepSeek && options.reasoningEffort
-      ? { reasoning_effort: options.reasoningEffort }
-      : {}),
+    ...thinkingBody,
   };
 
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
+  let onExternalAbort: (() => void) | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
       reject(new Error(`timeout ${options.timeoutMs}ms`));
     }, options.timeoutMs + 500);
+    if (options.externalSignal) {
+      onExternalAbort = () => {
+        controller.abort();
+        reject(new Error("aborted"));
+      };
+      options.externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
   });
+
+  const cleanupHooks = () => {
+    if (timer) clearTimeout(timer);
+    if (options.externalSignal && onExternalAbort) {
+      options.externalSignal.removeEventListener("abort", onExternalAbort);
+    }
+  };
 
   if (useStreaming) {
     const consumeStream = async (): Promise<{ raw: string; usage?: AiLlmUsage }> => {
@@ -198,7 +273,13 @@ async function requestOnce(
       let raw = "";
       let usage: AiLlmUsage | undefined;
       for await (const chunk of stream) {
-        const piece = chunk.choices?.[0]?.delta?.content ?? "";
+        const delta = chunk.choices?.[0]?.delta as
+          | { content?: string | null; reasoning_content?: string | null }
+          | undefined;
+        // 读取 reasoning_content 以确保长推理流在传输期保持活跃，不拼入最终 JSON。
+        const reasoningPiece = delta?.reasoning_content ?? "";
+        void reasoningPiece;
+        const piece = delta?.content ?? "";
         if (piece) raw += piece;
         if (chunk.usage) {
           usage = {
@@ -214,7 +295,7 @@ async function requestOnce(
     try {
       return await Promise.race([consumeStream(), timeout]);
     } finally {
-      if (timer) clearTimeout(timer);
+      cleanupHooks();
     }
   }
 
@@ -227,7 +308,7 @@ async function requestOnce(
   try {
     response = (await Promise.race([request, timeout])) as OpenAI.Chat.ChatCompletion;
   } finally {
-    if (timer) clearTimeout(timer);
+    cleanupHooks();
   }
 
   const raw = response.choices?.[0]?.message?.content ?? "";
@@ -269,16 +350,32 @@ export async function askAiJson(
   const disableThinking = options.disableThinking ?? AI_CONFIG.disableThinking;
   const requestedMaxTokens = options.maxOutputTokens ?? AI_CONFIG.maxOutputTokens;
   const isDeepSeek = /deepseek/i.test(`${cfg.provider} ${cfg.model}`);
-  // 防止线上 .env 遗留极小 AI_DECISION_TIMEOUT_MS / AI_MAX_OUTPUT_TOKENS 导致 DeepSeek 推理中途超时或截断
+  const isSiliconFlow = isSiliconFlowConfig(cfg);
+  // 调用方显式传入 timeoutMs 时严格尊重其紧预算（如实验室单拍/单轮限额），仅在未指定时为原生 DeepSeek 兜底。
   const timeoutMs =
-    !disableThinking && isDeepSeek ? Math.max(requestedTimeoutMs, 65_000) : requestedTimeoutMs;
+    options.timeoutMs == null && !disableThinking && isDeepSeek && !isSiliconFlow
+      ? Math.max(requestedTimeoutMs, 65_000)
+      : requestedTimeoutMs;
+  const clampedThinkingBudget =
+    options.thinkingBudget != null
+      ? Math.min(32_768, Math.max(128, Math.floor(options.thinkingBudget)))
+      : undefined;
   const maxOutputTokens =
-    !disableThinking && isDeepSeek ? Math.max(requestedMaxTokens, 16_000) : requestedMaxTokens;
+    !disableThinking && clampedThinkingBudget != null
+      ? Math.max(requestedMaxTokens, clampedThinkingBudget + 500)
+      : options.maxOutputTokens == null && !disableThinking && isDeepSeek && !isSiliconFlow
+        ? Math.max(requestedMaxTokens, 16_000)
+        : requestedMaxTokens;
   const reasoningEffort = options.reasoningEffort;
   const label = options.label ?? "decision";
   const errors: string[] = [];
+  let omitSiliconFlowThinkingParams = false;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (options.signal?.aborted) {
+      errors.push("aborted");
+      break;
+    }
     const useJsonMode = attempt === 0;
     try {
       const { raw, usage } = await requestOnce(cfg, system, user, {
@@ -286,12 +383,15 @@ export async function askAiJson(
         maxOutputTokens,
         useJsonMode,
         disableThinking,
+        thinkingBudget: clampedThinkingBudget,
         reasoningEffort,
+        omitSiliconFlowThinkingParams,
+        externalSignal: options.signal,
       });
       const data = parseJson(raw);
       if (data == null) {
         errors.push(`attempt ${attempt + 1}: JSON 解析失败`);
-        if (attempt < maxRetries) await sleep(300 * (attempt + 1));
+        if (attempt < maxRetries && !options.signal?.aborted) await sleep(300 * (attempt + 1));
         continue;
       }
       return {
@@ -304,6 +404,15 @@ export async function askAiJson(
     } catch (error) {
       const message = safeErrorMessage(error);
       errors.push(`attempt ${attempt + 1}: ${message}`);
+      if (options.signal?.aborted) {
+        break;
+      }
+      // SiliconFlow 个别模型不支持 enable_thinking/thinking_budget 时，自动去掉这两个参数立即重试一次。
+      if (isSiliconFlow && !omitSiliconFlowThinkingParams && isThinkingParamBadRequest(error)) {
+        omitSiliconFlowThinkingParams = true;
+        attempt -= 1;
+        continue;
+      }
       if (attempt < maxRetries && isRetryable(error)) {
         await sleep(350 * (attempt + 1));
         continue;

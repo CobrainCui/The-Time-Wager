@@ -1632,7 +1632,9 @@ async function decideInvestmentPlan(
   const investOptions = {
     config: modelConfig,
     disableThinking: investDisableThinking,
-    ...(investDisableThinking ? { maxOutputTokens: 2_500 } : { reasoningEffort: "low" as const }),
+    ...(investDisableThinking
+      ? { maxOutputTokens: 2_500 }
+      : { reasoningEffort: "low" as const, thinkingBudget: 1024 }),
   };
   if (!modelConfig) {
     if (pausesOnAiFailure(game)) {
@@ -1893,7 +1895,7 @@ async function runAuctionTurn(
     }
 
     const isNearAuctionDeadline = () =>
-      Boolean(game.autoHostEnabled && game.autoHostNextActionAt && now() >= game.autoHostNextActionAt - 500);
+      Boolean(game.autoHostNextActionAt && now() >= game.autoHostNextActionAt - 500);
 
     try {
       if (game.phase !== "AUCTION" || game.auctionFocusCardId !== focus) return false;
@@ -1927,6 +1929,10 @@ async function runAuctionTurn(
       );
       let acted = false;
 
+      if (game.phase !== "AUCTION" || game.auctionFocusCardId !== focus || isNearAuctionDeadline()) {
+        return false;
+      }
+
       if (plan.action === "force_buy") {
         const result = useForceBuyCard(game, ai.id);
         lot.passed = true;
@@ -1940,16 +1946,22 @@ async function runAuctionTurn(
       } else if (plan.action === "bid" && typeof plan.amount === "number" && Number.isFinite(plan.amount)) {
         const latestMin = getMinimumNextBid(game);
         const plannedAmount = Math.max(0, Math.floor(plan.amount));
-        const firstAmount = Math.max(plannedAmount, latestMin);
-        let result = placeAuctionBid(game, ai.id, firstAmount);
-        if (!result.ok && firstAmount !== latestMin) {
-          result = placeAuctionBid(game, ai.id, latestMin);
-        }
-        if (result.ok) {
-          acted = true;
+        if (plannedAmount >= latestMin) {
+          const result = placeAuctionBid(game, ai.id, plannedAmount);
+          if (result.ok) {
+            acted = true;
+          } else {
+            lot.passed = true;
+            game.logs.push(`⏭️ AI「${ai.name}」无法出价（${result.message ?? "出价无效"}），跳过本张`);
+          }
         } else {
-          lot.passed = true;
-          game.logs.push(`⏭️ AI「${ai.name}」无法出价（${result.message ?? "出价无效"}），跳过本张`);
+          // 严禁私自帮 AI 加价越过其上限；仅当当前最低加价已超其可用财富时直接放弃本张
+          if (latestMin > playerAvailableWealth(game, ai)) {
+            lot.passed = true;
+          }
+          game.logs.push(
+            `⏭️ AI「${ai.name}」出价 ${plannedAmount} 低于最新最低价 ${latestMin}，不强行加价`
+          );
         }
       } else {
         lot.passed = true;
@@ -2246,6 +2258,13 @@ function ensureAiProgressInner(game: GameState, io: Server | null): boolean {
           recordAiFailure(game, ai, io, "拍卖模型在宽限时间内没有返回", "model_error");
           changed = true;
         }
+        continue;
+      }
+      if (
+        game.phase !== "AUCTION" ||
+        !game.auctionFocusCardId ||
+        (game.autoHostNextActionAt != null && now() >= game.autoHostNextActionAt - 500)
+      ) {
         continue;
       }
       const profile = profileForPlayer(ai);

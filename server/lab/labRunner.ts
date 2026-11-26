@@ -81,7 +81,7 @@ import {
   summarizeLabGroupChats,
   type LabObservation,
 } from "./labPrompts.js";
-import { deriveSeed, normalizeSeed, Rng } from "./labRng.js";
+import { deriveSeed, normalizeSeed, Rng, shuffleWithGameRng } from "./labRng.js";
 import { getLabRunById, saveLabRun, saveLabSession } from "./labStore.js";
 import type {
   LabLiveStatus,
@@ -98,7 +98,9 @@ const DATA_MEMORY_ROOT = path.resolve(__dirname, "../../data/lab_memory");
 const MAX_PUBLIC_CHAT_PER_ROUND = 6;
 const MAX_PRIVATE_CHAT_PER_ROUND = 6;
 const AUCTION_MAX_WEALTH_RATIO = 0.35;
-const AUCTION_MAX_DECISIONS_PER_LOT = 4;
+export const AUCTION_MAX_DECISIONS_PER_LOT = 2;
+export const LAB_AUCTION_ROUND_MS = 10_000;
+export const LAB_AUCTION_LOT_MAX_MS = 22_000;
 
 export class LabFatalError extends Error {
   constructor(message: string) {
@@ -111,6 +113,41 @@ export class LabStoppedError extends Error {
   constructor(message = "实验已被手动停止") {
     super(message);
     this.name = "LabStoppedError";
+  }
+}
+
+export class LabCallExpiredError extends Error {
+  constructor(message = "单拍决策已超时截断") {
+    super(message);
+    this.name = "LabCallExpiredError";
+  }
+}
+
+export type LabActionBudgetKind =
+  | "investment"
+  | "prediction"
+  | "chat"
+  | "auction"
+  | "transaction"
+  | "community_name";
+
+export interface LabActionCallBudget {
+  thinkingBudget: number;
+  maxOutputTokens: number;
+  timeoutMs: number;
+}
+
+export function getLabActionBudget(kind: LabActionBudgetKind = "investment"): LabActionCallBudget {
+  switch (kind) {
+    case "investment":
+      return { thinkingBudget: 1024, maxOutputTokens: 2400, timeoutMs: 30_000 };
+    case "prediction":
+    case "chat":
+      return { thinkingBudget: 512, maxOutputTokens: 1200, timeoutMs: 20_000 };
+    case "auction":
+    case "transaction":
+    case "community_name":
+      return { thinkingBudget: 384, maxOutputTokens: 900, timeoutMs: 15_000 };
   }
 }
 
@@ -138,6 +175,107 @@ export function setLabRoomListNotifier(fn: (io: Server) => void): void {
 function notifyRoomList(): void {
   const io = getGameIo();
   if (io && onRoomListChanged) onRoomListChanged(io);
+}
+
+export interface LabAuctionBidResult {
+  player: Player;
+  decision: {
+    action: "bid" | "pass" | "force_buy";
+    amount?: number;
+    reasoning: string;
+  };
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+  latencyMs?: number;
+}
+
+export function applyLabAuctionWave(options: {
+  game: GameState;
+  focus: string;
+  bidResults: LabAuctionBidResult[];
+  lotHardDeadline: number;
+  passedOnCard: Set<string>;
+  memories?: Map<string, LabAgentMemory>;
+  nowMs?: () => number;
+}): { anyAction: boolean; forcedSold: boolean } {
+  const { game, focus, bidResults, lotHardDeadline, passedOnCard, memories, nowMs } = options;
+  const now = nowMs ?? Date.now;
+  let anyAction = false;
+  let forcedSold = false;
+
+  // 按种子随机打乱同波次并发出价的结算顺序，避免靠前座位天然抢占低价
+  const shuffled = shuffleWithGameRng(game, bidResults);
+
+  for (const { player, decision, usage, latencyMs } of shuffled) {
+    if (game.auctionFocusCardId !== focus || now() > lotHardDeadline) break;
+    recordLabDecision(
+      game,
+      player,
+      "auction",
+      decision.reasoning,
+      { cardId: focus, ...decision },
+      usage,
+      latencyMs
+    );
+    const mem = memories?.get(player.id);
+    if (decision.action === "force_buy" && player.inventory.includes("buff_force_buy")) {
+      const fb = useForceBuyCard(game, player.id);
+      if (fb.success) {
+        forcedSold = true;
+        anyAction = true;
+        game.autoHostNextActionAt = undefined;
+        mem?.record("action", `拍卖 ${focus}：使用强买强卖`, {
+          globalRound: game.globalRound,
+          era: game.currentEra,
+          roundInEra: game.roundInEra,
+        });
+        break;
+      }
+    }
+    if (decision.action === "bid") {
+      const currentLeading = getLeadingBidOnFocus(game)?.playerId;
+      if (currentLeading !== player.id) {
+        const minNext = getMinimumNextBid(game);
+        const maxBid = Math.max(
+          0,
+          Math.floor(playerAvailableWealth(game, player) * AUCTION_MAX_WEALTH_RATIO)
+        );
+        const amount = decision.amount;
+        if (
+          typeof amount === "number" &&
+          Number.isSafeInteger(amount) &&
+          amount >= minNext &&
+          amount <= maxBid &&
+          game.auctionFocusCardId === focus &&
+          now() <= lotHardDeadline
+        ) {
+          const bidRes = placeAuctionBid(game, player.id, amount);
+          if (bidRes.ok) {
+            anyAction = true;
+            game.autoHostNextActionAt = Math.min(lotHardDeadline, now() + LAB_AUCTION_ROUND_MS);
+            mem?.record("action", `拍卖 ${focus}：出价 ${amount}`, {
+              globalRound: game.globalRound,
+              era: game.currentEra,
+              roundInEra: game.roundInEra,
+            });
+          } else {
+            passedOnCard.add(player.id);
+          }
+        } else if (
+          typeof amount !== "number" ||
+          !Number.isSafeInteger(amount) ||
+          amount > maxBid ||
+          minNext > maxBid
+        ) {
+          // 严禁把 AI 的出价强行抬升到 minNext；超上限或非法出价直接弃权
+          passedOnCard.add(player.id);
+        }
+      }
+    } else {
+      passedOnCard.add(player.id);
+    }
+  }
+
+  return { anyAction, forcedSold };
 }
 
 function getPromptHash(): string {
@@ -727,7 +865,7 @@ function setTurnStatus(
   if (io) broadcastUpdate(io, game);
 }
 
-async function askAgentWithValidation<T>(options: {
+export async function askAgentWithValidation<T>(options: {
   game: GameState;
   player: Player;
   manifest: LabRunManifest;
@@ -737,13 +875,32 @@ async function askAgentWithValidation<T>(options: {
   validate: (data: unknown) => T | null;
   signal: AbortSignal;
   io: Server | null;
+  budgetKind?: LabActionBudgetKind;
+  callSignal?: AbortSignal;
+  llmCaller?: typeof askAiJson;
 }): Promise<{
   value: T;
   usage: { promptTokens: number; completionTokens: number; totalTokens: number };
   latencyMs: number;
 }> {
-  const { game, player, manifest, sharedConfig, label, userPrompt, validate, signal, io } = options;
+  const {
+    game,
+    player,
+    manifest,
+    sharedConfig,
+    label,
+    userPrompt,
+    validate,
+    signal,
+    io,
+    budgetKind = "investment",
+    callSignal,
+    llmCaller = askAiJson,
+  } = options;
   ensureNotAborted(signal);
+  if (callSignal?.aborted) {
+    throw new LabCallExpiredError(`${player.name} 在 ${label} 超出本拍时限`);
+  }
   if (!game.labTokenUsage) game.labTokenUsage = {};
   const budget = manifest.tokenBudgetPerAgent;
   const usedBefore = game.labTokenUsage[player.id] ?? 0;
@@ -753,17 +910,29 @@ async function askAgentWithValidation<T>(options: {
     );
   }
 
+  const actionBudget = getLabActionBudget(budgetKind);
+  const combinedController = new AbortController();
+  const onRunAbort = () => combinedController.abort();
+  const onCallAbort = () => combinedController.abort();
+  if (signal.aborted || callSignal?.aborted) combinedController.abort();
+  signal.addEventListener("abort", onRunAbort, { once: true });
+  callSignal?.addEventListener("abort", onCallAbort, { once: true });
+
   const systemPrompt = buildLabSystemPrompt(player.agentIndex ?? 1, player.name);
   let prompt = userPrompt;
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let totalTokens = 0;
   let totalLatencyMs = 0;
+  let fastRetryNoThinking = false;
 
   setTurnStatus(game, player, "thinking", io);
   try {
     for (let attempt = 1; attempt <= 2; attempt++) {
       ensureNotAborted(signal);
+      if (callSignal?.aborted) {
+        throw new LabCallExpiredError(`${player.name} 在 ${label} 超出本拍时限`);
+      }
       let res: AiLlmResult;
       if (manifest.mock) {
         res = askMockLabLlm(systemPrompt, prompt);
@@ -776,15 +945,34 @@ async function askAgentWithValidation<T>(options: {
           model: player.agentModel || sharedConfig.model,
           provider: player.agentProvider || sharedConfig.provider,
         };
-        res = await askAiJson(systemPrompt, prompt, {
-          config: seatCfg,
-          timeoutMs: 120_000,
-          maxRetries: manifest.maxRetries,
-          maxOutputTokens: manifest.maxOutputTokens,
-          label: `${player.name}:${label}`,
-        });
+        res = await llmCaller(
+          systemPrompt,
+          prompt,
+          fastRetryNoThinking
+            ? {
+                config: seatCfg,
+                timeoutMs: 15_000,
+                maxRetries: 0,
+                maxOutputTokens: actionBudget.maxOutputTokens,
+                disableThinking: true,
+                label: `${player.name}:${label}:fast`,
+                signal: combinedController.signal,
+              }
+            : {
+                config: seatCfg,
+                timeoutMs: actionBudget.timeoutMs,
+                maxRetries: manifest.maxRetries,
+                maxOutputTokens: actionBudget.maxOutputTokens,
+                thinkingBudget: actionBudget.thinkingBudget,
+                label: `${player.name}:${label}`,
+                signal: combinedController.signal,
+              }
+        );
       }
       ensureNotAborted(signal);
+      if (callSignal?.aborted) {
+        throw new LabCallExpiredError(`${player.name} 在 ${label} 超出本拍时限`);
+      }
 
       totalLatencyMs += res.latencyMs ?? 0;
       if (res.usage) {
@@ -801,6 +989,13 @@ async function askAgentWithValidation<T>(options: {
       }
 
       if (!res.ok) {
+        const isTimeoutLike = /timeout|timed out|aborted|empty response|terminated/i.test(
+          res.error ?? ""
+        );
+        if (attempt === 1 && isTimeoutLike && !manifest.mock) {
+          fastRetryNoThinking = true;
+          continue;
+        }
         throw new LabFatalError(
           `${player.name}（${player.agentModel}）在 ${label} 调用失败：${res.error || "未知错误"}`
         );
@@ -818,12 +1013,15 @@ async function askAgentWithValidation<T>(options: {
           latencyMs: totalLatencyMs,
         };
       }
+      fastRetryNoThinking = false;
       prompt = `${userPrompt}\n\n注意：上一次输出缺少必要字段或取值不合法，请严格按照要求输出单个合法 JSON 对象。`;
     }
     throw new LabFatalError(
       `${player.name}（${player.agentModel}）在 ${label} 连续 2 次输出语义校验失败`
     );
   } finally {
+    signal.removeEventListener("abort", onRunAbort);
+    callSignal?.removeEventListener("abort", onCallAbort);
     setTurnStatus(game, player, "idle", io);
   }
 }
@@ -893,6 +1091,7 @@ async function resolveIncomingTransfers(options: {
         },
         signal,
         io,
+        budgetKind: "transaction",
       });
       resolvePendingTransfer(game, tx.id, receiver.id, res.value.decision === "accept");
       recordLabDecision(
@@ -1040,6 +1239,7 @@ async function runSingleLabGame(options: {
                 },
                 signal,
                 io,
+                budgetKind: "prediction",
               });
               if (!game.labPredictions) game.labPredictions = [];
               game.labPredictions.push({
@@ -1122,6 +1322,7 @@ async function runSingleLabGame(options: {
                 },
                 signal,
                 io,
+                budgetKind: "chat",
               });
               return { player: p, plan: res.value, usage: res.usage, latencyMs: res.latencyMs };
             })
@@ -1189,6 +1390,7 @@ async function runSingleLabGame(options: {
               },
               signal,
               io,
+              budgetKind: "investment",
             });
             return { player: p, plan: res.value, usage: res.usage, latencyMs: res.latencyMs };
           })
@@ -1354,123 +1556,105 @@ async function runSingleLabGame(options: {
           ensureNotAborted(signal);
           const focus = findNextAutoAuctionCard(game);
           if (!focus) {
+            game.autoHostNextActionAt = undefined;
             endAuctionSession(game);
             break;
           }
+          const lotStartedAt = Date.now();
+          const lotHardDeadline = lotStartedAt + LAB_AUCTION_LOT_MAX_MS;
           game.auctionFocusCardId = focus;
-          game.auctionFocusSetAt = Date.now();
+          game.auctionFocusSetAt = lotStartedAt;
+          game.autoHostNextActionAt = Math.min(lotHardDeadline, lotStartedAt + LAB_AUCTION_ROUND_MS);
           if (io) broadcastUpdate(io, game);
 
           const passedOnCard = new Set<string>();
           const decisionsOnCard = new Map<string, number>();
           let forcedSold = false;
+          const lotAbort = new AbortController();
+          const lotTimer = setTimeout(() => lotAbort.abort(), LAB_AUCTION_LOT_MAX_MS);
 
-          for (let pass = 0; pass < AUCTION_MAX_DECISIONS_PER_LOT; pass++) {
-            ensureNotAborted(signal);
-            const leadingId = getLeadingBidOnFocus(game)?.playerId ?? null;
-            const candidates = game.players.filter(
-              (p) =>
-                p.id !== leadingId &&
-                !passedOnCard.has(p.id) &&
-                (decisionsOnCard.get(p.id) ?? 0) < AUCTION_MAX_DECISIONS_PER_LOT
-            );
-            if (candidates.length === 0) break;
-
-            let anyAction = false;
-            const bidResults = await Promise.all(
-              candidates.map(async (p) => {
-                const obs = buildLabObservation(game, p.id);
-                const avail = playerAvailableWealth(game, p);
-                const maxBid = Math.max(0, Math.floor(avail * AUCTION_MAX_WEALTH_RATIO));
-                const mem = memories.get(p.id)!;
-                decisionsOnCard.set(p.id, (decisionsOnCard.get(p.id) ?? 0) + 1);
-                const res = await askAgentWithValidation<{
-                  action: "bid" | "pass" | "force_buy";
-                  amount?: number;
-                  reasoning: string;
-                }>({
-                  game,
-                  player: p,
-                  manifest,
-                  sharedConfig,
-                  label: `auction-${focus}`,
-                  userPrompt: buildLabAuctionPrompt(obs, focus, maxBid, mem.digest()),
-                  validate: (data) => {
-                    if (!data || typeof data !== "object") return null;
-                    const a = (data as { action?: unknown }).action;
-                    if (a !== "bid" && a !== "pass" && a !== "force_buy") return null;
-                    return {
-                      action: a,
-                      amount: int((data as { amount?: unknown }).amount) ?? undefined,
-                      reasoning: String((data as { reasoning?: unknown }).reasoning ?? ""),
-                    };
-                  },
-                  signal,
-                  io,
-                });
-                return { player: p, decision: res.value, usage: res.usage, latencyMs: res.latencyMs };
-              })
-            );
-
-            for (const { player, decision, usage, latencyMs } of bidResults) {
+          try {
+            for (let pass = 0; pass < AUCTION_MAX_DECISIONS_PER_LOT; pass++) {
               ensureNotAborted(signal);
-              if (game.auctionFocusCardId !== focus) break;
-              recordLabDecision(
-                game,
-                player,
-                "auction",
-                decision.reasoning,
-                { cardId: focus, ...decision },
-                usage,
-                latencyMs
+              if (Date.now() >= lotHardDeadline) break;
+              const leadingId = getLeadingBidOnFocus(game)?.playerId ?? null;
+              const candidates = game.players.filter(
+                (p) =>
+                  p.id !== leadingId &&
+                  !passedOnCard.has(p.id) &&
+                  (decisionsOnCard.get(p.id) ?? 0) < AUCTION_MAX_DECISIONS_PER_LOT
               );
-              const mem = memories.get(player.id)!;
-              if (decision.action === "force_buy" && player.inventory.includes("buff_force_buy")) {
-                const fb = useForceBuyCard(game, player.id);
-                if (fb.success) {
-                  forcedSold = true;
-                  anyAction = true;
-                  mem.record("action", `拍卖 ${focus}：使用强买强卖`, {
-                    globalRound: game.globalRound,
-                    era: game.currentEra,
-                    roundInEra: game.roundInEra,
-                  });
-                  break;
-                }
-              }
-              if (decision.action === "bid") {
-                const currentLeading = getLeadingBidOnFocus(game)?.playerId;
-                if (currentLeading !== player.id) {
-                  const minNext = getMinimumNextBid(game);
-                  const maxBid = Math.max(
-                    0,
-                    Math.floor(playerAvailableWealth(game, player) * AUCTION_MAX_WEALTH_RATIO)
-                  );
-                  const amount = Math.max(decision.amount ?? minNext, minNext);
-                  if (amount <= maxBid) {
-                    const bidRes = placeAuctionBid(game, player.id, amount);
-                    if (bidRes.ok) {
-                      anyAction = true;
-                      mem.record("action", `拍卖 ${focus}：出价 ${amount}`, {
-                        globalRound: game.globalRound,
-                        era: game.currentEra,
-                        roundInEra: game.roundInEra,
-                      });
-                    }
-                  } else {
-                    passedOnCard.add(player.id);
-                  }
-                }
-              } else {
-                passedOnCard.add(player.id);
-              }
-            }
+              if (candidates.length === 0) break;
 
-            if (io) broadcastUpdate(io, game);
-            if (forcedSold || !anyAction) break;
-            await stepPauseMs(300, 15);
+              const rawResults = await Promise.all(
+                candidates.map(async (p): Promise<LabAuctionBidResult | null> => {
+                  const obs = buildLabObservation(game, p.id);
+                  const avail = playerAvailableWealth(game, p);
+                  const maxBid = Math.max(0, Math.floor(avail * AUCTION_MAX_WEALTH_RATIO));
+                  const mem = memories.get(p.id)!;
+                  decisionsOnCard.set(p.id, (decisionsOnCard.get(p.id) ?? 0) + 1);
+                  try {
+                    const res = await askAgentWithValidation<{
+                      action: "bid" | "pass" | "force_buy";
+                      amount?: number;
+                      reasoning: string;
+                    }>({
+                      game,
+                      player: p,
+                      manifest,
+                      sharedConfig,
+                      label: `auction-${focus}`,
+                      userPrompt: buildLabAuctionPrompt(obs, focus, maxBid, mem.digest()),
+                      validate: (data) => {
+                        if (!data || typeof data !== "object") return null;
+                        const a = (data as { action?: unknown }).action;
+                        if (a !== "bid" && a !== "pass" && a !== "force_buy") return null;
+                        return {
+                          action: a,
+                          amount: int((data as { amount?: unknown }).amount) ?? undefined,
+                          reasoning: String((data as { reasoning?: unknown }).reasoning ?? ""),
+                        };
+                      },
+                      signal,
+                      callSignal: lotAbort.signal,
+                      budgetKind: "auction",
+                      io,
+                    });
+                    return {
+                      player: p,
+                      decision: res.value,
+                      usage: res.usage,
+                      latencyMs: res.latencyMs,
+                    };
+                  } catch (err) {
+                    if (err instanceof LabCallExpiredError) {
+                      return null;
+                    }
+                    throw err;
+                  }
+                })
+              );
+
+              const bidResults = rawResults.filter((r): r is LabAuctionBidResult => r !== null);
+              const wave = applyLabAuctionWave({
+                game,
+                focus,
+                bidResults,
+                lotHardDeadline,
+                passedOnCard,
+                memories,
+              });
+              forcedSold = wave.forcedSold;
+
+              if (io) broadcastUpdate(io, game);
+              if (forcedSold || !wave.anyAction || Date.now() >= lotHardDeadline) break;
+              await stepPauseMs(300, 15);
+            }
+          } finally {
+            clearTimeout(lotTimer);
           }
 
+          game.autoHostNextActionAt = undefined;
           if (!forcedSold && game.auctionFocusCardId === focus) {
             const leading = getLeadingBidOnFocus(game);
             if (leading) {
@@ -1510,6 +1694,7 @@ async function runSingleLabGame(options: {
           },
           signal,
           io,
+          budgetKind: "community_name",
         });
         recordLabDecision(
           game,

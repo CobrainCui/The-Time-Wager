@@ -234,12 +234,13 @@ export const AuctionView: React.FC<Props> = ({
           </div>
         )}
 
-        {!embed && game.autoHostEnabled && (
+        {(game.autoHostEnabled || game.autoHostNextActionAt != null) && (
           <div style={{ textAlign: "center", marginBottom: "0.75rem" }}>
             <AutoHostCountdown
               at={game.autoHostNextActionAt}
               serverNow={game.serverNow}
-              label={focusId ? "自动落槌 / 跳过" : "自动选出下一张"}
+              label={focusId ? (game.isLabExperiment ? "本拍倒计时" : "自动落槌 / 跳过") : "自动选出下一张"}
+              showPrefix={!game.isLabExperiment}
               compact
             />
           </div>
