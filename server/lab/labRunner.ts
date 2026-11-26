@@ -70,6 +70,7 @@ import { LabAgentMemory } from "./labMemory.js";
 import { askMockLabLlm } from "./labMockLlm.js";
 import {
   buildLabAuctionPrompt,
+  buildLabChatPrompt,
   buildLabCommunityNamePrompt,
   buildLabInvestmentPrompt,
   buildLabPredictionPrompt,
@@ -586,11 +587,20 @@ export function buildLabObservation(game: GameState, playerId: string): LabObser
   };
 }
 
-interface InvestmentPlan {
+interface ChatMessageInput {
+  channel?: string;
+  toPlayerId?: string;
+  text?: string;
+}
+
+interface ChatPlanFields {
   reasoning?: string;
-  messages?: Array<{ channel?: string; toPlayerId?: string; text?: string }>;
+  messages?: ChatMessageInput[];
   groupMessages?: Array<{ groupId?: string; text?: string }>;
   createGroup?: { name?: string; memberIds?: string[] } | null;
+}
+
+interface InvestmentPlan extends ChatPlanFields {
   transfer?: { toPlayerId?: string; amount?: number; note?: string } | null;
   coffee?: number;
   useCard?: {
@@ -601,6 +611,76 @@ interface InvestmentPlan {
     burnFromInventory?: boolean;
   } | null;
   investment: Record<string, number>;
+}
+
+function applyLabChatPlan(options: {
+  game: GameState;
+  player: Player;
+  plan: ChatPlanFields;
+  mem: LabAgentMemory;
+  counters: { pubUsed: number; privUsed: number };
+  allowCreateGroup: boolean;
+  maxMessagesThisStep: number;
+}): void {
+  const { game, player, plan, mem, counters, allowCreateGroup, maxMessagesThisStep } = options;
+
+  if (allowCreateGroup && plan.createGroup && Array.isArray(plan.createGroup.memberIds)) {
+    const memberIds = plan.createGroup.memberIds.filter(
+      (id) => id !== player.id && game.players.some((x) => x.id === id)
+    );
+    if (memberIds.length >= 2) {
+      const cg = createCustomChatGroup(game, player.id, memberIds, plan.createGroup.name);
+      if (cg.ok) {
+        mem.record("action", `创建群聊「${cg.group.name}」`, {
+          globalRound: game.globalRound,
+          era: game.currentEra,
+          roundInEra: game.roundInEra,
+        });
+      }
+    }
+  }
+
+  const pubGroup = (game.chatGroups ?? []).find((g) => g.kind === "public");
+  for (const m of (plan.messages ?? []).slice(0, maxMessagesThisStep)) {
+    if (!m || typeof m.text !== "string") continue;
+    if (m.channel === "public" && pubGroup && counters.pubUsed < MAX_PUBLIC_CHAT_PER_ROUND) {
+      const sent = sendGroupChatMessage(game, player.id, pubGroup.id, m.text, undefined, {
+        allowAi: true,
+      });
+      if (sent.ok) {
+        counters.pubUsed += 1;
+        mem.record("chat", `[我·公开] ${sent.message.text}`, {
+          globalRound: game.globalRound,
+          era: game.currentEra,
+          roundInEra: game.roundInEra,
+        });
+      }
+    } else if (m.channel === "private" && m.toPlayerId) {
+      if (sendLabDirectMessage(game, player, m.toPlayerId, m.text, counters.privUsed)) {
+        counters.privUsed += 1;
+        const target = game.players.find((x) => x.id === m.toPlayerId);
+        mem.record("chat", `[我·私聊→${target?.name ?? m.toPlayerId}] ${oneLine(m.text, 220)}`, {
+          globalRound: game.globalRound,
+          era: game.currentEra,
+          roundInEra: game.roundInEra,
+        });
+      }
+    }
+  }
+
+  for (const gm of (plan.groupMessages ?? []).slice(0, 3)) {
+    if (!gm?.groupId || typeof gm.text !== "string") continue;
+    const sent = sendGroupChatMessage(game, player.id, gm.groupId, gm.text, undefined, {
+      allowAi: true,
+    });
+    if (sent.ok) {
+      mem.record("chat", `[我·群聊] ${sent.message.text}`, {
+        globalRound: game.globalRound,
+        era: game.currentEra,
+        roundInEra: game.roundInEra,
+      });
+    }
+  }
 }
 
 function recordLabDecision(
@@ -1004,7 +1084,83 @@ async function runSingleLabGame(options: {
         await resolveIncomingTransfers({ game, memories, manifest, sharedConfig, signal, io });
         ingestRoundChatsIntoMemories(game, memories, seenPublicMsgs, seenDmMsgs);
 
-        // 先并发请求 6 名 AI 的本轮完整方案，再按顺序严格校验并写入状态
+        const roundChatCounters = new Map<string, { pubUsed: number; privUsed: number }>();
+        for (const p of game.players) {
+          roundChatCounters.set(p.id, { pubUsed: 0, privUsed: 0 });
+        }
+
+        // 第 4 轮同轮两步闭环：开启沟通时先并发聊意向并同步全场，再基于本轮最新发言拍板投资
+        if (manifest.chatEnabled) {
+          const chatPlans = await Promise.all(
+            game.players.map(async (p) => {
+              const obs = buildLabObservation(game, p.id);
+              const mem = memories.get(p.id)!;
+              const res = await askAgentWithValidation<ChatPlanFields>({
+                game,
+                player: p,
+                manifest,
+                sharedConfig,
+                label: `r${game.globalRound}-chat`,
+                userPrompt: buildLabChatPrompt(obs, mem.digest()),
+                validate: (data) => {
+                  if (!data || typeof data !== "object") return null;
+                  const raw = data as Partial<ChatPlanFields>;
+                  if (
+                    raw.messages !== undefined &&
+                    !Array.isArray(raw.messages) &&
+                    raw.groupMessages !== undefined &&
+                    !Array.isArray(raw.groupMessages)
+                  ) {
+                    return null;
+                  }
+                  return {
+                    reasoning: typeof raw.reasoning === "string" ? raw.reasoning : "",
+                    messages: Array.isArray(raw.messages) ? raw.messages : [],
+                    groupMessages: Array.isArray(raw.groupMessages) ? raw.groupMessages : [],
+                    createGroup: raw.createGroup ?? null,
+                  };
+                },
+                signal,
+                io,
+              });
+              return { player: p, plan: res.value, usage: res.usage, latencyMs: res.latencyMs };
+            })
+          );
+
+          for (const { player, plan, usage, latencyMs } of chatPlans) {
+            ensureNotAborted(signal);
+            const mem = memories.get(player.id)!;
+            const counters = roundChatCounters.get(player.id)!;
+            applyLabChatPlan({
+              game,
+              player,
+              plan,
+              mem,
+              counters,
+              allowCreateGroup: true,
+              maxMessagesThisStep: 3,
+            });
+            recordLabDecision(
+              game,
+              player,
+              "chat",
+              plan.reasoning ?? "",
+              {
+                messages: plan.messages ?? [],
+                groupMessages: plan.groupMessages ?? [],
+                createGroup: plan.createGroup ?? null,
+              },
+              usage,
+              latencyMs
+            );
+          }
+
+          ingestRoundChatsIntoMemories(game, memories, seenPublicMsgs, seenDmMsgs);
+          if (io) broadcastUpdate(io, game);
+          await stepPauseMs(350, 15);
+        }
+
+        // 先并发请求 6 名 AI 看完本轮发言后的完整行动方案，再按顺序严格校验并写入状态
         const plans = await Promise.all(
           game.players.map(async (p) => {
             const obs = buildLabObservation(game, p.id);
@@ -1041,72 +1197,18 @@ async function runSingleLabGame(options: {
         for (const { player, plan, usage, latencyMs } of plans) {
           ensureNotAborted(signal);
           const mem = memories.get(player.id)!;
-          let pubUsed = 0;
-          let privUsed = 0;
 
           if (manifest.chatEnabled) {
-            if (plan.createGroup && Array.isArray(plan.createGroup.memberIds)) {
-              const memberIds = plan.createGroup.memberIds.filter(
-                (id) => id !== player.id && game.players.some((x) => x.id === id)
-              );
-              if (memberIds.length >= 2) {
-                const cg = createCustomChatGroup(
-                  game,
-                  player.id,
-                  memberIds,
-                  plan.createGroup.name
-                );
-                if (cg.ok) {
-                  mem.record("action", `创建群聊「${cg.group.name}」`, {
-                    globalRound: game.globalRound,
-                    era: game.currentEra,
-                    roundInEra: game.roundInEra,
-                  });
-                }
-              }
-            }
-
-            const pubGroup = (game.chatGroups ?? []).find((g) => g.kind === "public");
-            for (const m of (plan.messages ?? []).slice(0, 4)) {
-              if (!m || typeof m.text !== "string") continue;
-              if (m.channel === "public" && pubGroup && pubUsed < MAX_PUBLIC_CHAT_PER_ROUND) {
-                const sent = sendGroupChatMessage(game, player.id, pubGroup.id, m.text, undefined, {
-                  allowAi: true,
-                });
-                if (sent.ok) {
-                  pubUsed += 1;
-                  mem.record("chat", `[我·公开] ${sent.message.text}`, {
-                    globalRound: game.globalRound,
-                    era: game.currentEra,
-                    roundInEra: game.roundInEra,
-                  });
-                }
-              } else if (m.channel === "private" && m.toPlayerId) {
-                if (sendLabDirectMessage(game, player, m.toPlayerId, m.text, privUsed)) {
-                  privUsed += 1;
-                  const target = game.players.find((x) => x.id === m.toPlayerId);
-                  mem.record("chat", `[我·私聊→${target?.name ?? m.toPlayerId}] ${oneLine(m.text, 220)}`, {
-                    globalRound: game.globalRound,
-                    era: game.currentEra,
-                    roundInEra: game.roundInEra,
-                  });
-                }
-              }
-            }
-
-            for (const gm of (plan.groupMessages ?? []).slice(0, 3)) {
-              if (!gm?.groupId || typeof gm.text !== "string") continue;
-              const sent = sendGroupChatMessage(game, player.id, gm.groupId, gm.text, undefined, {
-                allowAi: true,
-              });
-              if (sent.ok) {
-                mem.record("chat", `[我·群聊] ${sent.message.text}`, {
-                  globalRound: game.globalRound,
-                  era: game.currentEra,
-                  roundInEra: game.roundInEra,
-                });
-              }
-            }
+            const counters = roundChatCounters.get(player.id)!;
+            applyLabChatPlan({
+              game,
+              player,
+              plan,
+              mem,
+              counters,
+              allowCreateGroup: false,
+              maxMessagesThisStep: 1,
+            });
           }
 
           // 买咖啡（最多 3 杯，不超过可用财富）

@@ -82,6 +82,51 @@ function prediction(user: string, agentIndex: number) {
   };
 }
 
+function preInvestmentChat(user: string, agentIndex: number) {
+  const round = parseIntField(user, /第\s*(\d+)\s*全局轮/, 1);
+  const projects = parseProjects(user);
+  const players = parsePlayers(user);
+  const others = players.filter((p) => !p.isMe);
+  const groupIds = parseGroupIds(user);
+
+  const messages: Array<Record<string, unknown>> = [];
+  if (projects[0]) {
+    messages.push({
+      channel: "public",
+      text: `第 ${round} 轮我想先看看大家对 ${projects[0].name} 的想法，咱们可以温和错峰投，尽量别挤爆同一个项目。`,
+    });
+  }
+  if (others.length > 0) {
+    const target = others[(agentIndex - 1) % others.length];
+    messages.push({
+      channel: "private",
+      toPlayerId: target.id,
+      text: `这轮我倾向关注 ${projects[agentIndex % Math.max(1, projects.length)]?.name ?? "稳健项目"}，你怎么看？方便的话咱们错开一点。`,
+    });
+  }
+
+  const createGroup =
+    round === 1 && agentIndex === 1 && others.length >= 2 && groupIds.length === 0
+      ? { name: "协商小群", memberIds: others.slice(0, 2).map((p) => p.id) }
+      : null;
+  const groupMessages =
+    groupIds.length > 0
+      ? [
+          {
+            groupId: groupIds[0],
+            text: `群里商量一下：第 ${round} 轮大家各自主要想投哪个？`,
+          },
+        ]
+      : [];
+
+  return {
+    reasoning: `第 ${round} 轮投资前先温和沟通意向并试探同桌分工。`,
+    messages,
+    groupMessages,
+    createGroup,
+  };
+}
+
 function investment(user: string, agentIndex: number) {
   const round = parseIntField(user, /第\s*(\d+)\s*全局轮/, 1);
   const energy = Math.max(0, Math.floor(parseIntField(user, /精力[：:]\s*(\d+)/, 0)));
@@ -106,14 +151,15 @@ function investment(user: string, agentIndex: number) {
     }
   }
 
+  const hasPreChat = user.includes("本轮投资前沟通刚刚结束");
   const messages: Array<Record<string, unknown>> = [];
-  if (projects[0]) {
+  if (!hasPreChat && projects[0]) {
     messages.push({
       channel: "public",
       text: `第 ${round} 轮我重点关注 ${projects[0].name}，欢迎一起分散布局。`,
     });
   }
-  if (round % 2 === 0 && others.length > 0) {
+  if (!hasPreChat && round % 2 === 0 && others.length > 0) {
     const target = others[(agentIndex - 1) % others.length];
     messages.push({
       channel: "private",
@@ -128,11 +174,11 @@ function investment(user: string, agentIndex: number) {
       : null;
 
   const createGroup =
-    round === 1 && agentIndex === 1 && others.length >= 2 && groupIds.length === 0
-      ? { name: "合作小组", memberIds: others.slice(0, 2).map((p) => p.id) }
+    !hasPreChat && round === 1 && agentIndex === 1 && others.length >= 2 && groupIds.length === 0
+      ? { name: "协商小群", memberIds: others.slice(0, 2).map((p) => p.id) }
       : null;
   const groupMessages =
-    groupIds.length > 0
+    !hasPreChat && groupIds.length > 0
       ? [
           {
             groupId: groupIds[0],
@@ -142,7 +188,7 @@ function investment(user: string, agentIndex: number) {
       : [];
 
   return {
-    reasoning: `根据第 ${round} 轮项目容量与精力做分配。`,
+    reasoning: `结合第 ${round} 轮沟通反馈、项目容量与精力做分配。`,
     messages,
     groupMessages,
     createGroup,
@@ -174,6 +220,8 @@ export function askMockLabLlm(system: string, user: string): AiLlmResult {
   let payload: unknown;
   if (user.includes("任务：预测本局结束时")) {
     payload = prediction(user, agentIndex);
+  } else if (user.includes("阶段：投资前沟通")) {
+    payload = preInvestmentChat(user, agentIndex);
   } else if (user.includes("阶段：拍卖会")) {
     payload = auction(user, agentIndex);
   } else if (user.includes("向你发起转账")) {
