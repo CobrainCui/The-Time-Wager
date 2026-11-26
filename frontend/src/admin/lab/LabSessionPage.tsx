@@ -10,13 +10,14 @@ interface Props {
 }
 
 type ArchiveTab = "overview" | "per_ai" | "chats";
-type StepFilter = "all" | "prediction" | "chat" | "investment" | "auction" | "transaction" | "community_name";
+type StepFilter = "all" | "prediction" | "chat" | "investment" | "slack_reaction" | "auction" | "transaction" | "community_name";
 type ChatChannelFilter = "all" | "public" | "custom" | "dm";
 
 const DECISION_KIND_LABELS: Record<string, string> = {
   prediction: "排名预测",
   chat: "投资前沟通",
   investment: "拍板投资",
+  slack_reaction: "摸鱼反制",
   auction: "拍卖出价",
   transaction: "转账表态",
   community_name: "社区命名",
@@ -135,7 +136,17 @@ function formatDecisionActionSummary(
     }
   }
 
-  if (d.kind === "investment") {
+  if (act.transfer && typeof act.transfer === "object" && (act.transfer as { toPlayerId?: string }).toPlayerId) {
+    const tf = act.transfer as { toPlayerId: string; amount?: number; note?: string };
+    if (Number(tf.amount) > 0) {
+      lines.push(
+        `发起转账 → ${playerNameById.get(tf.toPlayerId) ?? tf.toPlayerId} ${tf.amount} 财富` +
+          (tf.note ? `（备注：${tf.note}）` : ""),
+      );
+    }
+  }
+
+  if (d.kind === "investment" || d.kind === "slack_reaction") {
     const inv = (act.investment && typeof act.investment === "object" ? act.investment : {}) as Record<
       string,
       number
@@ -143,31 +154,43 @@ function formatDecisionActionSummary(
     const investParts = Object.entries(inv)
       .filter(([, val]) => Number(val) > 0)
       .map(([pid, val]) => `${projectNameById.get(pid) ?? `项目#${pid}`} ${val}点`);
-    lines.push(`精力投入：${investParts.length > 0 ? investParts.join("，") : "0点（未投资）"}`);
+    lines.push(`${d.kind === "slack_reaction" ? "重投精力分配" : "精力投入"}：${investParts.length > 0 ? investParts.join("，") : "0点（未投资）"}`);
     if (Number(act.coffee) > 0) {
       lines.push(`购买咖啡：${act.coffee} 杯`);
     }
-    if (act.useCard && typeof act.useCard === "object" && (act.useCard as { cardId?: string }).cardId) {
-      const uc = act.useCard as { cardId: string; targetPlayerId?: string; targetProjectId?: number };
+    const usedList = Array.isArray(act.useCards) && act.useCards.length > 0
+      ? (act.useCards as Array<{
+          cardId?: string;
+          targetPlayerId?: string;
+          targetProjectId?: number;
+          burnCardId?: string;
+          visibility?: string;
+        }>)
+      : act.useCard && typeof act.useCard === "object" && (act.useCard as { cardId?: string }).cardId
+        ? [
+            act.useCard as {
+              cardId?: string;
+              targetPlayerId?: string;
+              targetProjectId?: number;
+              burnCardId?: string;
+              visibility?: string;
+            },
+          ]
+        : [];
+    for (const uc of usedList) {
+      if (!uc?.cardId) continue;
       const cName = CARD_NAMES[uc.cardId] || uc.cardId;
       const extra = [
         uc.targetPlayerId ? `目标玩家 ${playerNameById.get(uc.targetPlayerId) ?? uc.targetPlayerId}` : "",
         uc.targetProjectId != null
           ? `目标项目 ${projectNameById.get(String(uc.targetProjectId)) ?? uc.targetProjectId}`
           : "",
+        uc.burnCardId ? `指定烧毁 ${CARD_NAMES[uc.burnCardId] || uc.burnCardId}` : "",
+        uc.cardId === "buff_lottery" ? (uc.visibility === "private" ? "私密开奖" : "公开开奖") : "",
       ]
         .filter(Boolean)
         .join(" / ");
       lines.push(`使用道具：【${cName}】${extra ? `（${extra}）` : ""}`);
-    }
-    if (act.transfer && typeof act.transfer === "object" && (act.transfer as { toPlayerId?: string }).toPlayerId) {
-      const tf = act.transfer as { toPlayerId: string; amount?: number; note?: string };
-      if (Number(tf.amount) > 0) {
-        lines.push(
-          `发起转账 → ${playerNameById.get(tf.toPlayerId) ?? tf.toPlayerId} ${tf.amount} 财富` +
-            (tf.note ? `（备注：${tf.note}）` : ""),
-        );
-      }
     }
   }
 
@@ -517,7 +540,7 @@ export const LabSessionPage: React.FC<Props> = ({ session, onBack }) => {
                       <strong style={{ color: isSel ? "#fde047" : "#fbbf24", fontSize: uiRem(0.88) }}>
                         {p.name}
                       </strong>
-                      <span style={{ fontSize: uiRem(0.74), color: "#7dd3fc" }}>
+                      <span style={{ fontSize: uiRem(0.74), color: p.wealth < 0 ? "#fda4af" : "#7dd3fc" }}>
                         #{p.rank} · 财富 {p.wealth}
                       </span>
                     </div>
@@ -555,6 +578,7 @@ export const LabSessionPage: React.FC<Props> = ({ session, onBack }) => {
                     ["prediction", "排名预测"],
                     ["chat", "投资前沟通"],
                     ["investment", "拍板投资"],
+                    ["slack_reaction", "摸鱼反制"],
                     ["auction", "拍卖出价"],
                     ["transaction", "转账表态"],
                     ["community_name", "社区命名"],
@@ -900,7 +924,8 @@ export const LabSessionPage: React.FC<Props> = ({ session, onBack }) => {
                         <div style={{ color: "#94a3b8", fontSize: uiRem(0.68) }}>{p.model || "—"}</div>
                       </td>
                       <td style={{ padding: "0.45rem 0.35rem", textAlign: "right" }}>
-                        <strong>{p.finalWealth}</strong> <span style={{ color: "#94a3b8" }}>#{p.finalRank}</span>
+                        <strong style={{ color: p.finalWealth < 0 ? "#fda4af" : undefined }}>{p.finalWealth}</strong>{" "}
+                        <span style={{ color: "#94a3b8" }}>#{p.finalRank}</span>
                       </td>
                       <td style={{ padding: "0.45rem 0.35rem" }}>
                         <strong style={{ color: "#fbbf24", marginRight: "0.35rem" }}>{p.socialRank ?? "—"}</strong>

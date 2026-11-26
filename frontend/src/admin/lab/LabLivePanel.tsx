@@ -17,6 +17,7 @@ function formatQuota(num: number): string {
 const DECISION_KIND_LABELS: Record<string, string> = {
   prediction: "排名预测",
   investment: "拍板投资",
+  slack_reaction: "摸鱼反制",
   auction: "拍卖出价",
   transaction: "转账表态",
   chat: "投资前沟通",
@@ -241,7 +242,13 @@ export const LabLivePanel: React.FC<Props> = ({ game }) => {
                       </span>
                     ) : null}
                   </div>
-                  <div style={{ fontSize: uiRem(0.72), color: isThinking ? "#38bdf8" : "#94a3b8" }}>
+                  <div
+                    style={{
+                      fontSize: uiRem(0.72),
+                      color: isThinking ? "#38bdf8" : p.wealth < 0 ? "#fda4af" : "#94a3b8",
+                      fontWeight: p.wealth < 0 ? 700 : 400,
+                    }}
+                  >
                     {isThinking ? "⏳ 思考中…" : `财富 ${p.wealth}`}
                   </div>
                 </div>

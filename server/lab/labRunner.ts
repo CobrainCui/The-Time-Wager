@@ -17,17 +17,21 @@ import {
 } from "./siliconflowModels.js";
 import { askAiJson, type AiLlmResult } from "../ai/llmClient.js";
 import { STARTING_WEALTH } from "../config/startingWealth.js";
-import { eraCards } from "../data/game_data.js";
+import { ERA_BONUS_POOL_LONG, ERA_BONUS_POOL_SHORT } from "../config/eraBonus.js";
+import { buffCards, eraCards } from "../data/game_data.js";
 import {
+  getAuctionCardIdsForGame,
   getLeadingBidOnFocus,
   getLotCurrentBid,
   getMinimumNextBid,
   hammerAuctionLot,
+  isAuctionCardAvailable,
   markAuctionCardPassed,
   endAuctionSession,
   findNextAutoAuctionCard,
   placeAuctionBid,
   playerAvailableWealth,
+  publicSessionAuctionWins,
   voidOpenBidsOnCard,
 } from "../logic/auctionCards.js";
 import { useBuffCard, useForceBuyCard } from "../logic/buffLogic.js";
@@ -37,14 +41,20 @@ import {
   sendGroupChatMessage,
 } from "../logic/chatGroups.js";
 import { COFFEE_WEALTH_COST, purchaseCoffee } from "../logic/coffeeLogic.js";
-import { applyRoundEnergy } from "../logic/energySchedule.js";
+import { applyRoundEnergy, peekNextRoundEnergy } from "../logic/energySchedule.js";
 import { maskForbiddenText, normalizeNoteInput, sanitizeTransactionNote } from "../logic/forbiddenText.js";
-import { applyInvestments, sanitizeInvestments } from "../logic/investmentLogic.js";
+import {
+  applyInvestments,
+  reopenSubmittedInvestment,
+  sanitizeInvestments,
+} from "../logic/investmentLogic.js";
 import {
   acceptLotteryOffer,
   createRandomLotteryOffer,
   settleAllPendingLotteryOffers,
 } from "../logic/lotteryDraw.js";
+import { resolveRankPlayerCount, scaleRankRewardsForPlayerCount } from "../logic/rankRewardSchedule.js";
+import { ackLighterBurnNotice } from "../logic/roundBuffResolve.js";
 import { resolvePendingTransfer } from "../logic/transferResolve.js";
 import { broadcastUpdate } from "../network/broadcast.js";
 import { getGameIo } from "../network/gameIo.js";
@@ -55,11 +65,13 @@ import { togglePlayerReady } from "../state/gameActions.js";
 import {
   createInitialGame,
   getCommunityNamer,
+  type ActiveProject,
   type GameState,
   type LabAgentDecision,
   type LabDirectMessage,
   type LabInteractionMode,
   type LabThinkingMode,
+  type LotteryVisibility,
   type Player,
   type Transaction,
 } from "../state/gameState.js";
@@ -76,6 +88,7 @@ import {
   buildLabCommunityNamePrompt,
   buildLabInvestmentPrompt,
   buildLabPredictionPrompt,
+  buildLabSlackReactionPrompt,
   buildLabSystemPrompt,
   buildLabTransactionPrompt,
   computeLabPromptHash,
@@ -100,10 +113,10 @@ const DATA_MEMORY_ROOT = path.resolve(__dirname, "../../data/lab_memory");
 
 const MAX_PUBLIC_CHAT_PER_ROUND = 6;
 const MAX_PRIVATE_CHAT_PER_ROUND = 6;
-const AUCTION_MAX_WEALTH_RATIO = 0.35;
-export const AUCTION_MAX_DECISIONS_PER_LOT = 2;
+export const AUCTION_MAX_WEALTH_RATIO = 1;
+export const AUCTION_MAX_DECISIONS_PER_LOT = 6;
 export const LAB_AUCTION_ROUND_MS = 10_000;
-export const LAB_AUCTION_LOT_MAX_MS = 22_000;
+export const LAB_AUCTION_LOT_MAX_MS = 60_000;
 
 export class LabFatalError extends Error {
   constructor(message: string) {
@@ -676,11 +689,28 @@ export function createSeededLabGame(options: {
   return game;
 }
 
+function buffMeta(cardId: string): { id: string; name: string; description: string } {
+  const found = buffCards.find((c) => c.id === cardId);
+  return {
+    id: cardId,
+    name: found?.name ?? cardId,
+    description: found?.description.replace(/\*\*/g, "").replace(/\n/g, "；") ?? "",
+  };
+}
+
+function projectRiskRate(p: ActiveProject): number | undefined {
+  if (p.type !== "risk") return undefined;
+  return p.name.includes("成瘾") || p.name.includes("完美") || p.name.includes("幸福")
+    ? 25
+    : 20;
+}
+
 export function buildLabObservation(game: GameState, playerId: string): LabObservation {
   const me = game.players.find((p) => p.id === playerId);
   if (!me) throw new LabFatalError(`玩家 ${playerId} 不存在`);
 
   const ranks = computeWealthRanks(game.players);
+  const playerCount = resolveRankPlayerCount(game);
   const players = game.players.map((p) => ({
     id: p.id,
     name: p.name,
@@ -730,15 +760,30 @@ export function buildLabObservation(game: GameState, playerId: string): LabObser
       })),
     }));
 
+  const currentAuctionRound = Math.max(1, Math.min(game.currentEra - 1, 3));
   const auction = game.auctionFocusCardId
     ? {
         focusCardId: game.auctionFocusCardId,
+        focusCardName: buffMeta(game.auctionFocusCardId).name,
+        focusCardDescription: buffMeta(game.auctionFocusCardId).description,
         currentBid: getLotCurrentBid(game),
         minimumNextBid: getMinimumNextBid(game),
         highBidderId: getLeadingBidOnFocus(game)?.playerId ?? null,
         highBidderName: getLeadingBidOnFocus(game)?.playerName ?? null,
         soldCardIds: (game.auctionCompletedDeals ?? []).map((d) => d.cardId),
         distributedCardIds: game.auctionDistributedCardIds ?? [],
+        remainingCards: getAuctionCardIdsForGame(game)
+          .filter((id) => isAuctionCardAvailable(game, id))
+          .map((id) => ({ id, name: buffMeta(id).name })),
+        soldLotsThisAuction: publicSessionAuctionWins(game)
+          .filter((w) => w.auctionRound === currentAuctionRound)
+          .map((w) => ({
+            cardId: w.cardId,
+            cardName: buffMeta(w.cardId).name,
+            playerName: w.playerName,
+            cost: w.cost,
+            source: w.source,
+          })),
         bidHistory: (game.auctionBids ?? [])
           .filter((b) => b.cardId === game.auctionFocusCardId)
           .slice(-10)
@@ -746,41 +791,88 @@ export function buildLabObservation(game: GameState, playerId: string): LabObser
       }
     : null;
 
+  const projectNameById = new Map<number, string>();
+  for (const list of [game.activeProjects, game.completedProjects, game.uncompletedProjects]) {
+    for (const proj of list ?? []) projectNameById.set(proj.id, proj.name);
+  }
+  const activeLongTerm = Object.entries(me.longTerm ?? {}).map(([pidStr, rec]) => {
+    const pid = Number(pidStr);
+    return {
+      projectId: pid,
+      name: projectNameById.get(pid) ?? `项目#${pid}`,
+      totalInvested: rec.totalInvested,
+      status: rec.status,
+    };
+  });
+  const riskExposure = Object.entries(me.riskGains ?? {})
+    .filter(([, gain]) => Number(gain) > 0)
+    .map(([pidStr, gain]) => {
+      const pid = Number(pidStr);
+      return {
+        projectId: pid,
+        name: projectNameById.get(pid) ?? `风险项目#${pid}`,
+        historicalGainAtRisk: Number(gain),
+      };
+    });
+
   return {
     phase: game.phase,
     era: game.currentEra,
     roundInEra: game.roundInEra,
     globalRound: game.globalRound,
+    roundsRemainingAfterThis: Math.max(0, 8 - game.globalRound),
+    nextRoundEnergy: peekNextRoundEnergy(game),
     serverNow: Date.now(),
     me: {
       id: me.id,
       name: me.name,
       energy: Number(me.energy ?? 0),
       wealth: me.wealth,
+      availableWealth: playerAvailableWealth(game, me),
       rank: ranks.get(me.id) ?? me.rank ?? 0,
       ready: me.ready === true,
       inventory: [...(me.inventory ?? [])],
+      inventoryDetails: (me.inventory ?? []).map((id) => buffMeta(id)),
+      activeBuffs: (me.activeBuffs ?? []).map((b) => b.cardId),
       usedCards: [...(me.usedCards ?? [])],
       coffeePurchases: me.coffeePurchasesThisRound ?? 0,
+      slackedByCount: me.slackedBy?.length ?? 0,
       investment: { ...(me.investment ?? {}) },
       pendingOut: myPendingOut,
+      activeLongTerm,
+      riskExposure,
     },
     players,
-    projects: game.activeProjects.map((p) => ({
-      id: p.id,
-      name: p.name,
-      type: p.type,
-      maxEnergy: p.maxEnergy,
-      currentInvested: p.currentInvested,
-      accumulatedInvested: p.accumulatedInvested,
-      myAccumulatedInvested: p.investorRecords?.[playerId] ?? 0,
-      rankRewards: p.rankRewards,
-      overInvestPenalty: p.overInvestPenalty,
-      rate: p.rate,
-      era: p.era,
-      roundsNoInvestment: p.roundsNoInvestment,
-      investedThisRound: p.investedThisRound,
-    })),
+    projects: game.activeProjects.map((p) => {
+      const matchesEraBonus = Boolean(
+        p.era && game.currentEraCard?.era && p.era === game.currentEraCard.era
+      );
+      const eraBonusPool =
+        matchesEraBonus && p.type === "short"
+          ? ERA_BONUS_POOL_SHORT
+          : matchesEraBonus && p.type === "long"
+            ? ERA_BONUS_POOL_LONG
+            : 0;
+      return {
+        id: p.id,
+        name: p.name,
+        type: p.type,
+        maxEnergy: p.maxEnergy,
+        headroom: Math.max(0, Math.floor(p.maxEnergy - p.accumulatedInvested)),
+        currentInvested: p.currentInvested,
+        accumulatedInvested: p.accumulatedInvested,
+        myAccumulatedInvested: p.investorRecords?.[playerId] ?? 0,
+        rankRewards: scaleRankRewardsForPlayerCount(p.rankRewards, playerCount),
+        overInvestPenalty: p.overInvestPenalty,
+        rate: projectRiskRate(p) ?? p.rate,
+        era: p.era,
+        matchesEraBonus,
+        eraBonusPool,
+        expiresAfterThisRound: p.type === "risk" && game.roundInEra >= 2,
+        roundsNoInvestment: p.roundsNoInvestment,
+        investedThisRound: p.investedThisRound,
+      };
+    }),
     eraCard: game.currentEraCard
       ? {
           id: game.currentEraCard.id,
@@ -808,24 +900,210 @@ interface ChatMessageInput {
   text?: string;
 }
 
+export interface LabUseCardInput {
+  cardId?: string;
+  targetPlayerId?: string;
+  targetProjectId?: number;
+  burnCardId?: string;
+  burnFromInventory?: boolean;
+  visibility?: LotteryVisibility;
+}
+
 interface ChatPlanFields {
   reasoning?: string;
   messages?: ChatMessageInput[];
   groupMessages?: Array<{ groupId?: string; text?: string }>;
   createGroup?: { name?: string; memberIds?: string[] } | null;
+  transfer?: { toPlayerId?: string; amount?: number; note?: string } | null;
 }
 
 interface InvestmentPlan extends ChatPlanFields {
-  transfer?: { toPlayerId?: string; amount?: number; note?: string } | null;
   coffee?: number;
-  useCard?: {
-    cardId?: string;
-    targetPlayerId?: string;
-    targetProjectId?: number;
-    burnCardId?: string;
-    burnFromInventory?: boolean;
-  } | null;
+  useCards?: LabUseCardInput[];
+  useCard?: LabUseCardInput | null;
   investment: Record<string, number>;
+}
+
+export interface LabSlackReactionPlan {
+  reasoning?: string;
+  coffee?: number;
+  useCards?: LabUseCardInput[];
+  useCard?: LabUseCardInput | null;
+  investment: Record<string, number>;
+}
+
+const LAB_BUFF_EXEC_ORDER: Record<string, number> = {
+  buff_gold: 0,
+  buff_work_rest: 1,
+  buff_lottery: 2,
+  buff_insurance: 3,
+  buff_slack: 4,
+  buff_short: 5,
+  buff_lighter: 6,
+};
+
+function createLabTransfer(
+  game: GameState,
+  sender: Player,
+  rawTransfer: { toPlayerId?: string; amount?: number; note?: string } | null | undefined,
+  allowTransfer: boolean
+): { toPlayerId: string; amount: number; note: string } | null {
+  if (!allowTransfer || !rawTransfer || !rawTransfer.toPlayerId) return null;
+  const amount = int(rawTransfer.amount) ?? 0;
+  const toPlayer = game.players.find(
+    (x) => x.id === rawTransfer.toPlayerId && x.id !== sender.id
+  );
+  const txAvail = playerAvailableWealth(game, sender);
+  if (!toPlayer || amount <= 0 || amount > txAvail) return null;
+  const note = maskForbiddenText(
+    sanitizeTransactionNote(normalizeNoteInput(rawTransfer.note ?? ""))
+  );
+  const tx: Transaction = {
+    id: `tx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    fromId: sender.id,
+    fromName: sender.name,
+    toId: toPlayer.id,
+    toName: toPlayer.name,
+    amount,
+    note,
+    status: "pending",
+    timestamp: Date.now(),
+  };
+  game.transactions.push(tx);
+  appendSessionEvent(
+    game,
+    "transaction_created",
+    {
+      txId: tx.id,
+      fromId: sender.id,
+      toId: toPlayer.id,
+      amount,
+      note,
+    },
+    sender.id
+  );
+  return { toPlayerId: toPlayer.id, amount, note };
+}
+
+export async function executeLabUseCards(options: {
+  game: GameState;
+  player: Player;
+  rawCards: LabUseCardInput[];
+  allowBuffCards: boolean;
+  mem?: LabAgentMemory;
+}): Promise<LabUseCardInput[]> {
+  const { game, player, rawCards, allowBuffCards, mem } = options;
+  if (!allowBuffCards || rawCards.length === 0) return [];
+
+  const stock = new Map<string, number>();
+  for (const id of player.inventory ?? []) {
+    stock.set(id, (stock.get(id) ?? 0) + 1);
+  }
+
+  const normalized: LabUseCardInput[] = [];
+  for (const raw of rawCards) {
+    if (!raw || typeof raw.cardId !== "string") continue;
+    const cardId = raw.cardId;
+    if (cardId === "buff_force_buy") continue;
+    const left = stock.get(cardId) ?? 0;
+    if (left <= 0) continue;
+
+    let targetPlayerId =
+      typeof raw.targetPlayerId === "string" &&
+      game.players.some((p) => p.id === raw.targetPlayerId)
+        ? raw.targetPlayerId
+        : undefined;
+    if (cardId === "buff_work_rest" && !targetPlayerId) {
+      targetPlayerId = player.id;
+    }
+
+    const parsedProjectId = Number(raw.targetProjectId);
+    const targetProjectId =
+      Number.isSafeInteger(parsedProjectId) &&
+      game.activeProjects.some((p) => p.id === parsedProjectId)
+        ? parsedProjectId
+        : undefined;
+
+    const burnCardId =
+      typeof raw.burnCardId === "string" && raw.burnCardId !== "buff_lighter"
+        ? raw.burnCardId
+        : undefined;
+
+    const visibility: LotteryVisibility | undefined =
+      cardId === "buff_lottery"
+        ? raw.visibility === "private"
+          ? "private"
+          : "public"
+        : undefined;
+
+    if (cardId === "buff_slack" && !targetPlayerId) continue;
+    if (cardId === "buff_work_rest" && !targetPlayerId) continue;
+    if (cardId === "buff_short" && targetProjectId == null) continue;
+    if (
+      cardId === "buff_lighter" &&
+      (!targetPlayerId || targetPlayerId === player.id || !burnCardId)
+    ) {
+      continue;
+    }
+
+    stock.set(cardId, left - 1);
+    normalized.push({
+      cardId,
+      ...(targetPlayerId ? { targetPlayerId } : {}),
+      ...(targetProjectId != null ? { targetProjectId } : {}),
+      ...(burnCardId ? { burnCardId } : {}),
+      ...(typeof raw.burnFromInventory === "boolean"
+        ? { burnFromInventory: raw.burnFromInventory }
+        : {}),
+      ...(visibility ? { visibility } : {}),
+    });
+  }
+
+  normalized.sort(
+    (a, b) =>
+      (LAB_BUFF_EXEC_ORDER[a.cardId ?? ""] ?? 99) -
+      (LAB_BUFF_EXEC_ORDER[b.cardId ?? ""] ?? 99)
+  );
+
+  const executed: LabUseCardInput[] = [];
+  for (const c of normalized) {
+    const cardId = c.cardId!;
+    const res = useBuffCard(game, player.id, cardId, {
+      targetPlayerId: c.targetPlayerId,
+      targetProjectId: c.targetProjectId,
+      burnCardId: c.burnCardId,
+      burnFromInventory: c.burnFromInventory,
+      visibility: c.visibility,
+    });
+    if (!res.success) continue;
+
+    if (!player.usedCards) player.usedCards = [];
+    player.usedCards.push(cardId);
+    executed.push(c);
+
+    if (cardId === "buff_lottery") {
+      const drawn = await createRandomLotteryOffer(game, player.id);
+      if (drawn.ok) {
+        const settled = acceptLotteryOffer(game, player.id, drawn.offer.offerId);
+        if (settled.ok) {
+          mem?.record(
+            "action",
+            `使用【彩票】（${settled.visibility === "private" ? "私密开奖" : "公开开奖"}），掷出 ${settled.roll ?? "?"} 点，入账 ${settled.creditedAmount} 财富`,
+            { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
+          );
+          continue;
+        }
+      }
+    }
+
+    mem?.record("action", `第 ${game.globalRound} 轮${res.msg}`, {
+      globalRound: game.globalRound,
+      era: game.currentEra,
+      roundInEra: game.roundInEra,
+    });
+  }
+
+  return executed;
 }
 
 function applyLabChatPlan(options: {
@@ -1505,6 +1783,7 @@ async function runSingleLabGame(options: {
                     messages: Array.isArray(raw.messages) ? raw.messages : [],
                     groupMessages: Array.isArray(raw.groupMessages) ? raw.groupMessages : [],
                     createGroup: raw.createGroup ?? null,
+                    transfer: raw.transfer ?? null,
                   };
                 },
                 signal,
@@ -1537,6 +1816,7 @@ async function runSingleLabGame(options: {
               allowGroupMessages: allowGroups,
               maxMessagesThisStep: 3,
             });
+            const createdChatTx = createLabTransfer(game, player, plan.transfer, allowTransfer);
             recordLabDecision(
               game,
               player,
@@ -1546,6 +1826,7 @@ async function runSingleLabGame(options: {
                 messages: plan.messages ?? [],
                 groupMessages: plan.groupMessages ?? [],
                 createGroup: plan.createGroup ?? null,
+                ...(createdChatTx ? { transfer: createdChatTx } : {}),
               },
               usage,
               latencyMs,
@@ -1553,6 +1834,9 @@ async function runSingleLabGame(options: {
             );
           }
 
+          if (allowTransfer) {
+            await resolveIncomingTransfers({ game, memories, manifest, sharedConfig, signal, io });
+          }
           ingestRoundChatsIntoMemories(game, memories, seenPublicMsgs, seenDmMsgs);
           if (io) broadcastUpdate(io, game);
           await stepPauseMs(350, 15);
@@ -1581,6 +1865,7 @@ async function runSingleLabGame(options: {
                   createGroup: raw.createGroup ?? null,
                   transfer: raw.transfer ?? null,
                   coffee: int(raw.coffee) ?? 0,
+                  useCards: Array.isArray(raw.useCards) ? raw.useCards : undefined,
                   useCard: raw.useCard ?? null,
                   investment: raw.investment,
                 };
@@ -1599,6 +1884,7 @@ async function runSingleLabGame(options: {
           })
         );
 
+        const plannedInvestByPlayer = new Map<string, Record<number, number>>();
         for (const { player, plan, rawThinking, usage, latencyMs } of plans) {
           ensureNotAborted(signal);
           const mem = memories.get(player.id)!;
@@ -1619,73 +1905,31 @@ async function runSingleLabGame(options: {
             });
           }
 
-          // 买咖啡（最多 3 杯，不超过可用财富；关闭时不执行）
+          // 买咖啡（只要可用财富付得起，不限制杯数，不可预支；关闭时不执行）
           const avail = playerAvailableWealth(game, player);
-          const maxCups = allowCoffee
-            ? Math.min(3, Math.max(0, Math.floor(avail / COFFEE_WEALTH_COST)))
-            : 0;
+          const maxCups = allowCoffee ? Math.max(0, Math.floor(avail / COFFEE_WEALTH_COST)) : 0;
           const cups = Math.min(Math.max(0, int(plan.coffee) ?? 0), maxCups);
           for (let c = 0; c < cups; c++) {
             purchaseCoffee(game, player);
           }
 
-          // 道具卡
-          if (allowBuffCards && plan.useCard?.cardId && player.inventory.includes(plan.useCard.cardId)) {
-            const c = plan.useCard;
-            const cardId = c.cardId!;
-            if (cardId === "buff_lottery") {
-              const buffRes = useBuffCard(game, player.id, "buff_lottery", {});
-              if (buffRes.success) {
-                const drawn = await createRandomLotteryOffer(game, player.id);
-                if (drawn.ok) acceptLotteryOffer(game, player.id, drawn.offer.offerId);
-              }
-            } else if (cardId !== "buff_force_buy") {
-              useBuffCard(game, player.id, cardId, {
-                targetPlayerId: c.targetPlayerId,
-                targetProjectId: c.targetProjectId,
-                burnCardId: c.burnCardId,
-                burnFromInventory: c.burnFromInventory,
-              });
-            }
-          }
+          // 道具卡（支持单轮任意多张复合打出，并按点石成金/劳逸结合优先顺序结算）
+          const rawCards =
+            Array.isArray(plan.useCards) && plan.useCards.length > 0
+              ? plan.useCards
+              : plan.useCard
+                ? [plan.useCard]
+                : [];
+          const executedCards = await executeLabUseCards({
+            game,
+            player,
+            rawCards,
+            allowBuffCards,
+            mem,
+          });
 
-          // 转账（amount > 0 才算真实转账）
-          if (allowTransfer && plan.transfer && plan.transfer.toPlayerId) {
-            const amount = int(plan.transfer.amount) ?? 0;
-            const toPlayer = game.players.find(
-              (x) => x.id === plan.transfer!.toPlayerId && x.id !== player.id
-            );
-            const txAvail = playerAvailableWealth(game, player);
-            if (toPlayer && amount > 0 && amount <= txAvail) {
-              const note = maskForbiddenText(
-                sanitizeTransactionNote(normalizeNoteInput(plan.transfer.note ?? ""))
-              );
-              const tx: Transaction = {
-                id: `tx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-                fromId: player.id,
-                fromName: player.name,
-                toId: toPlayer.id,
-                toName: toPlayer.name,
-                amount,
-                note,
-                status: "pending",
-                timestamp: Date.now(),
-              };
-              game.transactions.push(tx);
-              appendSessionEvent(
-                game,
-                "transaction_created",
-                {
-                  txId: tx.id,
-                  fromId: player.id,
-                  toId: toPlayer.id,
-                  amount,
-                  note,
-                },
-                player.id
-              );
-            }
-          }
+          // 转账（amount > 0 且不超过可用财富）
+          const createdTx = createLabTransfer(game, player, plan.transfer, allowTransfer);
 
           // 投资与锁定
           const sanitizedInvest = sanitizeInvestments(
@@ -1693,6 +1937,7 @@ async function runSingleLabGame(options: {
             player,
             (plan.investment ?? {}) as Record<number, number>
           );
+          plannedInvestByPlayer.set(player.id, sanitizedInvest);
           applyInvestments(game, player.id, sanitizedInvest, "player");
           togglePlayerReady(game, player.id);
 
@@ -1705,9 +1950,10 @@ async function runSingleLabGame(options: {
               messages: plan.messages ?? [],
               groupMessages: plan.groupMessages ?? [],
               createGroup: plan.createGroup ?? null,
-              transfer: allowTransfer ? (plan.transfer ?? null) : null,
+              transfer: createdTx ?? (allowTransfer ? (plan.transfer ?? null) : null),
               coffee: cups,
-              useCard: allowBuffCards ? (plan.useCard ?? null) : null,
+              useCards: executedCards,
+              useCard: executedCards[0] ?? null,
               investment: sanitizedInvest,
             },
             usage,
@@ -1720,6 +1966,116 @@ async function runSingleLabGame(options: {
               (cups ? `；咖啡 ${cups} 杯` : ""),
             { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
           );
+        }
+
+        // 若本轮有玩家被他人用【摸鱼传染】命中，仅在命中时触发一次反制与重投窗口（未命中则零耗时）
+        const slackVictims = game.players.filter((p) =>
+          (p.slackedBy ?? []).some((attackerId) => attackerId !== p.id)
+        );
+        if (slackVictims.length > 0) {
+          for (const v of slackVictims) {
+            if (v.ready || Object.values(v.investment ?? {}).some((n) => Number(n) > 0)) {
+              reopenSubmittedInvestment(game, v.id, "slack_negative");
+              v.ready = false;
+              game.readyPlayers.delete(v.id);
+            }
+          }
+          if (io) broadcastUpdate(io, game);
+
+          const reactions = await Promise.all(
+            slackVictims.map(async (v) => {
+              const obs = buildLabObservation(game, v.id);
+              const mem = memories.get(v.id)!;
+              const prevInv = plannedInvestByPlayer.get(v.id) ?? {};
+              const res = await askAgentWithValidation<LabSlackReactionPlan>({
+                game,
+                player: v,
+                manifest,
+                sharedConfig,
+                label: `r${game.globalRound}-slack-reaction`,
+                userPrompt: buildLabSlackReactionPrompt(obs, mem.digest(), prevInv, promptFlags),
+                validate: (data) => {
+                  if (!data || typeof data !== "object") return null;
+                  const raw = data as Partial<LabSlackReactionPlan>;
+                  if (!raw.investment || typeof raw.investment !== "object") return null;
+                  return {
+                    reasoning: typeof raw.reasoning === "string" ? raw.reasoning : "",
+                    coffee: int(raw.coffee) ?? 0,
+                    useCards: Array.isArray(raw.useCards) ? raw.useCards : undefined,
+                    useCard: raw.useCard ?? null,
+                    investment: raw.investment,
+                  };
+                },
+                signal,
+                io,
+                budgetKind: "investment",
+              });
+              return {
+                player: v,
+                plan: res.value,
+                rawThinking: res.rawThinking,
+                usage: res.usage,
+                latencyMs: res.latencyMs,
+              };
+            })
+          );
+
+          for (const { player, plan, rawThinking, usage, latencyMs } of reactions) {
+            ensureNotAborted(signal);
+            const mem = memories.get(player.id)!;
+            const avail = playerAvailableWealth(game, player);
+            const maxCups = allowCoffee ? Math.max(0, Math.floor(avail / COFFEE_WEALTH_COST)) : 0;
+            const cups = Math.min(Math.max(0, int(plan.coffee) ?? 0), maxCups);
+            for (let c = 0; c < cups; c++) {
+              purchaseCoffee(game, player);
+            }
+
+            const rawCards =
+              Array.isArray(plan.useCards) && plan.useCards.length > 0
+                ? plan.useCards
+                : plan.useCard
+                  ? [plan.useCard]
+                  : [];
+            const executedCards = await executeLabUseCards({
+              game,
+              player,
+              rawCards,
+              allowBuffCards,
+              mem,
+            });
+
+            const sanitizedReinvest = sanitizeInvestments(
+              game,
+              player,
+              (plan.investment ?? {}) as Record<number, number>
+            );
+            applyInvestments(game, player.id, sanitizedReinvest, "player");
+            if (!player.ready) togglePlayerReady(game, player.id);
+
+            recordLabDecision(
+              game,
+              player,
+              "slack_reaction",
+              plan.reasoning ?? "",
+              {
+                slackedByCount: player.slackedBy?.length ?? 0,
+                coffee: cups,
+                useCards: executedCards,
+                useCard: executedCards[0] ?? null,
+                investment: sanitizedReinvest,
+              },
+              usage,
+              latencyMs,
+              rawThinking
+            );
+            mem.record(
+              "action",
+              `第 ${game.globalRound} 轮被摸鱼后重投 ${JSON.stringify(sanitizedReinvest)}` +
+                (cups ? `；补买咖啡 ${cups} 杯` : ""),
+              { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
+            );
+          }
+          if (io) broadcastUpdate(io, game);
         }
 
         // 结算前处理本轮刚发出的待收转账 + 彩票
@@ -1736,6 +2092,18 @@ async function runSingleLabGame(options: {
       }
 
       if (game.phase === "SETTLEMENT") {
+        // 结算时只让被打火机指定的玩家私下得知是否烧中，并确认移除命中的手牌
+        for (const p of game.players) {
+          const notices = [...(p.pendingLighterBurnNotices ?? [])];
+          for (const notice of notices) {
+            memories.get(p.id)?.record("outcome", `打火机判定：${notice.message}`, {
+              globalRound: game.globalRound,
+              era: game.currentEra,
+              roundInEra: game.roundInEra,
+            });
+            ackLighterBurnNotice(game, p.id, notice.id);
+          }
+        }
         const ranks = computeWealthRanks(game.players);
         for (const h of game.sessionTelemetry?.settlementHistory ?? []) {
           if (recordedSettlementRounds.has(h.round)) continue;

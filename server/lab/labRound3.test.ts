@@ -448,9 +448,9 @@ test("askAgentWithValidation 分场景预算及超时降思考快速重试、本
 });
 
 test("实验室拍卖常量与同波次严禁代抬价、过期截断校验", () => {
-  assert.equal(AUCTION_MAX_DECISIONS_PER_LOT, 2);
+  assert.equal(AUCTION_MAX_DECISIONS_PER_LOT, 6);
   assert.equal(LAB_AUCTION_ROUND_MS, 10_000);
-  assert.equal(LAB_AUCTION_LOT_MAX_MS, 22_000);
+  assert.equal(LAB_AUCTION_LOT_MAX_MS, 60_000);
 
   const manifest = makeManifest();
   const game = createSeededLabGame({

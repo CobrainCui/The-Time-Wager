@@ -419,7 +419,7 @@ export interface LabAgentDecision {
   globalRound: number;
   playerId: string;
   playerName: string;
-  kind: "prediction" | "investment" | "auction" | "transaction" | "chat" | "community_name";
+  kind: "prediction" | "investment" | "slack_reaction" | "auction" | "transaction" | "chat" | "community_name";
   model?: string;
   reasoning: string;
   /** 模型实际吐出的原始思考/思维链全文（如有） */

@@ -233,9 +233,35 @@ function investment(user: string, agentIndex: number) {
     createGroup,
     transfer,
     coffee: 0,
+    useCards: [],
     useCard: null,
     investment: investmentMap,
     ready: true,
+  };
+}
+
+function slackReaction(user: string, agentIndex: number) {
+  const energy = Math.max(0, Math.floor(parseIntField(user, /当前剩余未分配精力[：:]\s*(-?\d+)/, 0)));
+  const projects = parseProjects(user);
+  const hasWorkRest = user.includes("buff_work_rest");
+  const meMatch = /ID[：:]\s*([^\s|]+)/.exec(user);
+  const myId = meMatch ? meMatch[1].trim() : "";
+  const hitMatch = /本轮你有\s*(\d+)\s*次被其他玩家使用/.exec(user);
+  const hitCount = hitMatch ? Math.max(1, Number(hitMatch[1])) : 1;
+  const totalEnergy = Math.max(0, energy + (hasWorkRest ? hitCount * 16 : 0));
+
+  const investmentMap: Record<string, number> = {};
+  if (projects.length > 0 && totalEnergy > 0) {
+    investmentMap[String(projects[agentIndex % projects.length].id)] = totalEnergy;
+  }
+
+  return {
+    reasoning: hasWorkRest
+      ? "检测到自己被摸鱼且持有劳逸结合，先打劳逸结合追溯反制并重投精力。"
+      : "已被摸鱼扣除精力并解锁，按剩余可用精力重新分配投资。",
+    coffee: 0,
+    useCards: hasWorkRest && myId ? [{ cardId: "buff_work_rest", targetPlayerId: myId }] : [],
+    investment: investmentMap,
   };
 }
 
@@ -259,6 +285,8 @@ export function askMockLabLlm(system: string, user: string): AiLlmResult {
   let payload: unknown;
   if (user.includes("任务：预测本局结束时")) {
     payload = prediction(user, agentIndex);
+  } else if (user.includes("阶段：被摸鱼后反制与重投")) {
+    payload = slackReaction(user, agentIndex);
   } else if (user.includes("阶段：投资前沟通")) {
     payload = preInvestmentChat(user, agentIndex);
   } else if (user.includes("阶段：拍卖会")) {

@@ -39,6 +39,7 @@ const DECISION_KIND_LABELS: Record<string, string> = {
   prediction: "排名预测",
   chat: "投资前沟通",
   investment: "拍板投资",
+  slack_reaction: "摸鱼反制",
   auction: "拍卖出价",
   transaction: "转账表态",
   community_name: "社区命名",
@@ -255,7 +256,14 @@ export const LabSessionDrawer: React.FC<Props> = ({ session, onClose }) => {
                         <div style={{ fontWeight: 700 }}>{p.name}</div>
                         <div style={{ color: "#94a3b8", fontSize: uiRem(0.65) }}>{p.model || "—"}</div>
                       </td>
-                      <td style={{ padding: "0.3rem", textAlign: "right", fontFamily: "var(--font-mono)" }}>
+                      <td
+                        style={{
+                          padding: "0.3rem",
+                          textAlign: "right",
+                          fontFamily: "var(--font-mono)",
+                          color: p.finalWealth < 0 ? "#fda4af" : undefined,
+                        }}
+                      >
                         {p.finalWealth}
                       </td>
                       <td style={{ padding: "0.3rem", textAlign: "right" }}>#{p.finalRank}</td>
