@@ -4,13 +4,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ensureProjectsDrawnForEra } from "../state/gameEra.js";
-import { sendGroupChatMessage, ensurePublicChatGroup } from "../logic/chatGroups.js";
+import { sendGroupChatMessage, ensurePublicChatGroup, createCustomChatGroup } from "../logic/chatGroups.js";
 import { initCommunityLeaderboardPersistence } from "../state/communityLeaderboard.js";
 import { initSessionArchivePersistence } from "../state/sessionArchive.js";
+import { askMockLabLlm } from "./labMockLlm.js";
 import {
+  buildLabAuctionPrompt,
   buildLabChatPrompt,
   buildLabInvestmentPrompt,
   buildLabSystemPrompt,
+  buildLabTransactionPrompt,
   LAB_PROMPT_VERSION,
 } from "./labPrompts.js";
 import {
@@ -97,6 +100,71 @@ test("提示词版本升级且系统/沟通提示词包含自然平和协商引�
   const investPrompt = buildLabInvestmentPrompt(obs, "（暂无历史记忆）", true);
   assert.ok(investPrompt.includes("本轮投资前沟通刚刚结束"));
   assert.ok(investPrompt.includes("这轮我想看下长期项目"));
+
+  // 私聊与自定义小群在转账表态和拍卖出价提示词中同样可见（同时保持盲视角）
+  const groupRes = createCustomChatGroup(
+    game,
+    game.players[0].id,
+    [game.players[1].id, game.players[2].id],
+    "协商小群"
+  );
+  assert.equal(groupRes.ok, true);
+  if (groupRes.ok) {
+    sendGroupChatMessage(game, game.players[1].id, groupRes.group.id, "小群约定这轮别抢短期", undefined, {
+      allowAi: true,
+    });
+  }
+  game.labDirectMessages = [
+    ...(game.labDirectMessages ?? []),
+    {
+      id: "dm-test-1",
+      fromId: game.players[1].id,
+      fromName: game.players[1].name,
+      toId: game.players[0].id,
+      toName: game.players[0].name,
+      text: "给你转 10 块，咱们这轮错峰投长期项目",
+      era: game.currentEra,
+      roundInEra: game.roundInEra,
+      globalRound: game.globalRound,
+      timestamp: Date.now(),
+    },
+  ];
+  const obsWithSocial = buildLabObservation(game, game.players[0].id);
+  const txPrompt = buildLabTransactionPrompt(
+    obsWithSocial,
+    {
+      id: "tx-test-1",
+      fromId: game.players[1].id,
+      fromName: game.players[1].name,
+      toId: game.players[0].id,
+      toName: game.players[0].name,
+      amount: 10,
+      note: "按刚才约定先转你",
+      timestamp: Date.now(),
+      status: "pending",
+    },
+    "（暂无历史记忆）"
+  );
+  assert.ok(txPrompt.includes("给你转 10 块，咱们这轮错峰投长期项目"));
+  assert.ok(txPrompt.includes("小群约定这轮别抢短期"));
+
+  const auctionPrompt = buildLabAuctionPrompt(obsWithSocial, "buff_force_buy", 30, "（暂无历史记忆）");
+  assert.ok(auctionPrompt.includes("给你转 10 块，咱们这轮错峰投长期项目"));
+  assert.ok(auctionPrompt.includes("小群约定这轮别抢短期"));
+
+  // 两步假跑回复：第二步投资应读取刚收到的同轮私聊并给出回应与温和协商理由
+  const sysPrompt = buildLabSystemPrompt(1, game.players[0].name);
+  const investPromptWithDm = buildLabInvestmentPrompt(obsWithSocial, "（暂无历史记忆）", true);
+  const mockInvest = askMockLabLlm(sysPrompt, investPromptWithDm);
+  assert.equal(mockInvest.ok, true);
+  if (mockInvest.ok) {
+    const data = mockInvest.data as {
+      reasoning: string;
+      messages: Array<{ channel: string; text: string }>;
+    };
+    assert.ok(data.reasoning.includes(game.players[1].name));
+    assert.ok(data.messages.some((m) => m.channel === "private" && m.text.includes("收到")));
+  }
 });
 
 test("开启沟通时执行同轮「先沟通、再投资」两步闭环；关闭沟通时不触发沟通步骤", async () => {

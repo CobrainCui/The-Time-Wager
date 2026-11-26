@@ -16,10 +16,10 @@ function formatQuota(num: number): string {
 
 const DECISION_KIND_LABELS: Record<string, string> = {
   prediction: "排名预测",
-  investment: "投资与沟通",
+  investment: "拍板投资",
   auction: "拍卖出价",
   transaction: "转账表态",
-  chat: "发言",
+  chat: "投资前沟通",
   community_name: "社区命名",
 };
 
@@ -34,10 +34,28 @@ export const LabLivePanel: React.FC<Props> = ({ game }) => {
   const directMessages = useMemo(() => game.labDirectMessages ?? [], [game.labDirectMessages]);
   const groupMessages = useMemo(() => game.groupMessages ?? [], [game.groupMessages]);
 
-  const latestThoughtByPlayer = useMemo(() => {
+  const latestPreChatByPlayer = useMemo(() => {
     const map = new Map<string, (typeof decisions)[number]>();
     for (const d of decisions) {
-      map.set(d.playerId, d);
+      if (d.kind === "chat" && d.globalRound === game.globalRound) {
+        map.set(d.playerId, d);
+      }
+    }
+    return map;
+  }, [decisions, game.globalRound]);
+
+  const latestThoughtByPlayer = useMemo(() => {
+    const fallback = new Map<string, (typeof decisions)[number]>();
+    const nonChat = new Map<string, (typeof decisions)[number]>();
+    for (const d of decisions) {
+      fallback.set(d.playerId, d);
+      if (d.kind !== "chat") {
+        nonChat.set(d.playerId, d);
+      }
+    }
+    const map = new Map<string, (typeof decisions)[number]>();
+    for (const [playerId, lastAny] of fallback) {
+      map.set(playerId, nonChat.get(playerId) ?? lastAny);
     }
     return map;
   }, [decisions]);
@@ -193,6 +211,7 @@ export const LabLivePanel: React.FC<Props> = ({ game }) => {
           }}
         >
           {game.players.map((p) => {
+            const preChat = latestPreChatByPlayer.get(p.id);
             const thought = latestThoughtByPlayer.get(p.id);
             const speech = latestSpeechByPlayer.get(p.id);
             const used = tokenUsage[p.id] ?? 0;
@@ -244,6 +263,25 @@ export const LabLivePanel: React.FC<Props> = ({ game }) => {
                     />
                   </div>
                 </div>
+
+                {preChat && thought?.id !== preChat.id && (
+                  <div
+                    style={{
+                      fontSize: uiRem(0.74),
+                      padding: "0.45rem 0.55rem",
+                      borderRadius: "0.5rem",
+                      background: "rgba(16,185,129,0.09)",
+                      border: "1px solid rgba(16,185,129,0.24)",
+                      color: "#d1fae5",
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    <div style={{ fontSize: uiRem(0.68), color: "#6ee7b7", marginBottom: "0.15rem" }}>
+                      🤝 本轮沟通盘算（第{preChat.globalRound}轮）
+                    </div>
+                    {preChat.reasoning || "暂无沟通想法记录"}
+                  </div>
+                )}
 
                 <div
                   style={{

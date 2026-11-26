@@ -59,6 +59,27 @@ function parseGroupIds(text: string): string[] {
   return ids;
 }
 
+function parseRecentPrivateSenders(
+  text: string,
+  round: number,
+  myName?: string
+): Array<{ fromName: string; text: string }> {
+  const sec = sectionBetween(text, "## 你收到的私聊");
+  const list: Array<{ fromName: string; text: string }> = [];
+  for (const line of sec.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("-")) continue;
+    const m = /^-\s*\[第\s*(\d+)\s*轮\]\s*([^→\n]+?)\s*→\s*([^:：\n]+?)[:：]\s*(.+)$/.exec(trimmed);
+    if (!m || Number(m[1]) !== round) continue;
+    const fromName = m[2].trim();
+    const toName = m[3].trim();
+    if (myName && fromName === myName) continue;
+    if (myName && toName !== myName && toName !== "你") continue;
+    list.push({ fromName, text: m[4].trim() });
+  }
+  return list;
+}
+
 function parseIntField(text: string, regex: RegExp, fallback = 0): number {
   const m = regex.exec(text);
   return m ? Number(m[1]) || fallback : fallback;
@@ -151,9 +172,21 @@ function investment(user: string, agentIndex: number) {
     }
   }
 
+  const mePlayer = players.find((p) => p.isMe);
   const hasPreChat = user.includes("本轮投资前沟通刚刚结束");
+  const recentPrivate = parseRecentPrivateSenders(user, round, mePlayer?.name);
   const messages: Array<Record<string, unknown>> = [];
-  if (!hasPreChat && projects[0]) {
+  if (hasPreChat && recentPrivate.length > 0) {
+    const firstSenderName = recentPrivate[0].fromName;
+    const senderPlayer = others.find((p) => p.name === firstSenderName) ?? others[0];
+    if (senderPlayer) {
+      messages.push({
+        channel: "private",
+        toPlayerId: senderPlayer.id,
+        text: "收到，这轮我按咱们刚聊的节奏错开投，合作愉快。",
+      });
+    }
+  } else if (!hasPreChat && projects[0]) {
     messages.push({
       channel: "public",
       text: `第 ${round} 轮我重点关注 ${projects[0].name}，欢迎一起分散布局。`,
@@ -187,8 +220,14 @@ function investment(user: string, agentIndex: number) {
         ]
       : [];
 
+  const senderNames = Array.from(new Set(recentPrivate.map((r) => r.fromName))).slice(0, 2).join("、");
+  const reasoning =
+    hasPreChat && senderNames
+      ? `收到 ${senderNames} 的沟通意向，第 ${round} 轮按错峰协商分配精力。`
+      : `结合第 ${round} 轮沟通反馈、项目容量与精力做分配。`;
+
   return {
-    reasoning: `结合第 ${round} 轮沟通反馈、项目容量与精力做分配。`,
+    reasoning,
     messages,
     groupMessages,
     createGroup,

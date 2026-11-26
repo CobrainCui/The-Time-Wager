@@ -35,6 +35,15 @@ function formatQuota(n: number | undefined): string {
   return num.toLocaleString();
 }
 
+const DECISION_KIND_LABELS: Record<string, string> = {
+  prediction: "排名预测",
+  chat: "投资前沟通",
+  investment: "拍板投资",
+  auction: "拍卖出价",
+  transaction: "转账表态",
+  community_name: "社区命名",
+};
+
 export const LabSessionDrawer: React.FC<Props> = ({ session, onClose }) => {
   const [fetched, setFetched] = useState<{
     sessionId: string;
@@ -88,6 +97,9 @@ export const LabSessionDrawer: React.FC<Props> = ({ session, onClose }) => {
   const groupMsgs = snap?.groupMessages ?? [];
   const directMsgs = snap?.directMessages ?? [];
   const decisions = snap?.agentDecisions ?? [];
+  const groupTagById = new Map(
+    (snap?.chatGroups ?? []).map((g) => [g.id, g.kind === "public" ? "公开" : `小群·${g.name}`]),
+  );
 
   return (
     <div
@@ -311,7 +323,7 @@ export const LabSessionDrawer: React.FC<Props> = ({ session, onClose }) => {
                   ...groupMsgs.map((m) => ({
                     id: m.id,
                     ts: m.timestamp,
-                    text: `[公开] ${m.fromName}：${m.text}`,
+                    text: `[${groupTagById.get(m.groupId) || "公开"}] ${m.fromName}：${m.text}`,
                     isDm: false,
                   })),
                   ...directMsgs.map((m) => ({
@@ -361,7 +373,7 @@ export const LabSessionDrawer: React.FC<Props> = ({ session, onClose }) => {
                       <div>
                         <strong style={{ color: "#60a5fa" }}>{d.playerName}</strong>
                         <span style={{ color: "#94a3b8", marginLeft: "0.4rem" }}>
-                          第{d.globalRound}轮 · {d.kind}
+                          第{d.globalRound}轮 · {DECISION_KIND_LABELS[d.kind] || d.kind}
                           {d.totalTokens ? ` · 消耗 ${d.totalTokens}` : ""}
                           {d.latencyMs ? ` · ${d.latencyMs}ms` : ""}
                         </span>

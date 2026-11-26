@@ -200,6 +200,12 @@ export interface LabSessionDetail extends LabSessionListItem {
       text: string;
       timestamp: number;
     }>;
+    chatGroups?: Array<{
+      id: string;
+      name: string;
+      kind: "public" | "custom";
+      memberIds: string[];
+    }>;
     directMessages: Array<{
       id: string;
       fromId: string;
