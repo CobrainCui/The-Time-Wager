@@ -22,6 +22,10 @@ import {
   type RuleAgentGuardKind,
   type RuleAgentInputScreen,
 } from "../ai/agentGuardrails.js";
+import {
+  SILICONFLOW_DEFAULT_BASE_URL,
+  SILICONFLOW_PLACEHOLDER_KEY,
+} from "../lab/siliconflowModels.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,30 +40,147 @@ function resolveKnowledgeDir(): string {
 }
 
 /** ============================ LLM 客户端配置 ============================
- * 默认与原智能体一致：DeepSeek 官方接口 + deepseek-flash。
- * 未配置 DeepSeek 密钥时，回退到本服务端自身的 OpenAI 兼容配置
- * （OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL，与 ai/llmClient.ts 同源）。
+ * 默认共用全站硅基流动密钥（SILICONFLOW_API_KEY / AI_API_KEY）+ deepseek-ai/DeepSeek-V4.1-Flash；
+ * 同时兼容显式配置的 RULE_AGENT_API_KEY、DEEPSEEK_API_KEY 或 OPENAI_API_KEY。
  */
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 const DEEPSEEK_MODEL = "deepseek-v4-pro";
+const SILICONFLOW_RULE_AGENT_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash";
 
-const deepseekKey = process.env.RULE_AGENT_API_KEY?.trim() || process.env.DEEPSEEK_API_KEY?.trim() || "";
-const siteKey = process.env.OPENAI_API_KEY?.trim() || "";
+export interface RuleAgentLlmConfig {
+  apiKey: string;
+  baseURL?: string;
+  model: string;
+  extraParams: Record<string, unknown>;
+}
 
-const useDeepSeek = deepseekKey.length > 0;
-const apiKey = useDeepSeek ? deepseekKey : siteKey;
-const baseURL = useDeepSeek
-  ? process.env.RULE_AGENT_BASE_URL?.trim() || DEEPSEEK_BASE_URL
-  : process.env.OPENAI_BASE_URL?.trim() || undefined;
-const MODEL = useDeepSeek
-  ? process.env.RULE_AGENT_MODEL?.trim() || DEEPSEEK_MODEL
-  : process.env.OPENAI_MODEL?.trim() || "gpt-4o";
+function firstNonEmpty(...values: Array<string | undefined>): string {
+  for (const v of values) {
+    const s = (v ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
 
-/** DeepSeek v4 关闭推理链：规则检索是短步骤，避免每步等 1–2 分钟。 */
-const NO_THINKING = useDeepSeek ? { thinking: { type: "disabled" as const } } : {};
+function isPlaceholderKey(key: string): boolean {
+  const k = key.trim().toLowerCase();
+  if (!k) return true;
+  return (
+    k === SILICONFLOW_PLACEHOLDER_KEY ||
+    k.includes("siliconflow-placeholder") ||
+    k.includes("placeholder") ||
+    k.includes("your_api_key") ||
+    k.includes("your-key") ||
+    k === "sk-xxx" ||
+    k === "changeme"
+  );
+}
+
+function computeExtraParams(baseURL?: string): Record<string, unknown> {
+  const lower = (baseURL ?? "").toLowerCase();
+  if (lower.includes("siliconflow")) {
+    return { enable_thinking: false };
+  }
+  if (lower.includes("deepseek.com")) {
+    return { thinking: { type: "disabled" as const } };
+  }
+  return {};
+}
+
+export function resolveRuleAgentConfig(): RuleAgentLlmConfig | null {
+  const ruleKey = firstNonEmpty(process.env.RULE_AGENT_API_KEY);
+  const sfKey = firstNonEmpty(process.env.SILICONFLOW_API_KEY);
+  const aiKey = firstNonEmpty(process.env.AI_API_KEY);
+  const deepseekKey = firstNonEmpty(process.env.DEEPSEEK_API_KEY);
+  const openaiKey = firstNonEmpty(process.env.OPENAI_API_KEY);
+
+  if (ruleKey && !isPlaceholderKey(ruleKey)) {
+    const sfOrAiBase = firstNonEmpty(process.env.SILICONFLOW_BASE_URL, process.env.AI_BASE_URL);
+    const defaultBase = sfOrAiBase.toLowerCase().includes("siliconflow")
+      ? sfOrAiBase
+      : DEEPSEEK_BASE_URL;
+    const baseURL = firstNonEmpty(process.env.RULE_AGENT_BASE_URL, defaultBase) || undefined;
+    const isSf = (baseURL ?? "").toLowerCase().includes("siliconflow");
+    const model = firstNonEmpty(
+      process.env.RULE_AGENT_MODEL,
+      isSf ? SILICONFLOW_RULE_AGENT_MODEL : DEEPSEEK_MODEL
+    );
+    return {
+      apiKey: ruleKey,
+      baseURL,
+      model,
+      extraParams: computeExtraParams(baseURL),
+    };
+  }
+
+  if (sfKey && !isPlaceholderKey(sfKey)) {
+    const baseURL =
+      firstNonEmpty(
+        process.env.RULE_AGENT_BASE_URL,
+        process.env.SILICONFLOW_BASE_URL,
+        SILICONFLOW_DEFAULT_BASE_URL
+      ) || SILICONFLOW_DEFAULT_BASE_URL;
+    const isSf = baseURL.toLowerCase().includes("siliconflow");
+    const model = firstNonEmpty(
+      process.env.RULE_AGENT_MODEL,
+      isSf ? SILICONFLOW_RULE_AGENT_MODEL : SILICONFLOW_RULE_AGENT_MODEL
+    );
+    return {
+      apiKey: sfKey,
+      baseURL,
+      model,
+      extraParams: computeExtraParams(baseURL),
+    };
+  }
+
+  if (aiKey && !isPlaceholderKey(aiKey)) {
+    const rawBase = firstNonEmpty(process.env.RULE_AGENT_BASE_URL, process.env.AI_BASE_URL);
+    const provider = firstNonEmpty(process.env.AI_PROVIDER).toLowerCase();
+    const isSf = provider === "siliconflow" || rawBase.toLowerCase().includes("siliconflow");
+    const baseURL =
+      rawBase || (isSf ? SILICONFLOW_DEFAULT_BASE_URL : undefined);
+    const model = firstNonEmpty(
+      process.env.RULE_AGENT_MODEL,
+      isSf ? SILICONFLOW_RULE_AGENT_MODEL : firstNonEmpty(process.env.AI_MODEL, "gpt-4o")
+    );
+    return {
+      apiKey: aiKey,
+      baseURL,
+      model,
+      extraParams: computeExtraParams(baseURL),
+    };
+  }
+
+  if (deepseekKey && !isPlaceholderKey(deepseekKey)) {
+    const baseURL =
+      firstNonEmpty(process.env.RULE_AGENT_BASE_URL, process.env.DEEPSEEK_BASE_URL, DEEPSEEK_BASE_URL) ||
+      DEEPSEEK_BASE_URL;
+    const model = firstNonEmpty(process.env.RULE_AGENT_MODEL, DEEPSEEK_MODEL);
+    return {
+      apiKey: deepseekKey,
+      baseURL,
+      model,
+      extraParams: computeExtraParams(baseURL),
+    };
+  }
+
+  if (openaiKey && !isPlaceholderKey(openaiKey)) {
+    const baseURL =
+      firstNonEmpty(process.env.RULE_AGENT_BASE_URL, process.env.OPENAI_BASE_URL) || undefined;
+    const model = firstNonEmpty(process.env.RULE_AGENT_MODEL, process.env.OPENAI_MODEL, "gpt-4o");
+    return {
+      apiKey: openaiKey,
+      baseURL,
+      model,
+      extraParams: computeExtraParams(baseURL),
+    };
+  }
+
+  return null;
+}
 
 export function isRuleAgentConfigured(): boolean {
-  return apiKey.length > 0;
+  return resolveRuleAgentConfig() !== null;
 }
 
 /** 代码开关：RULE_AGENT_ENABLED=false/0/off 时，前端完全不显示规则助手入口，接口也拒绝 */
@@ -77,19 +198,24 @@ function prettifyReply(text: string): string {
     .replace(/」」/g, "」");
 }
 
-let client: OpenAI | null = null;
-function getClient(): OpenAI | null {
-  if (!isRuleAgentConfigured()) return null;
-  if (!client) {
-    client = new OpenAI({
-      apiKey,
-      baseURL,
-      // 规则助手是多步检索：单步卡住时不能让整次请求无限等待。
-      timeout: 45_000,
-      maxRetries: 0,
-    });
+let cachedClientEntry: { key: string; client: OpenAI } | null = null;
+function getClient(): { openai: OpenAI; config: RuleAgentLlmConfig } | null {
+  const config = resolveRuleAgentConfig();
+  if (!config) return null;
+  const cacheKey = `${config.apiKey}|${config.baseURL ?? ""}`;
+  if (!cachedClientEntry || cachedClientEntry.key !== cacheKey) {
+    cachedClientEntry = {
+      key: cacheKey,
+      client: new OpenAI({
+        apiKey: config.apiKey,
+        baseURL: config.baseURL,
+        // 规则助手是多步检索：单步卡住时不能让整次请求无限等待。
+        timeout: 45_000,
+        maxRetries: 0,
+      }),
+    };
   }
-  return client;
+  return { openai: cachedClientEntry.client, config };
 }
 
 /** ============================ 检索技能（game_skills.py 移植） ============================ */
@@ -356,19 +482,20 @@ const JUDGE_PROMPT =
   "只回答「相关」或「无关」两个词之一，不要任何解释。";
 
 async function judgeByModel(question: string, context: string): Promise<string> {
-  const openai = getClient();
-  if (!openai) throw new Error("LLM not configured");
+  const bundle = getClient();
+  if (!bundle) throw new Error("LLM not configured");
+  const { openai, config } = bundle;
   const userBlock =
     `【对话上下文】\n${context || "（暂无，这是本局第一句）"}\n\n【当前问题】\n${question}`;
   const resp = await openai.chat.completions.create(
     {
-      model: MODEL,
+      model: config.model,
       messages: [
         { role: "system", content: JUDGE_PROMPT },
         { role: "user", content: userBlock },
       ],
       temperature: 0, // 判定要稳定，不要发挥
-      ...NO_THINKING,
+      ...config.extraParams,
     } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
     { timeout: 30_000 }
   );
@@ -529,13 +656,14 @@ export async function runRuleAgentTurn(history: ChatTurn[], question: string): P
   }
   const safeQuestion = screen.question;
 
-  const openai = getClient();
-  if (!openai) {
+  const bundle = getClient();
+  if (!bundle) {
     return {
       relevant: false,
-      reply: "规则助手暂未配置 API 密钥，请联系管理员在服务端 .env 中配置 DEEPSEEK_API_KEY。",
+      reply: "规则助手暂未配置 API 密钥，请联系管理员在服务端 .env 中配置 SILICONFLOW_API_KEY。",
     };
   }
+  const { openai, config } = bundle;
 
   // ---- 第 1 步：相关性闸门（语义理解 + 实体核实；分类器误判时用游戏词兜底）----
   // 判定接口异常时放行到主循环：宁可让讲解员判断，也不要把游戏问题误判成「无关」。
@@ -587,7 +715,11 @@ export async function runRuleAgentTurn(history: ChatTurn[], question: string): P
     let response;
     try {
       response = await openai.chat.completions.create(
-        { model: MODEL, messages, ...NO_THINKING } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+        {
+          model: config.model,
+          messages,
+          ...config.extraParams,
+        } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
         { timeout: Math.min(45_000, remaining) }
       );
     } catch (e) {
