@@ -34,6 +34,7 @@ import { AdminSectionPerspectiveSelect } from "../components/admin/AdminSectionP
 import { AdminProjectAdjustPanel } from "../components/admin/AdminProjectAdjustPanel";
 import GameRoom from "../GameRoom";
 import { BuffDescText } from "../utils/buffDescEmphasis";
+import { AutoHostCountdown } from "../components/AutoHostCountdown";
 import { LabLivePanel } from "../admin/lab/LabLivePanel";
 import { stopLabRunApi } from "../admin/lab/labApi";
 
@@ -1393,20 +1394,40 @@ export const AdminView: React.FC<Props> = ({
               boxShadow: "0 0 30px rgba(168,85,247,0.15)",
             }}
           >
-            <h2
+            <div
               style={{
-                fontSize: "1.2rem",
-                fontWeight: 800,
-                color: "#c084fc",
-                marginBottom: "1rem",
                 display: "flex",
                 alignItems: "center",
-                gap: "0.45rem",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: "0.75rem",
+                marginBottom: "1rem",
               }}
             >
-              <GavelIcon size={22} decorative style={{ color: "inherit" }} />
-              拍卖控制台 · 第 {auctionRound} 场
-            </h2>
+              <h2
+                style={{
+                  fontSize: "1.2rem",
+                  fontWeight: 800,
+                  color: "#c084fc",
+                  margin: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.45rem",
+                }}
+              >
+                <GavelIcon size={22} decorative style={{ color: "inherit" }} />
+                拍卖控制台 · 第 {auctionRound} 场
+              </h2>
+              {(game.autoHostEnabled || game.autoHostNextActionAt != null) && (
+                <AutoHostCountdown
+                  at={game.autoHostNextActionAt}
+                  serverNow={game.serverNow}
+                  label={focusId ? (isLab ? "本拍倒计时" : "自动落槌 / 跳过") : "自动选出下一张"}
+                  showPrefix={!isLab}
+                  compact
+                />
+              )}
+            </div>
 
             <div
               style={{

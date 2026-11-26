@@ -278,6 +278,36 @@ export function applyLabAuctionWave(options: {
   return { anyAction, forcedSold };
 }
 
+export function settleLabAuctionLot(
+  game: GameState,
+  focus: string,
+  forcedSold: boolean
+): "forced_sold" | "sold" | "passed" {
+  game.autoHostNextActionAt = undefined;
+  if (forcedSold) {
+    game.auctionFocusCardId = undefined;
+    game.auctionFocusSetAt = undefined;
+    return "forced_sold";
+  }
+  if (game.auctionFocusCardId === focus) {
+    const leading = getLeadingBidOnFocus(game);
+    if (leading) {
+      const hammered = hammerAuctionLot(game);
+      if (hammered.ok) {
+        game.auctionFocusCardId = undefined;
+        game.auctionFocusSetAt = undefined;
+        return "sold";
+      }
+    }
+    voidOpenBidsOnCard(game, focus, "void_passed");
+    markAuctionCardPassed(game, focus);
+    game.logs.push(`⏭️ 实验室拍卖跳过 [${focus}]（无人出价或最高出价者无法支付）`);
+  }
+  game.auctionFocusCardId = undefined;
+  game.auctionFocusSetAt = undefined;
+  return "passed";
+}
+
 function getPromptHash(): string {
   if (!lastPromptHash) lastPromptHash = computeLabPromptHash();
   return lastPromptHash;
@@ -925,10 +955,12 @@ export async function askAgentWithValidation<T>(options: {
   let totalTokens = 0;
   let totalLatencyMs = 0;
   let fastRetryNoThinking = false;
+  let hadTransportRetry = false;
+  let maxAttempts = 2;
 
   setTurnStatus(game, player, "thinking", io);
   try {
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       ensureNotAborted(signal);
       if (callSignal?.aborted) {
         throw new LabCallExpiredError(`${player.name} 在 ${label} 超出本拍时限`);
@@ -952,7 +984,7 @@ export async function askAgentWithValidation<T>(options: {
             ? {
                 config: seatCfg,
                 timeoutMs: 15_000,
-                maxRetries: 0,
+                maxRetries: 1,
                 maxOutputTokens: actionBudget.maxOutputTokens,
                 disableThinking: true,
                 label: `${player.name}:${label}:fast`,
@@ -961,7 +993,7 @@ export async function askAgentWithValidation<T>(options: {
             : {
                 config: seatCfg,
                 timeoutMs: actionBudget.timeoutMs,
-                maxRetries: manifest.maxRetries,
+                maxRetries: 0,
                 maxOutputTokens: actionBudget.maxOutputTokens,
                 thinkingBudget: actionBudget.thinkingBudget,
                 label: `${player.name}:${label}`,
@@ -992,8 +1024,13 @@ export async function askAgentWithValidation<T>(options: {
         const isTimeoutLike = /timeout|timed out|aborted|empty response|terminated/i.test(
           res.error ?? ""
         );
-        if (attempt === 1 && isTimeoutLike && !manifest.mock) {
-          fastRetryNoThinking = true;
+        const isTransientNet = /429|500|502|503|504|ECONNRESET|ETIMEDOUT|fetch failed|network|socket|hang up/i.test(
+          res.error ?? ""
+        );
+        if (attempt === 1 && !manifest.mock && !hadTransportRetry && (isTimeoutLike || isTransientNet)) {
+          if (isTimeoutLike) fastRetryNoThinking = true;
+          hadTransportRetry = true;
+          maxAttempts = 3;
           continue;
         }
         throw new LabFatalError(
@@ -1013,11 +1050,10 @@ export async function askAgentWithValidation<T>(options: {
           latencyMs: totalLatencyMs,
         };
       }
-      fastRetryNoThinking = false;
       prompt = `${userPrompt}\n\n注意：上一次输出缺少必要字段或取值不合法，请严格按照要求输出单个合法 JSON 对象。`;
     }
     throw new LabFatalError(
-      `${player.name}（${player.agentModel}）在 ${label} 连续 2 次输出语义校验失败`
+      `${player.name}（${player.agentModel}）在 ${label} 连续输出语义校验失败`
     );
   } finally {
     signal.removeEventListener("abort", onRunAbort);
@@ -1552,14 +1588,16 @@ async function runSingleLabGame(options: {
       }
 
       if (game.phase === "AUCTION") {
+        let lastFocus: string | undefined;
         while ((game.phase as string) === "AUCTION") {
           ensureNotAborted(signal);
-          const focus = findNextAutoAuctionCard(game);
+          const focus = findNextAutoAuctionCard(game, lastFocus);
           if (!focus) {
             game.autoHostNextActionAt = undefined;
             endAuctionSession(game);
             break;
           }
+          lastFocus = focus;
           const lotStartedAt = Date.now();
           const lotHardDeadline = lotStartedAt + LAB_AUCTION_LOT_MAX_MS;
           game.auctionFocusCardId = focus;
@@ -1654,16 +1692,7 @@ async function runSingleLabGame(options: {
             clearTimeout(lotTimer);
           }
 
-          game.autoHostNextActionAt = undefined;
-          if (!forcedSold && game.auctionFocusCardId === focus) {
-            const leading = getLeadingBidOnFocus(game);
-            if (leading) {
-              hammerAuctionLot(game);
-            } else {
-              voidOpenBidsOnCard(game, focus, "void_passed");
-              markAuctionCardPassed(game, focus);
-            }
-          }
+          settleLabAuctionLot(game, focus, forcedSold);
           if (io) broadcastUpdate(io, game);
           await stepPauseMs(400, 20);
         }

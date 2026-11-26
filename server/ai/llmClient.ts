@@ -370,13 +370,14 @@ export async function askAiJson(
   const label = options.label ?? "decision";
   const errors: string[] = [];
   let omitSiliconFlowThinkingParams = false;
+  let omitJsonMode = false;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (options.signal?.aborted) {
       errors.push("aborted");
       break;
     }
-    const useJsonMode = attempt === 0;
+    const useJsonMode = attempt === 0 && !omitJsonMode;
     try {
       const { raw, usage } = await requestOnce(cfg, system, user, {
         timeoutMs,
@@ -410,6 +411,12 @@ export async function askAiJson(
       // SiliconFlow 个别模型不支持 enable_thinking/thinking_budget 时，自动去掉这两个参数立即重试一次。
       if (isSiliconFlow && !omitSiliconFlowThinkingParams && isThinkingParamBadRequest(error)) {
         omitSiliconFlowThinkingParams = true;
+        attempt -= 1;
+        continue;
+      }
+      // 个别兼容端连 response_format: json_object 也不支持（400），去掉后立即重试一次。
+      if (!omitJsonMode && useJsonMode && isThinkingParamBadRequest(error)) {
+        omitJsonMode = true;
         attempt -= 1;
         continue;
       }

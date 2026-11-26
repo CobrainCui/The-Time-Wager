@@ -4,7 +4,11 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import type { AiModelConfig } from "../ai/aiConfig.js";
 import { askAiJson, isReasoningModel, isSiliconFlowConfig } from "../ai/llmClient.js";
-import { findNextAutoAuctionCard, getLeadingBidOnFocus } from "../logic/auctionCards.js";
+import {
+  findNextAutoAuctionCard,
+  getLeadingBidOnFocus,
+  placeAuctionBid,
+} from "../logic/auctionCards.js";
 import {
   applyLabAuctionWave,
   askAgentWithValidation,
@@ -14,6 +18,7 @@ import {
   LAB_AUCTION_LOT_MAX_MS,
   LAB_AUCTION_ROUND_MS,
   LabCallExpiredError,
+  settleLabAuctionLot,
 } from "./labRunner.js";
 import { DEFAULT_LAB_SIX_SEAT_MODELS } from "./siliconflowModels.js";
 import type { LabRunManifest } from "./labTypes.js";
@@ -245,6 +250,56 @@ test("askAiJson 对硅基流动推理模型启用流式保活与 thinking_budget
   );
   assert.equal(fastBodies[0].enable_thinking, false);
   assert.notEqual(fastBodies[0].stream, true);
+
+  // Case D: 若兼容端先后拒收 thinking 参数和 response_format: json_object（均返回 400），自动逐层降级成功
+  const fallbackBodies: Array<Record<string, unknown>> = [];
+  await withMockChatServer(
+    (body, idx, res) => {
+      fallbackBodies.push(body);
+      if (idx === 1 && ("thinking_budget" in body || "enable_thinking" in body)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "400 Invalid parameter: thinking_budget" } }));
+        return;
+      }
+      if ("response_format" in body) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "400 response_format json_object is not supported" } }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8" });
+      res.write(
+        `data: ${JSON.stringify({
+          id: "c1",
+          object: "chat.completion.chunk",
+          choices: [{ index: 0, delta: { content: '{"recovered":true}' } }],
+        })}\n\n`
+      );
+      res.end("data: [DONE]\n\n");
+    },
+    async (baseURL) => {
+      const cfg: AiModelConfig = {
+        apiKey: "test-key",
+        baseURL,
+        model: "Qwen/Qwen3-32B",
+        provider: "siliconflow",
+        source: "shared",
+      };
+      const result = await askAiJson("sys", "usr", {
+        config: cfg,
+        thinkingBudget: 384,
+        maxOutputTokens: 900,
+        timeoutMs: 8_000,
+        maxRetries: 0,
+      });
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.data, { recovered: true });
+    }
+  );
+  assert.equal(fallbackBodies.length, 3);
+  assert.equal("thinking_budget" in fallbackBodies[0], true);
+  assert.equal("response_format" in fallbackBodies[1], true);
+  assert.equal("response_format" in fallbackBodies[2], false);
+  assert.equal("thinking_budget" in fallbackBodies[2], false);
 });
 
 test("askAgentWithValidation 分场景预算及超时降思考快速重试、本拍过期不炸局", async () => {
@@ -281,9 +336,13 @@ test("askAgentWithValidation 分场景预算及超时降思考快速重试、本
   };
   const runCtrl = new AbortController();
 
-  // Case A: 第 1 次思考超时 -> 第 2 次自动切 disableThinking: true 重试成功
-  const seenOpts: Array<{ disableThinking?: boolean; thinkingBudget?: number; timeoutMs?: number }> =
-    [];
+  // Case A: 第 1 次思考只传 maxRetries=0，超时后第 2 次自动切 disableThinking: true（maxRetries=1）重试成功
+  const seenOpts: Array<{
+    disableThinking?: boolean;
+    thinkingBudget?: number;
+    timeoutMs?: number;
+    maxRetries?: number;
+  }> = [];
   const res = await askAgentWithValidation<{ action: string }>({
     game,
     player: game.players[0],
@@ -303,6 +362,7 @@ test("askAgentWithValidation 分场景预算及超时降思考快速重试、本
         disableThinking: opts.disableThinking,
         thinkingBudget: opts.thinkingBudget,
         timeoutMs: opts.timeoutMs,
+        maxRetries: opts.maxRetries,
       });
       if (seenOpts.length === 1) {
         return {
@@ -327,11 +387,45 @@ test("askAgentWithValidation 分场景预算及超时降思考快速重试、本
   assert.equal(seenOpts.length, 2);
   assert.equal(seenOpts[0].thinkingBudget, 384);
   assert.equal(seenOpts[0].timeoutMs, 15_000);
+  assert.equal(seenOpts[0].maxRetries, 0);
   assert.equal(seenOpts[1].disableThinking, true);
   assert.equal(seenOpts[1].thinkingBudget, undefined);
   assert.equal(seenOpts[1].timeoutMs, 15_000);
+  assert.equal(seenOpts[1].maxRetries, 1);
 
-  // Case B: 单拍截止 callSignal 已触发时抛出 LabCallExpiredError，而非 LabFatalError
+  // Case B: 第 1 次超时 -> 第 2 次快速重试 JSON 缺字段 -> 第 3 次继续 disableThinking: true 纠正成功
+  const corrOpts: Array<{ disableThinking?: boolean; maxRetries?: number }> = [];
+  const res3 = await askAgentWithValidation<{ action: string }>({
+    game,
+    player: game.players[2],
+    manifest,
+    sharedConfig,
+    label: "auction-corr",
+    userPrompt: "pick",
+    validate: (d) =>
+      d && typeof d === "object" && (d as { action?: unknown }).action === "pass"
+        ? { action: "pass" }
+        : null,
+    signal: runCtrl.signal,
+    io: null,
+    budgetKind: "auction",
+    llmCaller: async (_sys, _usr, opts = {}) => {
+      corrOpts.push({ disableThinking: opts.disableThinking, maxRetries: opts.maxRetries });
+      if (corrOpts.length === 1) {
+        return { ok: false, data: null, raw: "", latencyMs: 15_000, error: "timeout 15000ms" };
+      }
+      if (corrOpts.length === 2) {
+        return { ok: true, data: { wrong: true }, raw: '{"wrong":true}', latencyMs: 400 };
+      }
+      return { ok: true, data: { action: "pass" }, raw: '{"action":"pass"}', latencyMs: 350 };
+    },
+  });
+  assert.equal(res3.value.action, "pass");
+  assert.equal(corrOpts.length, 3);
+  assert.equal(corrOpts[1].disableThinking, true);
+  assert.equal(corrOpts[2].disableThinking, true);
+
+  // Case C: 单拍截止 callSignal 已触发时抛出 LabCallExpiredError，而非 LabFatalError
   const lotCtrl = new AbortController();
   lotCtrl.abort();
   await assert.rejects(
@@ -428,4 +522,40 @@ test("实验室拍卖常量与同波次严禁代抬价、过期截断校验", ()
   });
   assert.equal(staleFocusWave.anyAction, false);
   assert.equal(game.auctionBids?.length ?? 0, 1);
+});
+
+test("settleLabAuctionLot 在领先出价者付不起时流拍跳过并顺延下一张卡、不死循环", () => {
+  const manifest = makeManifest();
+  const game = createSeededLabGame({
+    roomId: "lab-settle-unpayable",
+    manifest,
+    gameIndex: 0,
+    sessionOrdinal: 0,
+    seed: 13579,
+  });
+  game.phase = "AUCTION";
+  game.players[0].wealth = 100;
+
+  const focus = findNextAutoAuctionCard(game);
+  assert.ok(focus);
+  game.auctionFocusCardId = focus;
+  game.auctionFocusSetAt = 1000;
+  game.autoHostNextActionAt = 11_000;
+
+  const placed = placeAuctionBid(game, game.players[0].id, 50);
+  assert.equal(placed.ok, true);
+
+  // 模拟领先者后续因其他扣款导致账面只剩 10，无法支付已出价的 50
+  game.players[0].wealth = 10;
+
+  const outcome = settleLabAuctionLot(game, focus, false);
+  assert.equal(outcome, "passed");
+  assert.equal(game.autoHostNextActionAt, undefined);
+  assert.equal(game.auctionFocusCardId, undefined);
+  assert.equal((game.auctionPassedCardIds ?? []).includes(focus), true);
+  assert.equal(game.auctionBids?.[0]?.status, "void_passed");
+
+  const next = findNextAutoAuctionCard(game, focus);
+  assert.ok(next);
+  assert.notEqual(next, focus);
 });
