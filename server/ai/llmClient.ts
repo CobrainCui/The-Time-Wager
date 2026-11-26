@@ -41,6 +41,8 @@ export interface AiLlmResult {
   ok: boolean;
   data: unknown | null;
   raw: string;
+  /** 模型实际返回的原始思维链 / 内心推演全文（不包含敏感信息） */
+  rawThinking?: string;
   usage?: AiLlmUsage;
   latencyMs: number;
   error?: string;
@@ -71,7 +73,7 @@ export function isSiliconFlowConfig(cfg: AiModelConfig): boolean {
   return (
     /siliconflow/i.test(cfg.provider) ||
     /siliconflow\./i.test(cfg.baseURL ?? "") ||
-    /^(?:Pro\/)?(?:deepseek-ai|Qwen|zai-org|THUDM|moonshotai|MiniMaxAI|stepfun-ai|tencent)\//i.test(
+    /^(?:Pro\/)?(?:deepseek-ai|Qwen|zai-org|THUDM|moonshotai|MiniMaxAI|stepfun-ai|tencent|meituan-longcat|inclusionAI|XingChenAGI)\//i.test(
       cfg.model
     )
   );
@@ -81,9 +83,22 @@ export function isSiliconFlowConfig(cfg: AiModelConfig): boolean {
  * 判断模型是否属于推理 / 思考链模型（开启思考时需流式保活，避免长推理断连）。
  */
 export function isReasoningModel(cfg: AiModelConfig): boolean {
-  return /deepseek|qwen3|qwq|glm-z1|glm-4\.5|glm-5|kimi-k2|kimi-k3|minimax-m|step-?3|hy[34]|hunyuan-a13b/i.test(
+  return /deepseek|qwen3|qwq|glm-z1|glm-4\.5|glm-5|kimi-k2|kimi-k3|minimax-m|step-?3|hy[34]|hunyuan-a13b|longcat|ling-flash|xing4/i.test(
     cfg.model
   );
+}
+
+/** 从文本正文中提取 `<think>...</think>` 段落，避免干扰 JSON 解析同时保留原始思考原文。 */
+export function extractThinkTags(text: string): { content: string; think: string } {
+  const thinkParts: string[] = [];
+  const cleaned = text
+    .replace(/<think>([\s\S]*?)<\/think>/gi, (_m, inner: string) => {
+      const t = inner.trim();
+      if (t) thinkParts.push(t);
+      return "";
+    })
+    .trim();
+  return { content: cleaned, think: thinkParts.join("\n\n").trim() };
 }
 
 function stripJsonFence(text: string): string {
@@ -157,8 +172,8 @@ function sleep(ms: number): Promise<void> {
 
 function isRetryable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  // 推理模型偶发「只返回思维链、content 为空」或长思考期间 TCP 被对端断开（terminated）；必须重试。
-  return /timeout|timed out|terminated|hang up|socket|aborted|ECONNABORTED|EPIPE|429|500|502|503|504|ECONNRESET|ETIMEDOUT|fetch failed|network|empty response/i.test(
+  // 推理模型偶发「只返回思维链、content 为空」或长思考期间 TCP 被对端断开（terminated）/ 并发握手 Connection error；必须重试。
+  return /timeout|timed out|terminated|connection error|hang up|socket|aborted|ECONNABORTED|EPIPE|429|500|502|503|504|ECONNRESET|ETIMEDOUT|fetch failed|network|empty response/i.test(
     message
   );
 }
@@ -190,7 +205,7 @@ async function requestOnce(
     omitSiliconFlowThinkingParams?: boolean;
     externalSignal?: AbortSignal;
   }
-): Promise<{ raw: string; usage?: AiLlmUsage }> {
+): Promise<{ raw: string; rawThinking?: string; usage?: AiLlmUsage }> {
   const startedAt = Date.now();
   if (options.externalSignal?.aborted) {
     throw new Error("aborted");
@@ -261,7 +276,7 @@ async function requestOnce(
   };
 
   if (useStreaming) {
-    const consumeStream = async (): Promise<{ raw: string; usage?: AiLlmUsage }> => {
+    const consumeStream = async (): Promise<{ raw: string; rawThinking?: string; usage?: AiLlmUsage }> => {
       const stream = (await getClient(cfg).chat.completions.create(
         {
           ...baseBody,
@@ -271,14 +286,15 @@ async function requestOnce(
         { timeout: options.timeoutMs, signal: controller.signal }
       )) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
       let raw = "";
+      let rawThinking = "";
       let usage: AiLlmUsage | undefined;
       for await (const chunk of stream) {
         const delta = chunk.choices?.[0]?.delta as
-          | { content?: string | null; reasoning_content?: string | null }
+          | { content?: string | null; reasoning_content?: string | null; reasoning?: string | null }
           | undefined;
-        // 读取 reasoning_content 以确保长推理流在传输期保持活跃，不拼入最终 JSON。
-        const reasoningPiece = delta?.reasoning_content ?? "";
-        void reasoningPiece;
+        // 完整采集 reasoning_content / reasoning，既保持长推理流活跃，又保留原始思考过程
+        const reasoningPiece = delta?.reasoning_content ?? delta?.reasoning ?? "";
+        if (reasoningPiece) rawThinking += reasoningPiece;
         const piece = delta?.content ?? "";
         if (piece) raw += piece;
         if (chunk.usage) {
@@ -289,8 +305,11 @@ async function requestOnce(
           };
         }
       }
-      if (!raw.trim()) throw new Error("empty response");
-      return { raw, usage };
+      const extracted = extractThinkTags(raw);
+      const cleanRaw = extracted.content || raw;
+      const combinedThinking = [rawThinking.trim(), extracted.think].filter(Boolean).join("\n\n").trim();
+      if (!cleanRaw.trim()) throw new Error("empty response");
+      return { raw: cleanRaw, rawThinking: combinedThinking || undefined, usage };
     };
     try {
       return await Promise.race([consumeStream(), timeout]);
@@ -311,7 +330,14 @@ async function requestOnce(
     cleanupHooks();
   }
 
-  const raw = response.choices?.[0]?.message?.content ?? "";
+  const msg = response.choices?.[0]?.message as
+    | { content?: string | null; reasoning_content?: string | null; reasoning?: string | null }
+    | undefined;
+  const rawMessageContent = msg?.content ?? "";
+  const msgThinking = (msg?.reasoning_content ?? msg?.reasoning ?? "").trim();
+  const extracted = extractThinkTags(rawMessageContent);
+  const raw = extracted.content || rawMessageContent;
+  const combinedThinking = [msgThinking, extracted.think].filter(Boolean).join("\n\n").trim();
   if (!raw.trim()) throw new Error("empty response");
   const usage = response.usage
     ? {
@@ -322,7 +348,7 @@ async function requestOnce(
     : undefined;
   // latencyMs 由调用方用总耗时记录；这里不返回，避免误解
   void startedAt;
-  return { raw, usage };
+  return { raw, rawThinking: combinedThinking || undefined, usage };
 }
 
 /**
@@ -379,7 +405,7 @@ export async function askAiJson(
     }
     const useJsonMode = attempt === 0 && !omitJsonMode;
     try {
-      const { raw, usage } = await requestOnce(cfg, system, user, {
+      const { raw, rawThinking, usage } = await requestOnce(cfg, system, user, {
         timeoutMs,
         maxOutputTokens,
         useJsonMode,
@@ -399,6 +425,7 @@ export async function askAiJson(
         ok: true,
         data,
         raw,
+        rawThinking,
         usage,
         latencyMs: Date.now() - startedAt,
       };

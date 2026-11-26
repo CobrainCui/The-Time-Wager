@@ -274,10 +274,15 @@ export function askMockLabLlm(system: string, user: string): AiLlmResult {
   const raw = JSON.stringify(payload);
   const promptTokens = Math.ceil((system.length + user.length) / 4);
   const completionTokens = Math.ceil(raw.length / 4);
+  const reasoningSummary =
+    payload && typeof payload === "object" && "reasoning" in payload
+      ? String((payload as { reasoning?: unknown }).reasoning ?? "")
+      : "";
   return {
     ok: true,
     data: payload,
     raw,
+    rawThinking: `【模拟推演 · ${agentIndex}号位】先评估当前场内各项目容量与对手公开发言，再权衡本轮最优出牌与稳健分配方案。${reasoningSummary ? `（结论：${reasoningSummary}）` : ""}`,
     usage: {
       promptTokens,
       completionTokens,

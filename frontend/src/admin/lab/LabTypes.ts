@@ -1,5 +1,7 @@
 export type LabRunStatus = "running" | "completed" | "failed" | "stopped";
 export type LabSessionStatus = "completed" | "failed" | "stopped";
+export type LabInteractionMode = "guided_two_step" | "free_two_step" | "free_one_step";
+export type LabThinkingMode = "fast" | "moderate" | "deep";
 
 export interface LabLiveStatus {
   running: boolean;
@@ -56,6 +58,7 @@ export interface LabConfigSummary {
   maxTokenBudgetPerAgent: number;
   promptVersion: string;
   promptHash: string;
+  defaultBehaviorPrompts?: Record<LabInteractionMode, string>;
   activeRun: LabLiveStatus;
 }
 
@@ -91,6 +94,16 @@ export interface LabRunManifest {
   autoSocialScore: boolean;
   mock: boolean;
   roomId: string;
+  interactionMode?: LabInteractionMode;
+  thinkingMode?: LabThinkingMode;
+  publicChatEnabled?: boolean;
+  privateChatEnabled?: boolean;
+  customGroupsEnabled?: boolean;
+  transferEnabled?: boolean;
+  auctionEnabled?: boolean;
+  buffCardsEnabled?: boolean;
+  coffeeEnabled?: boolean;
+  customSystemPrompt?: string;
 }
 
 export interface LabSessionQc {
@@ -240,9 +253,27 @@ export interface LabSessionDetail extends LabSessionListItem {
       kind: string;
       model?: string;
       reasoning: string;
+      rawThinking?: string;
       action: unknown;
       totalTokens?: number;
       latencyMs?: number;
+    }>;
+    projects?: Array<{
+      id: number;
+      name: string;
+      type: string;
+      maxEnergy?: number;
+    }>;
+    transactions?: Array<{
+      id: string;
+      fromId: string;
+      fromName: string;
+      toId: string;
+      toName: string;
+      amount: number;
+      note: string;
+      status: string;
+      timestamp: number;
     }>;
     metrics?: {
       game: {

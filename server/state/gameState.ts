@@ -371,6 +371,8 @@ export interface Player {
   aiDifficulty?: "easy" | "normal" | "hard";
   /** AI 座位号 1..5：决定使用哪一组 AI_PLAYER_<n>_* 模型配置 */
   aiSlot?: number;
+  /** 管理员在网页端为该座位指定的模型覆盖（不含 Key） */
+  aiModelOverride?: string;
   /** 管理端展示用：该 AI 实际使用的模型名（不含 Key） */
   aiModelLabel?: string;
   // === 6AI 实验室字段 ===
@@ -405,6 +407,9 @@ export interface LabPrediction {
   timestamp: number;
 }
 
+export type LabInteractionMode = "guided_two_step" | "free_two_step" | "free_one_step";
+export type LabThinkingMode = "fast" | "moderate" | "deep";
+
 export interface LabAgentDecision {
   id: string;
   timestamp: number;
@@ -417,6 +422,8 @@ export interface LabAgentDecision {
   kind: "prediction" | "investment" | "auction" | "transaction" | "chat" | "community_name";
   model?: string;
   reasoning: string;
+  /** 模型实际吐出的原始思考/思维链全文（如有） */
+  rawThinking?: string;
   action: unknown;
   promptTokens?: number;
   completionTokens?: number;
@@ -440,6 +447,16 @@ export interface LabRoomMeta {
   autoSocialScore: boolean;
   mock: boolean;
   tokenBudgetPerAgent: number;
+  interactionMode?: LabInteractionMode;
+  thinkingMode?: LabThinkingMode;
+  publicChatEnabled?: boolean;
+  privateChatEnabled?: boolean;
+  customGroupsEnabled?: boolean;
+  transferEnabled?: boolean;
+  auctionEnabled?: boolean;
+  buffCardsEnabled?: boolean;
+  coffeeEnabled?: boolean;
+  customSystemPrompt?: string;
   promptVersion: string;
   promptHash: string;
   gitCommit: string | null;
@@ -643,6 +660,14 @@ export interface GameState {
   aiFailures?: Record<string, AiAgentFailure>;
   /** 投资倒计时是否因 AI 故障被系统暂停（管理员恢复后自动继续） */
   aiDeadlinePaused?: boolean;
+  /** 产品版 AI 决策内心戏日志（仅管理端上帝视图可见） */
+  aiDecisions?: ProductAiDecision[];
+  /** 产品版 AI 本局累计 token 消耗（仅管理端上帝视图可见） */
+  aiTokenUsage?: Record<string, number>;
+  /** 本房间每 AI 每局 token 上限（0 表示不限，未设置时沿用 AI_CONFIG） */
+  aiTokenBudgetPerGame?: number;
+  /** 投资开场谈判窗口截止时间戳（仅管理端上帝视图可见） */
+  aiOpeningUntil?: number;
 
   // === 6AI 实验室隔离标记与运行数据 ===
   isLabExperiment?: boolean;
@@ -652,6 +677,32 @@ export interface GameState {
   labDirectMessages?: LabDirectMessage[];
   labAgentDecisions?: LabAgentDecision[];
   labTokenUsage?: Record<string, number>;
+}
+
+export interface ProductAiDecision {
+  id: string;
+  timestamp: number;
+  phase: Phase;
+  era: number;
+  roundInEra: number;
+  globalRound: number;
+  playerId: string;
+  playerName: string;
+  kind:
+    | "investment"
+    | "auction"
+    | "transfer"
+    | "dm_reply"
+    | "group_chat"
+    | "group_welcome"
+    | "opening_chat"
+    | "community_name"
+    | "unlock_reinvest";
+  model?: string;
+  reasoning: string;
+  summary?: string;
+  totalTokens?: number;
+  latencyMs?: number;
 }
 
 export interface AiAgentFailure {
@@ -706,6 +757,8 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
     publicFeed: [],
     aiTurnStatuses: {},
     aiChatStatuses: {},
+    aiDecisions: [],
+    aiTokenUsage: {},
 
     investmentEndsAt: undefined,
     investmentTimerPausedAt: undefined,
@@ -722,7 +775,7 @@ export function createInitialGame(roomId: string, _playerNames: string[]): GameS
 function freshPlayerFromIdentity(
   meta: Pick<
     Player,
-    "id" | "name" | "socketId" | "reconnectToken" | "connected" | "isAI" | "aiPersona" | "aiDifficulty" | "aiSlot" | "aiModelLabel"
+    "id" | "name" | "socketId" | "reconnectToken" | "connected" | "isAI" | "aiPersona" | "aiDifficulty" | "aiSlot" | "aiModelOverride" | "aiModelLabel"
   >
 ): Player {
   return {
@@ -735,6 +788,7 @@ function freshPlayerFromIdentity(
     aiPersona: meta.aiPersona,
     aiDifficulty: meta.aiDifficulty,
     aiSlot: meta.aiSlot,
+    aiModelOverride: meta.aiModelOverride,
     aiModelLabel: meta.aiModelLabel,
     ready: false,
     energy: 15,
@@ -770,6 +824,7 @@ export function resetGameSession(game: GameState): void {
     aiPersona: p.aiPersona,
     aiDifficulty: p.aiDifficulty,
     aiSlot: p.aiSlot,
+    aiModelOverride: p.aiModelOverride,
     aiModelLabel: p.aiModelLabel,
   }));
 
@@ -786,6 +841,9 @@ export function resetGameSession(game: GameState): void {
   game.groupMessages = fresh.groupMessages;
   game.aiFailures = {};
   game.aiDeadlinePaused = false;
+  game.aiDecisions = [];
+  game.aiTokenUsage = {};
+  game.aiOpeningUntil = undefined;
   // 新一局重建「全场」频道（群聊开启时），避免重置后聊天入口消失
   syncChatGroupsOnRosterChange(game);
   game.currentEra = fresh.currentEra;

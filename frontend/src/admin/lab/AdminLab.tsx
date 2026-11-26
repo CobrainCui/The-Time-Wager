@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { uiRem } from "../../utils/typography";
+import { HelpTooltip } from "./HelpTooltip";
 import {
   deleteLabRunApi,
   downloadLabFile,
@@ -13,17 +14,22 @@ import {
 import { LabSessionDrawer } from "./LabSessionDrawer";
 import type {
   LabConfigSummary,
+  LabInteractionMode,
   LabLiveStatus,
   LabPreflightResult,
   LabRunsResponse,
   LabRunWithSessions,
   LabSessionListItem,
+  LabThinkingMode,
 } from "./LabTypes";
 
 interface Props {
   onBack: () => void;
   onSpectateLabRoom: (roomId: string) => void;
+  onOpenSession?: (session: LabSessionListItem) => void;
 }
+
+type ShortcutPresetKey = "six_models" | "same_model" | "pure_rules" | "smoke" | "custom";
 
 const PHASE_NAMES: Record<string, string> = {
   ROOM_WAITING: "等候开局",
@@ -34,6 +40,51 @@ const PHASE_NAMES: Record<string, string> = {
   AUCTION: "拍卖会",
   COMMUNITY_NAMING: "社区命名",
   GAME_OVER: "游戏结束",
+};
+
+const FALLBACK_PROMPTS: Record<LabInteractionMode, string> = {
+  guided_two_step: [
+    "你是《光阴对弈（The Time Gambit）》中的一名玩家。",
+    "你的编号是 {seatName}（第 {seatIndex} 号座位）。你与另外 5 名玩家共 6 人同桌。",
+    "游戏共 4 个时代 × 2 轮 = 8 个全局轮，时代 2、3、4 开始前各有 1 场拍卖。",
+    "你的唯一目标：在游戏结束时拥有尽可能高的财富，并争取第一名。",
+    "",
+    "本局不要求你扮演任何角色，也没有给你预设人格、性格或风险偏好。",
+    "请只依据规则、当前观察、你自己的记忆和其他玩家的行为做决策。",
+    "你可以合作、竞争、谈判、转账、拉群、使用道具卡；所有承诺都只是语言，没有强制约束。",
+    "",
+    "## 沟通与博弈引导",
+    "- 本局是 6 名玩家连续 8 轮的互动博弈：语气生硬呛人、居高临下或放狠话，往往只会引起其他玩家戒备甚至联手针对你。",
+    "- 无论你想合作分工、拉人建群、试探口风还是婉转还价，都请用自然平和、有商有量、留有余地的牌桌口吻表达，同时在心里独立算账、维护自己的最优利益。",
+  ].join("\n"),
+  free_two_step: [
+    "你是《光阴对弈（The Time Gambit）》中的一名玩家。",
+    "你的编号是 {seatName}（第 {seatIndex} 号座位）。你与另外 5 名玩家共 6 人同桌。",
+    "游戏共 4 个时代 × 2 轮 = 8 个全局轮，时代 2、3、4 开始前各有 1 场拍卖。",
+    "你的唯一目标：在游戏结束时拥有尽可能高的财富，并争取第一名。",
+    "",
+    "本局不要求你扮演任何角色，也没有给你预设人格、性格或风险偏好或说话口吻。",
+    "请只依据规则、当前观察、你自己的记忆和其他玩家的行为自主决策。",
+    "每一轮在正式投资前会有一次独立沟通窗口；你是坦诚合作、虚实试探、保持沉默还是强势博弈，语气和策略完全由你自己决定。所有口头承诺都没有强制约束。",
+  ].join("\n"),
+  free_one_step: [
+    "你是《光阴对弈（The Time Gambit）》中的一名玩家。",
+    "你的编号是 {seatName}（第 {seatIndex} 号座位）。你与另外 5 名玩家共 6 人同桌。",
+    "游戏共 4 个时代 × 2 轮 = 8 个全局轮，时代 2、3、4 开始前各有 1 场拍卖。",
+    "你的唯一目标：在游戏结束时拥有尽可能高的财富，并争取第一名。",
+    "",
+    "本局不要求你扮演任何角色，也没有给你预设人格、性格或风险偏好或固定说话口吻。",
+    "请只依据规则、当前观察、你自己的记忆和其他玩家的行为自由发挥。",
+    "每轮由你一步自主决定是否发言（公聊、私聊或拉群）、是否转账或使用道具以及如何投资，所有策略和表达方式完全由你自己决定。所有口头承诺都没有强制约束。",
+  ].join("\n"),
+};
+
+const GOLD_SELECTED_STYLE: React.CSSProperties = {
+  border: "1.5px solid #fbbf24",
+  background: "rgba(251,191,36,0.22)",
+  color: "#fef08a",
+  boxShadow: "0 0 12px rgba(251,191,36,0.24)",
+  fontWeight: 800,
 };
 
 function formatDateTime(ts: number | string | null | undefined): string {
@@ -81,7 +132,7 @@ function runStatusBadge(run: LabRunWithSessions): { label: string; bg: string; c
   return { label: "失败/作废", bg: "rgba(239,68,68,0.18)", color: "#fca5a5" };
 }
 
-export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
+export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom, onOpenSession }) => {
   const [config, setConfig] = useState<LabConfigSummary | null>(null);
   const [liveStatus, setLiveStatus] = useState<LabLiveStatus | null>(null);
   const [runsData, setRunsData] = useState<LabRunsResponse | null>(null);
@@ -89,16 +140,37 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
   const [error, setError] = useState<string | null>(null);
 
   // 新实验表单
-  const [condition, setCondition] = useState("C1");
+  const [activePreset, setActivePreset] = useState<ShortcutPresetKey>("six_models");
+  const [condition, setCondition] = useState("6模型混战");
   const [runName, setRunName] = useState("");
   const [notes, setNotes] = useState("");
   const [games, setGames] = useState(1);
   const [seedBase, setSeedBase] = useState(20261104);
-  const [chatEnabled, setChatEnabled] = useState(true);
+
+  // 第一类：AI 思考与沟通流程
+  const [interactionMode, setInteractionMode] = useState<LabInteractionMode>("guided_two_step");
+  const [thinkingMode, setThinkingMode] = useState<LabThinkingMode>("moderate");
   const [memoryEnabled, setMemoryEnabled] = useState(true);
+
+  // 第二类：玩法完整度
+  const [publicChatEnabled, setPublicChatEnabled] = useState(true);
+  const [privateChatEnabled, setPrivateChatEnabled] = useState(true);
+  const [customGroupsEnabled, setCustomGroupsEnabled] = useState(true);
+  const [transferEnabled, setTransferEnabled] = useState(true);
+  const [auctionEnabled, setAuctionEnabled] = useState(true);
+  const [buffCardsEnabled, setBuffCardsEnabled] = useState(true);
+  const [coffeeEnabled, setCoffeeEnabled] = useState(true);
+
+  // 第三类：评测与记录
   const [predictionEnabled, setPredictionEnabled] = useState(true);
   const [autoSocialScore, setAutoSocialScore] = useState(true);
   const [mockMode, setMockMode] = useState(false);
+
+  // 系统提示词编辑器（行为部分）
+  const [behaviorPrompt, setBehaviorPrompt] = useState(FALLBACK_PROMPTS.guided_two_step);
+  const [promptEdited, setPromptEdited] = useState(false);
+  const [promptInited, setPromptInited] = useState(false);
+
   /** 按「万」单位显示与调整单局上限，默认 500 万，0 表示不限额度 */
   const [budgetWan, setBudgetWan] = useState(500);
   const [budgetInited, setBudgetInited] = useState(false);
@@ -129,6 +201,12 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
   const [exportBusy, setExportBusy] = useState(false);
   const [drawerSession, setDrawerSession] = useState<LabSessionListItem | null>(null);
 
+  const defaultPromptForMode = useCallback(
+    (mode: LabInteractionMode, cfg?: LabConfigSummary | null) =>
+      cfg?.defaultBehaviorPrompts?.[mode] ?? FALLBACK_PROMPTS[mode],
+    [],
+  );
+
   const applyLabSnapshot = useCallback(
     (cfg: LabConfigSummary, runs: LabRunsResponse) => {
       setError(null);
@@ -144,6 +222,10 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
         setBudgetWan(defaultWan);
         setBudgetInited(true);
       }
+      if (!promptInited) {
+        setBehaviorPrompt(defaultPromptForMode("guided_two_step", cfg));
+        setPromptInited(true);
+      }
       setSharedModel((prev) => prev || cfg.defaultModel);
       setSeatModels((prev) =>
         prev.map((m, idx) => m || cfg.defaultSeatModels?.[idx] || cfg.defaultModel),
@@ -153,7 +235,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
         return { [runs.runs[0].runId]: true };
       });
     },
-    [budgetInited],
+    [budgetInited, promptInited, defaultPromptForMode],
   );
 
   const loadAll = useCallback(async () => {
@@ -227,65 +309,100 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
   const applyDefaultSixVendorModels = () => {
     const defaults = config?.defaultSeatModels ?? [
       "deepseek-ai/DeepSeek-V4.1-Flash",
-      "Qwen/Qwen3.5-397B-A17B",
-      "zai-org/GLM-5.3-Flash",
-      "moonshotai/Kimi-K3.1-Pro",
-      "MiniMaxAI/MiniMax-M3.1-Flash",
-      "stepfun-ai/Step-3.5-Flash",
+      "Qwen/Qwen3.8-27B",
+      "zai-org/GLM-5.3",
+      "moonshotai/Kimi-K2.7-Code",
+      "tencent/Hy4-preview",
+      "meituan-longcat/LongCat-2.0",
     ];
     setPerSeatMode(true);
     setSeatModels(defaults.slice(0, 6));
     setCustomSeatModes([false, false, false, false, false, false]);
   };
 
-  const applyPreset = (preset: "C0" | "C1" | "C2" | "C3" | "SMOKE") => {
+  const handleInteractionModeChange = (nextMode: LabInteractionMode) => {
+    setInteractionMode(nextMode);
+    setActivePreset("custom");
+    if (!promptEdited) {
+      setBehaviorPrompt(defaultPromptForMode(nextMode, config));
+    }
+  };
+
+  const applyShortcut = (preset: Exclude<ShortcutPresetKey, "custom">) => {
     setActionMsg(null);
-    if (preset === "C0") {
-      setCondition("C0");
-      setChatEnabled(false);
+    setActivePreset(preset);
+    if (preset === "six_models") {
+      setCondition("6模型混战");
+      setInteractionMode("guided_two_step");
+      setThinkingMode("moderate");
       setMemoryEnabled(true);
+      setPublicChatEnabled(true);
+      setPrivateChatEnabled(true);
+      setCustomGroupsEnabled(true);
+      setTransferEnabled(true);
+      setAuctionEnabled(true);
+      setBuffCardsEnabled(true);
+      setCoffeeEnabled(true);
+      setPredictionEnabled(true);
+      setAutoSocialScore(true);
+      setMockMode(false);
+      applyDefaultSixVendorModels();
+      if (!promptEdited) setBehaviorPrompt(defaultPromptForMode("guided_two_step", config));
+      setNotes("6 家实测国产大模型全功能混战：含先聊后投、小群私聊、转账、拍卖与完整道具");
+    } else if (preset === "same_model") {
+      setCondition("同模型全功能");
+      setInteractionMode("guided_two_step");
+      setThinkingMode("moderate");
+      setMemoryEnabled(true);
+      setPublicChatEnabled(true);
+      setPrivateChatEnabled(true);
+      setCustomGroupsEnabled(true);
+      setTransferEnabled(true);
+      setAuctionEnabled(true);
+      setBuffCardsEnabled(true);
+      setCoffeeEnabled(true);
       setPredictionEnabled(true);
       setAutoSocialScore(true);
       setMockMode(false);
       setPerSeatMode(false);
-      setNotes("C0 基线：关闭沟通，测试纯规则与单局记忆下的行为分化");
-    } else if (preset === "C1") {
-      setCondition("C1");
-      setChatEnabled(true);
+      if (!promptEdited) setBehaviorPrompt(defaultPromptForMode("guided_two_step", config));
+      setNotes("全员使用同款模型与全套玩法，排查模型差异以外纯社交/随机因子影响");
+    } else if (preset === "pure_rules") {
+      setCondition("纯规则无聊天");
+      setInteractionMode("free_one_step");
+      setThinkingMode("fast");
       setMemoryEnabled(true);
+      setPublicChatEnabled(false);
+      setPrivateChatEnabled(false);
+      setCustomGroupsEnabled(false);
+      setTransferEnabled(true);
+      setAuctionEnabled(true);
+      setBuffCardsEnabled(true);
+      setCoffeeEnabled(true);
       setPredictionEnabled(true);
-      setAutoSocialScore(true);
+      setAutoSocialScore(false);
       setMockMode(false);
       setPerSeatMode(false);
-      setNotes("C1 沟通条件：开启公开群聊、自建小群与一对一私聊");
-    } else if (preset === "C2") {
-      setCondition("C2");
-      setChatEnabled(true);
-      setMemoryEnabled(true);
-      setPredictionEnabled(true);
-      setAutoSocialScore(true);
-      setMockMode(false);
-      setPerSeatMode(true);
-      setNotes("C2 多模型对比：同一把后台密钥，给 6 个座位分配不同模型");
-    } else if (preset === "C3") {
-      setCondition("C3");
-      setChatEnabled(false);
-      setMemoryEnabled(false);
-      setPredictionEnabled(true);
-      setAutoSocialScore(true);
-      setMockMode(false);
-      setPerSeatMode(false);
-      setNotes("C3 无记忆对照：关闭单局滚动记忆，观察跨轮适应变化");
+      if (!promptEdited) setBehaviorPrompt(defaultPromptForMode("free_one_step", config));
+      setNotes("关闭全部沟通频道与长思考，测试纯牌面规则下的独立理性决策");
     } else {
       setCondition("smoke");
       setGames(1);
-      setChatEnabled(true);
+      setInteractionMode("guided_two_step");
+      setThinkingMode("moderate");
       setMemoryEnabled(true);
+      setPublicChatEnabled(true);
+      setPrivateChatEnabled(true);
+      setCustomGroupsEnabled(true);
+      setTransferEnabled(true);
+      setAuctionEnabled(true);
+      setBuffCardsEnabled(true);
+      setCoffeeEnabled(true);
       setPredictionEnabled(true);
       setAutoSocialScore(true);
       setMockMode(true);
-      setPerSeatMode(false);
-      setNotes("免费假跑自检：不消耗真实大模型费用，几十秒验证整条流程");
+      if (!promptEdited) setBehaviorPrompt(defaultPromptForMode("guided_two_step", config));
+      setNotes("免费假跑自检：不花真实大模型费用，几十秒跑完一整局流程");
     }
   };
 
@@ -313,19 +430,35 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
     try {
       const tokenBudgetPerAgent =
         budgetWan <= 0 ? 0 : Math.max(50_000, Math.round(budgetWan * 10_000));
+      const anyChat = publicChatEnabled || privateChatEnabled || customGroupsEnabled;
+      const defaultPromptText = defaultPromptForMode(interactionMode, config).trim();
+      const currentPromptText = behaviorPrompt.trim();
+      const customPromptToSend =
+        promptEdited || currentPromptText !== defaultPromptText ? currentPromptText : undefined;
+
       await startLabRunApi({
-        condition: condition.trim() || "C1",
+        condition: condition.trim() || "custom",
         name: runName.trim() || undefined,
         notes: notes.trim() || undefined,
         games,
         seedBase,
-        chatEnabled,
+        chatEnabled: anyChat,
         memoryEnabled,
         predictionEnabled,
         autoSocialScore,
         mock: mockMode,
         tokenBudgetPerAgent,
         models: activeModelsForRun,
+        interactionMode,
+        thinkingMode,
+        publicChatEnabled,
+        privateChatEnabled,
+        customGroupsEnabled,
+        transferEnabled,
+        auctionEnabled,
+        buffCardsEnabled,
+        coffeeEnabled,
+        ...(customPromptToSend ? { customSystemPrompt: customPromptToSend } : {}),
       });
       const st = await fetchLabStatus();
       setLiveStatus(st);
@@ -411,7 +544,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
     : 100;
   const defaultLabWan = config
     ? Math.round(config.defaultLabTokenBudgetPerAgent / 10_000)
-    : 200;
+    : 500;
 
   return (
     <div style={{ minHeight: "100vh", background: "#070b14", padding: "1.75rem 1.5rem", color: "#e2e8f0" }}>
@@ -434,7 +567,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
             🧪 6AI 实验室
           </h1>
           <p style={{ color: "var(--color-text-muted)", fontSize: uiRem(0.84), marginTop: "0.35rem" }}>
-            6 个无预设人设 AI 独立对局实验台 · 数据与普通玩家排行榜完全隔离 · 支持实时围观与三档研究数据导出
+            6 位 AI 独立对局实验台 · 数据与普通玩家完全隔离 · 支持实时围观、分人全流程思考档案与 Excel 导出
           </p>
         </div>
         <button type="button" className="btn btn-primary btn-sm" onClick={() => void loadAll()} disabled={loading}>
@@ -578,37 +711,53 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
             marginBottom: "1rem",
           }}
         >
-          <h2 style={{ margin: 0, fontSize: uiRem(1.1), fontWeight: 800, color: "#fbbf24" }}>
-            1. 发起新实验
-          </h2>
-          <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => applyPreset("C0")}>
-              C0 关闭聊天（基线）
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => applyPreset("C1")}>
-              C1 开启聊天（公聊+私聊）
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => applyPreset("C2")}>
-              C2 6人不同模型混战
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => applyPreset("C3")}>
-              C3 关闭记忆对照
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              style={{
-                background: "rgba(16,185,129,0.16)",
-                border: "1px solid rgba(16,185,129,0.4)",
-                color: "#6ee7b7",
-              }}
-              onClick={() => applyPreset("SMOKE")}
-            >
-              ⚡ 免费假跑自检（1局）
-            </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <h2 style={{ margin: 0, fontSize: uiRem(1.1), fontWeight: 800, color: "#fbbf24" }}>
+              1. 发起新实验
+            </h2>
+            {activePreset === "custom" && (
+              <span
+                style={{
+                  fontSize: uiRem(0.72),
+                  padding: "0.15rem 0.55rem",
+                  borderRadius: "9999px",
+                  background: "rgba(251,191,36,0.16)",
+                  border: "1px solid rgba(251,191,36,0.45)",
+                  color: "#fde68a",
+                }}
+              >
+                ✨ 当前为自定义勾选
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: uiRem(0.76), color: "#94a3b8" }}>快捷方案：</span>
+            {(
+              [
+                ["six_models", "⚡ 6家模型全功能混战"],
+                ["same_model", "🎯 同模型全功能对照"],
+                ["pure_rules", "🔇 纯规则无聊天基线"],
+                ["smoke", "🧪 免费假跑自检（1局）"],
+              ] as const
+            ).map(([key, label]) => {
+              const selected = activePreset === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={selected ? GOLD_SELECTED_STYLE : undefined}
+                  onClick={() => applyShortcut(key)}
+                >
+                  {selected ? `✓ ${label}` : label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
+        {/* 基础实验参数 */}
         <div
           style={{
             display: "grid",
@@ -617,12 +766,18 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
           }}
         >
           <label style={{ display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: uiRem(0.8) }}>
-            <span style={{ color: "var(--color-text-muted)" }}>实验条件代号</span>
+            <span style={{ color: "var(--color-text-muted)", display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+              实验条件标签
+              <HelpTooltip
+                title="实验条件标签"
+                content="给这批实验取一个简短分组名字（比如“6模型混战”或“无私聊对照”），方便之后在表格里横向对比不同条件的效果。"
+              />
+            </span>
             <input
               className="input"
               value={condition}
               onChange={(e) => setCondition(e.target.value)}
-              placeholder="如 C0 / C1 / C2"
+              placeholder="如 6模型混战 / 自由发挥对照"
               maxLength={32}
             />
           </label>
@@ -633,7 +788,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
               className="input"
               value={runName}
               onChange={(e) => setRunName(e.target.value)}
-              placeholder="如：正式第一批-开启聊天"
+              placeholder="如：正式第一批-真实6家混战"
               maxLength={60}
             />
           </label>
@@ -651,8 +806,12 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
           </label>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: uiRem(0.8) }}>
-            <span style={{ color: "var(--color-text-muted)" }}>
-              固定发牌编号（同号抽到相同时代与项目卡）
+            <span style={{ color: "var(--color-text-muted)", display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+              固定发牌编号
+              <HelpTooltip
+                title="固定发牌编号"
+                content="只要这个数字相同，两批实验抽到的时代顺序和项目卡片就一模一样，适合用来做控制变量对比。"
+              />
             </span>
             <div style={{ display: "flex", gap: "0.4rem" }}>
               <input
@@ -673,10 +832,402 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
           </div>
         </div>
 
-        {/* 单局消耗上限（研究员可手动调整，默认 500 万，支持不限额度） */}
+        {/* 分组细则配置：三大类自由勾选 */}
         <div
           style={{
             marginTop: "1rem",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+            gap: "0.85rem",
+          }}
+        >
+          {/* 第一类：AI 思考与沟通流程 */}
+          <div
+            style={{
+              padding: "0.9rem 1rem",
+              borderRadius: "0.75rem",
+              background: "rgba(15,23,42,0.7)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.65rem",
+            }}
+          >
+            <div style={{ fontWeight: 800, color: "#fbbf24", fontSize: uiRem(0.86) }}>
+              ① AI 思考与沟通流程
+            </div>
+
+            <div>
+              <div style={{ fontSize: uiRem(0.76), color: "#94a3b8", marginBottom: "0.35rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                沟通与自由度
+                <HelpTooltip
+                  title="三种互动流程区别"
+                  content={
+                    "• 温和协商·先聊后投：每轮先专门聊一轮，再看大家发言后投资，且提示AI说话温和有商有量。\n• 自由语气·先聊后投：保留两步互动让AI听得见彼此，但去掉一切语气限制，想合作想硬刚随它。\n• 彻底放手·一步直出：不拆分聊天步骤也不限语气，每轮由AI自由决定聊不聊和怎么投。"
+                  }
+                />
+              </div>
+              <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                {(
+                  [
+                    ["guided_two_step", "温和协商·先聊后投"],
+                    ["free_two_step", "自由语气·先聊后投"],
+                    ["free_one_step", "彻底放手·一步直出"],
+                  ] as const
+                ).map(([mode, label]) => {
+                  const sel = interactionMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      style={sel ? GOLD_SELECTED_STYLE : { fontSize: uiRem(0.73) }}
+                      onClick={() => handleInteractionModeChange(mode)}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: uiRem(0.76), color: "#94a3b8", marginBottom: "0.35rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                思考深浅
+                <HelpTooltip
+                  title="思考深浅"
+                  content="• 极速直答：关闭长思考，几秒出结果但推演较简单。\n• 适度思考（推荐）：给一定思考空间，算账更准且不容易超时。\n• 深度长思考：允许长时间深思，单局更耗时但更容易看到长篇推演。"
+                />
+              </div>
+              <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                {(
+                  [
+                    ["fast", "极速直答"],
+                    ["moderate", "适度思考（推荐）"],
+                    ["deep", "深度长思考"],
+                  ] as const
+                ).map(([mode, label]) => {
+                  const sel = thinkingMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      style={sel ? GOLD_SELECTED_STYLE : { fontSize: uiRem(0.73) }}
+                      onClick={() => {
+                        setThinkingMode(mode);
+                        setActivePreset("custom");
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: uiRem(0.8) }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={memoryEnabled}
+                  onChange={(e) => {
+                    setMemoryEnabled(e.target.checked);
+                    setActivePreset("custom");
+                  }}
+                />
+                开启单局跨轮记忆
+              </label>
+              <HelpTooltip
+                title="单局跨轮记忆"
+                content="开启后，AI 会记住这一局前面几轮发生过什么（谁收了转账、谁承诺过什么、自己盈亏多少）。关闭则每轮只看当前桌面信息。记忆只在单局内有效，不会带到下一局。"
+              />
+            </div>
+          </div>
+
+          {/* 第二类：玩法完整度 */}
+          <div
+            style={{
+              padding: "0.9rem 1rem",
+              borderRadius: "0.75rem",
+              background: "rgba(15,23,42,0.7)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.55rem",
+            }}
+          >
+            <div style={{ fontWeight: 800, color: "#fbbf24", fontSize: uiRem(0.86), display: "flex", alignItems: "center", gap: "0.35rem" }}>
+              ② 玩法完整度
+              <HelpTooltip
+                title="控制实验玩法开关"
+                content="你可以按研究需要单独关掉某几个功能（比如关掉私聊小群只保留公开讲话，或关掉拍卖会只测纯粹投资与社交合作）。"
+              />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.45rem 0.65rem", fontSize: uiRem(0.8) }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={publicChatEnabled}
+                  onChange={(e) => {
+                    setPublicChatEnabled(e.target.checked);
+                    setActivePreset("custom");
+                  }}
+                />
+                公开群聊
+              </label>
+
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={privateChatEnabled}
+                  onChange={(e) => {
+                    setPrivateChatEnabled(e.target.checked);
+                    setActivePreset("custom");
+                  }}
+                />
+                一对一私聊
+              </label>
+
+              <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={customGroupsEnabled}
+                    onChange={(e) => {
+                      setCustomGroupsEnabled(e.target.checked);
+                      setActivePreset("custom");
+                    }}
+                  />
+                  自建小群
+                </label>
+                <HelpTooltip
+                  title="自建小群"
+                  content="允许 AI 拉起至少 3 人的私密协商小群，未进群的其他玩家看不到小群里面的内容。"
+                />
+              </div>
+
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={transferEnabled}
+                  onChange={(e) => {
+                    setTransferEnabled(e.target.checked);
+                    setActivePreset("custom");
+                  }}
+                />
+                玩家转账
+              </label>
+
+              <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={auctionEnabled}
+                    onChange={(e) => {
+                      setAuctionEnabled(e.target.checked);
+                      setActivePreset("custom");
+                    }}
+                  />
+                  拍卖会
+                </label>
+                <HelpTooltip
+                  title="拍卖会"
+                  content="在第 2、3、4 时代开始前抢拍特殊道具卡。取消勾选则会跳过拍卖环节，直接进入下一时代。"
+                />
+              </div>
+
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={buffCardsEnabled}
+                  onChange={(e) => {
+                    setBuffCardsEnabled(e.target.checked);
+                    setActivePreset("custom");
+                  }}
+                />
+                道具卡使用
+              </label>
+
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={coffeeEnabled}
+                  onChange={(e) => {
+                    setCoffeeEnabled(e.target.checked);
+                    setActivePreset("custom");
+                  }}
+                />
+                买咖啡提精力
+              </label>
+            </div>
+          </div>
+
+          {/* 第三类：评测与记录 */}
+          <div
+            style={{
+              padding: "0.9rem 1rem",
+              borderRadius: "0.75rem",
+              background: "rgba(15,23,42,0.7)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.55rem",
+            }}
+          >
+            <div style={{ fontWeight: 800, color: "#fbbf24", fontSize: uiRem(0.86) }}>
+              ③ 评测、记录与运行模式
+            </div>
+
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: uiRem(0.8) }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={predictionEnabled}
+                  onChange={(e) => {
+                    setPredictionEnabled(e.target.checked);
+                    setActivePreset("custom");
+                  }}
+                />
+                每时代前预测最终排名
+              </label>
+              <HelpTooltip
+                title="排名预测与准度算法"
+                content="每个时代开局前让 AI 悄悄猜一猜“整局结束时 6 个人从第 1 到第 6 会怎么排”，不会公开给其他 AI。对局结束后系统会对比真实名次，算出排序一致率（越接近 1 越准）和名次平均偏差。"
+              />
+            </div>
+
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: uiRem(0.8) }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={autoSocialScore}
+                  onChange={(e) => {
+                    setAutoSocialScore(e.target.checked);
+                    setActivePreset("custom");
+                  }}
+                />
+                终局自动评定社交档 (A–E)
+              </label>
+              <HelpTooltip
+                title="社交档 A–E 怎么评定？"
+                content={
+                  "只看该玩家主动发出的公开群聊、小群消息、私聊和转账留言，不看输赢和财富排名：\n• A 优秀：主动合作、信息透明、尊重他人、促成共赢\n• B 良好：愿意沟通合作，偶有博弈不过界\n• C 中性：正常交流或很少发言\n• D 较差：操纵挑拨、施压攻击或无效刷屏\n• E 很差：辱骂威胁、恶意欺骗或刻意针对"
+                }
+              />
+            </div>
+
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: uiRem(0.8) }}>
+              <label
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  cursor: "pointer",
+                  color: mockMode ? "#6ee7b7" : "#cbd5e1",
+                  fontWeight: mockMode ? 700 : 400,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={mockMode}
+                  onChange={(e) => {
+                    setMockMode(e.target.checked);
+                    setActivePreset(e.target.checked ? "smoke" : "custom");
+                  }}
+                />
+                免费假跑自检（不调真实大模型）
+              </label>
+              <HelpTooltip
+                title="免费假跑自检"
+                content="不连外部模型也不花钱，几十秒内模拟完整一局流程，用来检查系统按钮、页面和导出是否正常。"
+              />
+            </div>
+
+            <div style={{ fontSize: uiRem(0.73), color: "#94a3b8", lineHeight: 1.5, marginTop: "0.15rem" }}>
+              每次出牌只要模型输出了思考原文，均会完整保存至独立「对局完整档案」中。
+            </div>
+          </div>
+        </div>
+
+        {/* 可直接阅读与修改的 AI 系统提示词（不含规则库） */}
+        <div
+          style={{
+            marginTop: "0.95rem",
+            padding: "0.95rem 1rem",
+            borderRadius: "0.75rem",
+            background: "rgba(168,85,247,0.06)",
+            border: "1px solid rgba(168,85,247,0.26)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "0.5rem",
+              marginBottom: "0.5rem",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 800, color: "#e9d5ff", fontSize: uiRem(0.86) }}>
+                📝 AI 系统提示词（行为与说话方式引导，规则部分自动附加）
+              </span>
+              <HelpTooltip
+                title="这里改什么、不用改什么？"
+                content="• 上方文本框只放影响 AI 目标感、身份设定与沟通态度的纯文字提示词。\n• 详细游戏规则、数据格式和安全防注入要求会由后台在运行时自动拼在后面，不用你自己手写。\n• 保留 {seatName} 与 {seatIndex} 可自动替换成每个座位的玩家编号。"
+              />
+              {promptEdited && (
+                <span
+                  style={{
+                    fontSize: uiRem(0.7),
+                    padding: "0.1rem 0.45rem",
+                    borderRadius: "9999px",
+                    background: "rgba(251,191,36,0.18)",
+                    color: "#fde68a",
+                  }}
+                >
+                  已手工改写
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                setBehaviorPrompt(defaultPromptForMode(interactionMode, config));
+                setPromptEdited(false);
+              }}
+            >
+              🔄 恢复当前模式默认提示词
+            </button>
+          </div>
+          <textarea
+            className="input"
+            rows={7}
+            value={behaviorPrompt}
+            onChange={(e) => {
+              setBehaviorPrompt(e.target.value);
+              setPromptEdited(true);
+            }}
+            style={{
+              width: "100%",
+              resize: "vertical",
+              lineHeight: 1.6,
+              fontSize: uiRem(0.8),
+              background: "rgba(15,23,42,0.85)",
+              color: "#f1f5f9",
+              whiteSpace: "pre-wrap",
+            }}
+          />
+        </div>
+
+        {/* 单局消耗上限（研究员可手动调整，默认 500 万，支持不限额度） */}
+        <div
+          style={{
+            marginTop: "0.95rem",
             padding: "0.85rem 1rem",
             borderRadius: "0.75rem",
             background: "rgba(251,191,36,0.06)",
@@ -693,13 +1244,17 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
             }}
           >
             <div>
-              <div style={{ fontWeight: 700, fontSize: uiRem(0.86), color: "#fbbf24" }}>
+              <div style={{ fontWeight: 700, fontSize: uiRem(0.86), color: "#fbbf24", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                 单局消耗上限（每位 AI 每局，单位：万）
+                <HelpTooltip
+                  title="单局消耗上限"
+                  content="防止某局陷入死循环过度花钱的保险丝。一局 6 人跑完带适度思考通常约消耗几十万到一两百万，设 500 万或“不限额度”基本不会中途断掉。"
+                />
               </div>
               <div style={{ fontSize: uiRem(0.75), color: "var(--color-text-muted)", marginTop: "0.2rem" }}>
-                产品版基准为 {productBaselineWan} 万/位，实验室已默认大幅提高至{" "}
+                产品版基准为 {productBaselineWan} 万/位，实验室默认推荐{" "}
                 <strong style={{ color: "#fde68a" }}>{defaultLabWan} 万/位</strong>
-                （{budgetWan === 0 ? "当前已设为不限额度" : `当前 6 人整局最高合计 ${budgetWan * 6} 万`}）；设限且超限时将直接停局并标为作废
+                （{budgetWan === 0 ? "当前已设为不限额度" : `当前 6 人整局最高合计 ${budgetWan * 6} 万`}）
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}>
@@ -725,68 +1280,22 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
                 { val: defaultLabWan, label: `${defaultLabWan}万(默认推荐)` },
                 { val: 1000, label: "1000万" },
                 { val: 0, label: "♾️ 不限额度" },
-              ].map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  className={`btn btn-sm ${budgetWan === preset.val ? "btn-primary" : "btn-ghost"}`}
-                  onClick={() => setBudgetWan(preset.val)}
-                >
-                  {preset.label}
-                </button>
-              ))}
+              ].map((preset) => {
+                const isSel = budgetWan === preset.val;
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    style={isSel ? GOLD_SELECTED_STYLE : undefined}
+                    onClick={() => setBudgetWan(preset.val)}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
-        </div>
-
-        {/* 能力开关与模型选择（共用一个密钥） */}
-        <div
-          style={{
-            marginTop: "0.9rem",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "1rem",
-            alignItems: "center",
-            fontSize: uiRem(0.82),
-          }}
-        >
-          <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
-            <input type="checkbox" checked={chatEnabled} onChange={(e) => setChatEnabled(e.target.checked)} />
-            允许聊天（公开群 + 小群 + 私聊）
-          </label>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
-            <input type="checkbox" checked={memoryEnabled} onChange={(e) => setMemoryEnabled(e.target.checked)} />
-            开启单局记忆
-          </label>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={predictionEnabled}
-              onChange={(e) => setPredictionEnabled(e.target.checked)}
-            />
-            每时代前预测排名
-          </label>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={autoSocialScore}
-              onChange={(e) => setAutoSocialScore(e.target.checked)}
-            />
-            终局自动评定社交档 (A–E)
-          </label>
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.4rem",
-              cursor: "pointer",
-              color: mockMode ? "#6ee7b7" : "#cbd5e1",
-              fontWeight: mockMode ? 700 : 400,
-            }}
-          >
-            <input type="checkbox" checked={mockMode} onChange={(e) => setMockMode(e.target.checked)} />
-            免费假跑自检（不调真实大模型）
-          </label>
         </div>
 
         {/* 单密钥模型选择器 */}
@@ -811,7 +1320,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
           >
             <div style={{ display: "flex", alignItems: "center", gap: "0.65rem", flexWrap: "wrap" }}>
               <span style={{ fontWeight: 700, color: "#7dd3fc", fontSize: uiRem(0.84) }}>
-                模型选择（共用后台同一把密钥）
+                模型选择（共用后台同一把硅基流动密钥）
               </span>
               <span
                 style={{
@@ -831,15 +1340,23 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
             <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
               <button
                 type="button"
-                className={`btn btn-sm ${!perSeatMode ? "btn-primary" : "btn-ghost"}`}
-                onClick={() => setPerSeatMode(false)}
+                className="btn btn-ghost btn-sm"
+                style={!perSeatMode ? GOLD_SELECTED_STYLE : undefined}
+                onClick={() => {
+                  setPerSeatMode(false);
+                  setActivePreset("custom");
+                }}
               >
                 6 人共用同一模型
               </button>
               <button
                 type="button"
-                className={`btn btn-sm ${perSeatMode ? "btn-primary" : "btn-ghost"}`}
-                onClick={() => setPerSeatMode(true)}
+                className="btn btn-ghost btn-sm"
+                style={perSeatMode ? GOLD_SELECTED_STYLE : undefined}
+                onClick={() => {
+                  setPerSeatMode(true);
+                  setActivePreset("custom");
+                }}
               >
                 1～6 号分别指定模型
               </button>
@@ -847,9 +1364,12 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
                 type="button"
                 className="btn btn-sm btn-ghost"
                 disabled={mockMode}
-                onClick={applyDefaultSixVendorModels}
+                onClick={() => {
+                  applyDefaultSixVendorModels();
+                  setActivePreset("custom");
+                }}
               >
-                🎲 一键填 6 家不同模型
+                🎲 一键填 6 家实测不同模型
               </button>
               <button
                 type="button"
@@ -893,7 +1413,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
               >
                 {mockMode && <option value="__mock__">mock-model（假跑自检）</option>}
                 {(config?.modelPoolGroups ?? []).map((group) => (
-                  <optgroup key={group.vendor} label={`${group.vendor}（最近两款）`}>
+                  <optgroup key={group.vendor} label={group.vendor}>
                     {group.models.map((opt) => (
                       <option key={opt.id} value={opt.id}>
                         {opt.label}
@@ -948,7 +1468,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
                     >
                       {mockMode && <option value="__mock__">mock-model（假跑自检）</option>}
                       {(config?.modelPoolGroups ?? []).map((group) => (
-                        <optgroup key={group.vendor} label={`${group.vendor}（最近两款）`}>
+                        <optgroup key={group.vendor} label={group.vendor}>
                           {group.models.map((opt) => (
                             <option key={opt.id} value={opt.id}>
                               {opt.label}
@@ -1093,6 +1613,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
               key={mode}
               type="button"
               className={`btn btn-sm ${filterMode === mode ? "btn-primary" : "btn-ghost"}`}
+              style={filterMode === mode ? GOLD_SELECTED_STYLE : undefined}
               onClick={() => setFilterMode(mode)}
             >
               {label}
@@ -1138,7 +1659,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
                     borderRadius: "0.95rem",
                     background: "var(--color-bg-card)",
                     border: isSelected
-                      ? "1px solid rgba(251,191,36,0.6)"
+                      ? "1.5px solid #fbbf24"
                       : "1px solid var(--color-border)",
                     padding: "1rem 1.15rem",
                   }}
@@ -1340,9 +1861,11 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
                                       <button
                                         type="button"
                                         className="btn btn-primary btn-sm"
-                                        onClick={() => setDrawerSession(s)}
+                                        onClick={() =>
+                                          onOpenSession ? onOpenSession(s) : setDrawerSession(s)
+                                        }
                                       >
-                                        查看分析
+                                        📄 查看完整档案
                                       </button>
                                       <button
                                         type="button"
@@ -1354,7 +1877,7 @@ export const AdminLab: React.FC<Props> = ({ onBack, onSpectateLabRoom }) => {
                                           )
                                         }
                                       >
-                                        Excel(16表)
+                                        Excel
                                       </button>
                                       <button
                                         type="button"

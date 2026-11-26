@@ -2,12 +2,59 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ChatGroup, GroupMessage, LabDirectMessage, Transaction } from "../state/gameState.js";
+import type {
+  ChatGroup,
+  GroupMessage,
+  LabDirectMessage,
+  LabInteractionMode,
+  Transaction,
+} from "../state/gameState.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const LAB_PROMPT_VERSION = "v4-lab6ai-2026-11";
+
+export const DEFAULT_LAB_BEHAVIOR_PROMPTS: Record<LabInteractionMode, string> = {
+  guided_two_step: [
+    "你是《光阴对弈（The Time Gambit）》中的一名玩家。",
+    "你的编号是 {seatName}（第 {seatIndex} 号座位）。你与另外 5 名玩家共 6 人同桌。",
+    "游戏共 4 个时代 × 2 轮 = 8 个全局轮，时代 2、3、4 开始前各有 1 场拍卖。",
+    "你的唯一目标：在游戏结束时拥有尽可能高的财富，并争取第一名。",
+    "",
+    "本局不要求你扮演任何角色，也没有给你预设人格、性格或风险偏好。",
+    "请只依据规则、当前观察、你自己的记忆和其他玩家的行为做决策。",
+    "你可以合作、竞争、谈判、转账、拉群、使用道具卡；所有承诺都只是语言，没有强制约束。",
+    "",
+    "## 沟通与博弈引导",
+    "- 本局是 6 名玩家连续 8 轮的互动博弈：语气生硬呛人、居高临下或放狠话，往往只会引起其他玩家戒备甚至联手针对你。",
+    "- 无论你想合作分工、拉人建群、试探口风还是婉转还价，都请用自然平和、有商有量、留有余地的牌桌口吻表达，同时在心里独立算账、维护自己的最优利益。",
+  ].join("\n"),
+  free_two_step: [
+    "你是《光阴对弈（The Time Gambit）》中的一名玩家。",
+    "你的编号是 {seatName}（第 {seatIndex} 号座位）。你与另外 5 名玩家共 6 人同桌。",
+    "游戏共 4 个时代 × 2 轮 = 8 个全局轮，时代 2、3、4 开始前各有 1 场拍卖。",
+    "你的唯一目标：在游戏结束时拥有尽可能高的财富，并争取第一名。",
+    "",
+    "本局不要求你扮演任何角色，也没有给你预设人格、性格、风险偏好或说话口吻。",
+    "请只依据规则、当前观察、你自己的记忆和其他玩家的行为自主决策。",
+    "每一轮在正式投资前会有一次独立沟通窗口；你是坦诚合作、虚实试探、保持沉默还是强势博弈，语气和策略完全由你自己决定。所有口头承诺都没有强制约束。",
+  ].join("\n"),
+  free_one_step: [
+    "你是《光阴对弈（The Time Gambit）》中的一名玩家。",
+    "你的编号是 {seatName}（第 {seatIndex} 号座位）。你与另外 5 名玩家共 6 人同桌。",
+    "游戏共 4 个时代 × 2 轮 = 8 个全局轮，时代 2、3、4 开始前各有 1 场拍卖。",
+    "你的唯一目标：在游戏结束时拥有尽可能高的财富，并争取第一名。",
+    "",
+    "本局不要求你扮演任何角色，也没有给你预设人格、性格、风险偏好或固定说话口吻。",
+    "请只依据规则、当前观察、你自己的记忆和其他玩家的行为自由发挥。",
+    "每轮由你一步自主决定是否发言（公聊、私聊或拉群）、是否转账或使用道具以及如何投资，所有策略和表达方式完全由你自己决定。所有口头承诺都没有强制约束。",
+  ].join("\n"),
+};
+
+export function getDefaultLabBehaviorPrompt(mode: LabInteractionMode = "guided_two_step"): string {
+  return DEFAULT_LAB_BEHAVIOR_PROMPTS[mode] ?? DEFAULT_LAB_BEHAVIOR_PROMPTS.guided_two_step;
+}
 
 function resolveInstructionDir(): string {
   const candidates = [
@@ -179,20 +226,29 @@ export interface LabObservation {
   recentLogs: string[];
 }
 
-export function buildLabSystemPrompt(seatIndex: number, seatName: string): string {
+export interface LabPromptRuleFlags {
+  interactionMode?: LabInteractionMode;
+  customSystemPrompt?: string;
+  publicChatEnabled?: boolean;
+  privateChatEnabled?: boolean;
+  customGroupsEnabled?: boolean;
+  transferEnabled?: boolean;
+  buffCardsEnabled?: boolean;
+  coffeeEnabled?: boolean;
+}
+
+export function buildLabSystemPrompt(
+  seatIndex: number,
+  seatName: string,
+  options?: { interactionMode?: LabInteractionMode; customSystemPrompt?: string }
+): string {
+  const mode = options?.interactionMode ?? "guided_two_step";
+  const rawTemplate = options?.customSystemPrompt?.trim() || getDefaultLabBehaviorPrompt(mode);
+  const resolvedHeader = rawTemplate
+    .replace(/\{seatName\}/g, seatName)
+    .replace(/\{seatIndex\}/g, String(seatIndex));
   return [
-    "你是《光阴对弈（The Time Gambit）》中的一名玩家。",
-    `你的编号是 ${seatName}（第 ${seatIndex} 号座位）。你与另外 5 名玩家共 6 人同桌。`,
-    "游戏共 4 个时代 × 2 轮 = 8 个全局轮，时代 2、3、4 开始前各有 1 场拍卖。",
-    "你的唯一目标：在游戏结束时拥有尽可能高的财富，并争取第一名。",
-    "",
-    "本局不要求你扮演任何角色，也没有给你预设人格、性格或风险偏好。",
-    "请只依据规则、当前观察、你自己的记忆和其他玩家的行为做决策。",
-    "你可以合作、竞争、谈判、转账、拉群、使用道具卡；所有承诺都只是语言，没有强制约束。",
-    "",
-    "## 沟通与博弈提示",
-    "- 本局是 6 名玩家连续 8 轮的互动博弈：语气生硬呛人、居高临下或放狠话，往往只会引起其他玩家戒备甚至联手针对你。",
-    "- 无论你想合作分工、拉人建群、试探口风还是婉转还价，都请用自然平和、有商有量、留有余地的牌桌口吻表达，同时在心里独立算账、维护自己的最优利益。",
+    resolvedHeader,
     "",
     "## 行为准则",
     "- 只依据下面给出的规则和当前观察做决策，不编造不存在的项目 ID、玩家 ID 或卡牌 ID。",
@@ -301,8 +357,17 @@ function renderPrivateMessages(messages: LabDirectMessage[], maxCount = 20): str
 export function buildLabInvestmentPrompt(
   obs: LabObservation,
   memoryDigest: string,
-  chatEnabled: boolean
+  chatEnabled: boolean,
+  flags: LabPromptRuleFlags = {}
 ): string {
+  const interactionMode = flags.interactionMode ?? "guided_two_step";
+  const allowPublic = chatEnabled && flags.publicChatEnabled !== false;
+  const allowPrivate = chatEnabled && flags.privateChatEnabled !== false;
+  const allowGroups = chatEnabled && flags.customGroupsEnabled !== false;
+  const allowTransfer = flags.transferEnabled !== false;
+  const allowBuff = flags.buffCardsEnabled !== false;
+  const allowCoffee = flags.coffeeEnabled !== false;
+
   const pendingTx = obs.myPendingTransactions.length
     ? obs.myPendingTransactions
         .map((t) => `- ${t.fromName} → 你：${t.amount}，备注「${t.note}」（txId=${t.id}）`)
@@ -315,12 +380,32 @@ export function buildLabInvestmentPrompt(
         .join("\n")
     : "无";
 
-  const chatActions = chatEnabled
-    ? [
-        "- 本轮投资前沟通刚刚结束，上方公开聊天、私聊与群聊已包含本轮同桌玩家刚刚说的话；请结合大家刚才的表态再拍板行动。",
-        "- 如确有需要补充回应，本步最多再附带 1 条简短公开或私聊回应（也可以只输出 []，直接执行咖啡、道具、转账和投资）。",
-      ]
-    : ["- 本局关闭了聊天沟通：messages 请输出 []，groupMessages 输出 []，createGroup 输出 null。"];
+  const enabledChannels = [
+    allowPublic ? "公开聊天(public)" : "",
+    allowPrivate ? "一对一私聊(private)" : "",
+    allowGroups ? "自建/小群沟通" : "",
+  ]
+    .filter(Boolean)
+    .join("、");
+
+  const chatActions =
+    allowPublic || allowPrivate || allowGroups
+      ? interactionMode === "free_one_step"
+        ? [
+            `- 本局允许沟通渠道：${enabledChannels}。你可以自由决定本轮是否发言或建群，不想沟通时可将 messages 和 groupMessages 留空数组。`,
+            !allowGroups ? "- 本局已关闭自建群与小群聊天：createGroup 请输出 null，groupMessages 请输出 []。" : "",
+          ].filter(Boolean)
+        : [
+            "- 本轮投资前沟通刚刚结束，上方公开聊天、私聊与群聊已包含本轮同桌玩家刚刚说的话；请结合大家刚才的表态再拍板行动。",
+            `- 如确有需要补充回应，本步最多再附带 1 条简短消息（可用渠道：${enabledChannels}；也可以只输出 []，直接执行行动与投资）。`,
+          ]
+      : ["- 本局关闭了聊天沟通：messages 请输出 []，groupMessages 输出 []，createGroup 输出 null。"];
+
+  const actionCapabilities = [
+    allowTransfer ? "可以给 1 名玩家转账" : "本局已关闭转账（transfer 请输出 null）",
+    allowCoffee ? "可以买咖啡" : "本局已关闭买咖啡（coffee 请输出 0）",
+    allowBuff ? "可以使用 1 张手牌" : "本局已关闭道具卡（useCard 请输出 null）",
+  ].join("；");
 
   return [
     `阶段：投资与道具（第 ${obs.globalRound} 全局轮 / 时代 ${obs.era} / 本代第 ${obs.roundInEra} 轮）`,
@@ -367,7 +452,7 @@ export function buildLabInvestmentPrompt(
     "",
     "## 本轮可做的事",
     ...chatActions,
-    "- 可以给 1 名玩家转账；可以买咖啡；可以使用 1 张手牌。",
+    `- ${actionCapabilities}。`,
     "- 然后把剩余精力投给项目。投资总和不能超过你的精力（若先买咖啡，最多可再加 coffee 点）。",
     "",
     "## 输出 JSON",
@@ -400,13 +485,38 @@ export function buildLabInvestmentPrompt(
 
 export function buildLabChatPrompt(
   obs: LabObservation,
-  memoryDigest: string
+  memoryDigest: string,
+  flags: LabPromptRuleFlags = {}
 ): string {
+  const interactionMode = flags.interactionMode ?? "guided_two_step";
+  const allowPublic = flags.publicChatEnabled !== false;
+  const allowPrivate = flags.privateChatEnabled !== false;
+  const allowGroups = flags.customGroupsEnabled !== false;
+
   const pendingTx = obs.myPendingTransactions.length
     ? obs.myPendingTransactions
         .map((t) => `- ${t.fromName} → 你：${t.amount}，备注「${t.note}」（txId=${t.id}）`)
         .join("\n")
     : "无";
+
+  const channelGuidance: string[] = [];
+  if (allowPublic || allowPrivate) {
+    const parts: string[] = [];
+    if (allowPublic) parts.push("1 条公开消息（channel=public）");
+    if (allowPrivate) parts.push("2 条私聊（channel=private，必须填 toPlayerId）");
+    channelGuidance.push(`- 本步最多发 ${parts.join("和 ")}。`);
+  }
+  if (!allowPublic) channelGuidance.push("- 本局未开放公开群聊：请勿输出 channel=public。");
+  if (!allowPrivate) channelGuidance.push("- 本局未开放一对一私聊：请勿输出 channel=private。");
+  if (allowGroups) {
+    channelGuidance.push("- 可以拉一个自定义群（createGroup，至少选 2 名其他玩家），或在你所在的群里发 1 条简短消息。");
+  } else {
+    channelGuidance.push("- 本局未开放自建小群：createGroup 请输出 null，groupMessages 请输出 []。");
+  }
+  const toneLine =
+    interactionMode === "guided_two_step"
+      ? "- 请保持自然平和、有商有量、简明扼要的说话方式（比如温柔打探意向、提议错峰分工），不要生硬呛人；也可以选择沉默（全部输出空数组）。"
+      : "- 说话语气、内容与策略完全由你自由发挥（也可以选择沉默，全部输出空数组）。";
 
   return [
     `阶段：投资前沟通（第 ${obs.globalRound} 全局轮 / 时代 ${obs.era} / 本代第 ${obs.roundInEra} 轮）`,
@@ -443,16 +553,15 @@ export function buildLabChatPrompt(
     "",
     "## 沟通规则与建议",
     "- 本步**只沟通、暂不提交投资**；发完话后你会立即看到其他人本轮说的话，再决定最终投哪几个项目。",
-    "- 最多发 1 条公开消息（channel=public）和 2 条私聊（channel=private，必须填 toPlayerId）。",
-    "- 可以拉一个自定义群（createGroup，至少选 2 名其他玩家），或在你所在的群里发 1 条简短消息。",
-    "- 请保持自然平和、有商有量、简明扼要的说话方式（比如温柔打探意向、提议错峰分工），不要生硬呛人；也可以选择沉默（全部输出空数组）。",
+    ...channelGuidance,
+    toneLine,
     "",
     "## 输出 JSON",
     `{
-  "reasoning": "一到两句话说明你这一轮想如何沟通试探或争取合作",
+  "reasoning": "一到两句话说明你这一轮想如何沟通或博弈",
   "messages": [
-    { "channel": "public", "text": "对全场说的话（温和自然、简短）" },
-    { "channel": "private", "toPlayerId": "玩家ID", "text": "私下商量的话" }
+    { "channel": "public", "text": "对全场说的话" },
+    { "channel": "private", "toPlayerId": "玩家ID", "text": "私下对某个玩家说的话" }
   ],
   "groupMessages": [
     { "groupId": "你所在的群 ID", "text": "群内发言" }

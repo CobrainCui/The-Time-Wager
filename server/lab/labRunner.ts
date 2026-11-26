@@ -58,6 +58,8 @@ import {
   type GameState,
   type LabAgentDecision,
   type LabDirectMessage,
+  type LabInteractionMode,
+  type LabThinkingMode,
   type Player,
   type Transaction,
 } from "../state/gameState.js";
@@ -77,6 +79,7 @@ import {
   buildLabSystemPrompt,
   buildLabTransactionPrompt,
   computeLabPromptHash,
+  DEFAULT_LAB_BEHAVIOR_PROMPTS,
   LAB_PROMPT_VERSION,
   summarizeLabGroupChats,
   type LabObservation,
@@ -137,7 +140,36 @@ export interface LabActionCallBudget {
   timeoutMs: number;
 }
 
-export function getLabActionBudget(kind: LabActionBudgetKind = "investment"): LabActionCallBudget {
+export function getLabActionBudget(
+  kind: LabActionBudgetKind = "investment",
+  thinkingMode: LabThinkingMode = "moderate"
+): LabActionCallBudget {
+  if (thinkingMode === "fast") {
+    switch (kind) {
+      case "investment":
+        return { thinkingBudget: 0, maxOutputTokens: 1600, timeoutMs: 20_000 };
+      case "prediction":
+      case "chat":
+        return { thinkingBudget: 0, maxOutputTokens: 900, timeoutMs: 15_000 };
+      case "auction":
+      case "transaction":
+      case "community_name":
+        return { thinkingBudget: 0, maxOutputTokens: 600, timeoutMs: 12_000 };
+    }
+  }
+  if (thinkingMode === "deep") {
+    switch (kind) {
+      case "investment":
+        return { thinkingBudget: 3072, maxOutputTokens: 5000, timeoutMs: 55_000 };
+      case "prediction":
+      case "chat":
+        return { thinkingBudget: 1536, maxOutputTokens: 3000, timeoutMs: 35_000 };
+      case "auction":
+      case "transaction":
+      case "community_name":
+        return { thinkingBudget: 1024, maxOutputTokens: 2000, timeoutMs: 25_000 };
+    }
+  }
   switch (kind) {
     case "investment":
       return { thinkingBudget: 1024, maxOutputTokens: 2400, timeoutMs: 30_000 };
@@ -184,6 +216,7 @@ export interface LabAuctionBidResult {
     amount?: number;
     reasoning: string;
   };
+  rawThinking?: string;
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
   latencyMs?: number;
 }
@@ -205,7 +238,7 @@ export function applyLabAuctionWave(options: {
   // 按种子随机打乱同波次并发出价的结算顺序，避免靠前座位天然抢占低价
   const shuffled = shuffleWithGameRng(game, bidResults);
 
-  for (const { player, decision, usage, latencyMs } of shuffled) {
+  for (const { player, decision, rawThinking, usage, latencyMs } of shuffled) {
     if (game.auctionFocusCardId !== focus || now() > lotHardDeadline) break;
     recordLabDecision(
       game,
@@ -214,7 +247,8 @@ export function applyLabAuctionWave(options: {
       decision.reasoning,
       { cardId: focus, ...decision },
       usage,
-      latencyMs
+      latencyMs,
+      rawThinking
     );
     const mem = memories?.get(player.id);
     if (decision.action === "force_buy" && player.inventory.includes("buff_force_buy")) {
@@ -364,6 +398,7 @@ export function getLabConfigSummary() {
     maxTokenBudgetPerAgent: 100_000_000,
     promptVersion: LAB_PROMPT_VERSION,
     promptHash: getPromptHash(),
+    defaultBehaviorPrompts: DEFAULT_LAB_BEHAVIOR_PROMPTS,
     activeRun: getLabLiveStatus(),
   };
 }
@@ -604,6 +639,18 @@ export function createSeededLabGame(options: {
     autoSocialScore: options.manifest.autoSocialScore,
     mock: options.manifest.mock,
     tokenBudgetPerAgent: options.manifest.tokenBudgetPerAgent,
+    interactionMode: options.manifest.interactionMode ?? "guided_two_step",
+    thinkingMode: options.manifest.thinkingMode ?? "moderate",
+    publicChatEnabled: options.manifest.publicChatEnabled !== false,
+    privateChatEnabled: options.manifest.privateChatEnabled !== false,
+    customGroupsEnabled: options.manifest.customGroupsEnabled !== false,
+    transferEnabled: options.manifest.transferEnabled !== false,
+    auctionEnabled: options.manifest.auctionEnabled !== false,
+    buffCardsEnabled: options.manifest.buffCardsEnabled !== false,
+    coffeeEnabled: options.manifest.coffeeEnabled !== false,
+    ...(options.manifest.customSystemPrompt
+      ? { customSystemPrompt: options.manifest.customSystemPrompt }
+      : {}),
     promptVersion: options.manifest.promptVersion,
     promptHash: options.manifest.promptHash,
     gitCommit: options.manifest.gitCommit,
@@ -620,7 +667,7 @@ export function createSeededLabGame(options: {
     game.labTokenUsage[player.id] = 0;
   }
 
-  if (options.manifest.chatEnabled) {
+  if (options.manifest.chatEnabled && options.manifest.publicChatEnabled !== false) {
     ensurePublicChatGroup(game);
     const pub = (game.chatGroups ?? []).find((g) => g.kind === "public");
     if (pub) pub.memberIds = game.players.map((p) => p.id);
@@ -788,9 +835,23 @@ function applyLabChatPlan(options: {
   mem: LabAgentMemory;
   counters: { pubUsed: number; privUsed: number };
   allowCreateGroup: boolean;
+  allowPublic?: boolean;
+  allowPrivate?: boolean;
+  allowGroupMessages?: boolean;
   maxMessagesThisStep: number;
 }): void {
-  const { game, player, plan, mem, counters, allowCreateGroup, maxMessagesThisStep } = options;
+  const {
+    game,
+    player,
+    plan,
+    mem,
+    counters,
+    allowCreateGroup,
+    allowPublic = true,
+    allowPrivate = true,
+    allowGroupMessages = true,
+    maxMessagesThisStep,
+  } = options;
 
   if (allowCreateGroup && plan.createGroup && Array.isArray(plan.createGroup.memberIds)) {
     const memberIds = plan.createGroup.memberIds.filter(
@@ -811,7 +872,7 @@ function applyLabChatPlan(options: {
   const pubGroup = (game.chatGroups ?? []).find((g) => g.kind === "public");
   for (const m of (plan.messages ?? []).slice(0, maxMessagesThisStep)) {
     if (!m || typeof m.text !== "string") continue;
-    if (m.channel === "public" && pubGroup && counters.pubUsed < MAX_PUBLIC_CHAT_PER_ROUND) {
+    if (m.channel === "public" && allowPublic && pubGroup && counters.pubUsed < MAX_PUBLIC_CHAT_PER_ROUND) {
       const sent = sendGroupChatMessage(game, player.id, pubGroup.id, m.text, undefined, {
         allowAi: true,
       });
@@ -823,7 +884,7 @@ function applyLabChatPlan(options: {
           roundInEra: game.roundInEra,
         });
       }
-    } else if (m.channel === "private" && m.toPlayerId) {
+    } else if (m.channel === "private" && allowPrivate && m.toPlayerId) {
       if (sendLabDirectMessage(game, player, m.toPlayerId, m.text, counters.privUsed)) {
         counters.privUsed += 1;
         const target = game.players.find((x) => x.id === m.toPlayerId);
@@ -836,19 +897,29 @@ function applyLabChatPlan(options: {
     }
   }
 
-  for (const gm of (plan.groupMessages ?? []).slice(0, 3)) {
-    if (!gm?.groupId || typeof gm.text !== "string") continue;
-    const sent = sendGroupChatMessage(game, player.id, gm.groupId, gm.text, undefined, {
-      allowAi: true,
-    });
-    if (sent.ok) {
-      mem.record("chat", `[我·群聊] ${sent.message.text}`, {
-        globalRound: game.globalRound,
-        era: game.currentEra,
-        roundInEra: game.roundInEra,
+  if (allowGroupMessages) {
+    for (const gm of (plan.groupMessages ?? []).slice(0, 3)) {
+      if (!gm?.groupId || typeof gm.text !== "string") continue;
+      const sent = sendGroupChatMessage(game, player.id, gm.groupId, gm.text, undefined, {
+        allowAi: true,
       });
+      if (sent.ok) {
+        mem.record("chat", `[我·群聊] ${sent.message.text}`, {
+          globalRound: game.globalRound,
+          era: game.currentEra,
+          roundInEra: game.roundInEra,
+        });
+      }
     }
   }
+}
+
+function cleanRawThinking(rawThinking?: string): string | undefined {
+  const cleaned = String(rawThinking ?? "")
+    .replace(/\r\n/g, "\n")
+    .trim()
+    .slice(0, 24_000);
+  return cleaned || undefined;
 }
 
 function recordLabDecision(
@@ -858,9 +929,11 @@ function recordLabDecision(
   reasoning: string,
   action: unknown,
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number },
-  latencyMs?: number
+  latencyMs?: number,
+  rawThinking?: string
 ): void {
   if (!game.labAgentDecisions) game.labAgentDecisions = [];
+  const preservedThinking = cleanRawThinking(rawThinking);
   game.labAgentDecisions.push({
     id: `dec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     timestamp: Date.now(),
@@ -873,6 +946,7 @@ function recordLabDecision(
     kind,
     model: player.agentModel,
     reasoning: oneLine(reasoning, 1200),
+    ...(preservedThinking ? { rawThinking: preservedThinking } : {}),
     action,
     promptTokens: usage?.promptTokens,
     completionTokens: usage?.completionTokens,
@@ -910,6 +984,7 @@ export async function askAgentWithValidation<T>(options: {
   llmCaller?: typeof askAiJson;
 }): Promise<{
   value: T;
+  rawThinking?: string;
   usage: { promptTokens: number; completionTokens: number; totalTokens: number };
   latencyMs: number;
 }> {
@@ -940,7 +1015,22 @@ export async function askAgentWithValidation<T>(options: {
     );
   }
 
-  const actionBudget = getLabActionBudget(budgetKind);
+  const thinkingMode = manifest.thinkingMode ?? "moderate";
+  const actionBudget = getLabActionBudget(budgetKind, thinkingMode);
+  // 非拍卖阶段给足真实推理与首字等待窗口（拍卖保持 15s 紧限，避免拖慢拍品节奏）
+  const effectiveTimeoutMs =
+    budgetKind === "auction"
+      ? actionBudget.timeoutMs
+      : budgetKind === "investment"
+        ? Math.max(actionBudget.timeoutMs, 65_000)
+        : Math.max(actionBudget.timeoutMs, 60_000);
+  const effectiveMaxOutputTokens =
+    budgetKind === "auction"
+      ? actionBudget.maxOutputTokens
+      : budgetKind === "investment"
+        ? Math.max(actionBudget.maxOutputTokens, 4096)
+        : Math.max(actionBudget.maxOutputTokens, 2400);
+  const fastRetryTimeoutMs = budgetKind === "auction" ? 15_000 : 55_000;
   const combinedController = new AbortController();
   const onRunAbort = () => combinedController.abort();
   const onCallAbort = () => combinedController.abort();
@@ -948,18 +1038,34 @@ export async function askAgentWithValidation<T>(options: {
   signal.addEventListener("abort", onRunAbort, { once: true });
   callSignal?.addEventListener("abort", onCallAbort, { once: true });
 
-  const systemPrompt = buildLabSystemPrompt(player.agentIndex ?? 1, player.name);
+  const systemPrompt = buildLabSystemPrompt(player.agentIndex ?? 1, player.name, {
+    interactionMode: manifest.interactionMode,
+    customSystemPrompt: manifest.customSystemPrompt,
+  });
   let prompt = userPrompt;
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let totalTokens = 0;
   let totalLatencyMs = 0;
-  let fastRetryNoThinking = false;
+  const thinkingChunks: string[] = [];
+  let fastRetryNoThinking = thinkingMode === "fast" || actionBudget.thinkingBudget <= 0;
   let hadTransportRetry = false;
+  let transportRetries = 0;
   let maxAttempts = 2;
 
   setTurnStatus(game, player, "thinking", io);
   try {
+    // 6 名真实 AI 同毫秒并发建连硅基流动易触发瞬时 Connection error，轻微错峰 150ms/席（拍卖除外）
+    if (!manifest.mock && llmCaller === askAiJson && budgetKind !== "auction") {
+      const seatOffsetMs = (Math.max(1, player.agentIndex ?? 1) - 1) * 150;
+      if (seatOffsetMs > 0) {
+        await sleepAbortable(seatOffsetMs, combinedController.signal).catch(() => {
+          if (signal.aborted) throw new LabStoppedError();
+          throw new LabCallExpiredError(`${player.name} 在 ${label} 超出本拍时限`);
+        });
+      }
+    }
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       ensureNotAborted(signal);
       if (callSignal?.aborted) {
@@ -983,18 +1089,19 @@ export async function askAgentWithValidation<T>(options: {
           fastRetryNoThinking
             ? {
                 config: seatCfg,
-                timeoutMs: 15_000,
+                timeoutMs: fastRetryTimeoutMs,
                 maxRetries: 1,
-                maxOutputTokens: actionBudget.maxOutputTokens,
+                maxOutputTokens: effectiveMaxOutputTokens,
                 disableThinking: true,
                 label: `${player.name}:${label}:fast`,
                 signal: combinedController.signal,
               }
             : {
                 config: seatCfg,
-                timeoutMs: actionBudget.timeoutMs,
+                timeoutMs: effectiveTimeoutMs,
                 maxRetries: 0,
-                maxOutputTokens: actionBudget.maxOutputTokens,
+                maxOutputTokens: effectiveMaxOutputTokens,
+                disableThinking: false,
                 thinkingBudget: actionBudget.thinkingBudget,
                 label: `${player.name}:${label}`,
                 signal: combinedController.signal,
@@ -1007,6 +1114,9 @@ export async function askAgentWithValidation<T>(options: {
       }
 
       totalLatencyMs += res.latencyMs ?? 0;
+      if (res.rawThinking?.trim()) {
+        thinkingChunks.push(res.rawThinking.trim());
+      }
       if (res.usage) {
         totalPromptTokens += res.usage.promptTokens;
         totalCompletionTokens += res.usage.completionTokens;
@@ -1021,16 +1131,33 @@ export async function askAgentWithValidation<T>(options: {
       }
 
       if (!res.ok) {
+        const isJsonParseError = /JSON\s*解析失败/i.test(res.error ?? "");
         const isTimeoutLike = /timeout|timed out|aborted|empty response|terminated/i.test(
           res.error ?? ""
         );
-        const isTransientNet = /429|500|502|503|504|ECONNRESET|ETIMEDOUT|fetch failed|network|socket|hang up/i.test(
+        const isTransientNet = /429|500|502|503|504|connection error|ECONNRESET|ETIMEDOUT|fetch failed|network|socket|hang up/i.test(
           res.error ?? ""
         );
-        if (attempt === 1 && !manifest.mock && !hadTransportRetry && (isTimeoutLike || isTransientNet)) {
+        if (isJsonParseError && attempt < Math.max(maxAttempts, 3)) {
+          if (attempt >= 2) fastRetryNoThinking = true;
+          maxAttempts = Math.max(maxAttempts, 3);
+          prompt = `${userPrompt}\n\n注意：上一次回复不是完整合法的 JSON，请务必只输出一个完整的 JSON 对象（不要多余文字、不要在字符串中直接换行）。`;
+          continue;
+        }
+        if (!manifest.mock && !hadTransportRetry && (isTimeoutLike || isTransientNet)) {
           if (isTimeoutLike) fastRetryNoThinking = true;
           hadTransportRetry = true;
-          maxAttempts = 3;
+          transportRetries += 1;
+          maxAttempts = Math.max(maxAttempts, attempt + 2);
+          if (!manifest.mock && llmCaller === askAiJson && isTransientNet) {
+            await sleepAbortable(400, combinedController.signal).catch(() => {});
+          }
+          continue;
+        }
+        if (!manifest.mock && llmCaller === askAiJson && transportRetries < 2 && isTransientNet) {
+          transportRetries += 1;
+          maxAttempts = Math.min(4, maxAttempts + 1);
+          await sleepAbortable(600, combinedController.signal).catch(() => {});
           continue;
         }
         throw new LabFatalError(
@@ -1040,8 +1167,10 @@ export async function askAgentWithValidation<T>(options: {
 
       const validated = validate(res.data);
       if (validated != null) {
+        const mergedThinking = thinkingChunks.join("\n\n").trim();
         return {
           value: validated,
+          rawThinking: cleanRawThinking(mergedThinking),
           usage: {
             promptTokens: totalPromptTokens,
             completionTokens: totalCompletionTokens,
@@ -1137,7 +1266,8 @@ async function resolveIncomingTransfers(options: {
         res.value.reasoning,
         { txId: tx.id, fromName: tx.fromName, amount: tx.amount, decision: res.value.decision },
         res.usage,
-        res.latencyMs
+        res.latencyMs,
+        res.rawThinking
       );
       mem.record(
         "transfer",
@@ -1296,7 +1426,8 @@ async function runSingleLabGame(options: {
                 res.value.reasoning,
                 { ranking: res.value.ranking },
                 res.usage,
-                res.latencyMs
+                res.latencyMs,
+                res.rawThinking
               );
               const names = res.value.ranking
                 .map((id) => game.players.find((x) => x.id === id)?.name ?? id)
@@ -1317,7 +1448,27 @@ async function runSingleLabGame(options: {
       }
 
       if (game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") {
-        await resolveIncomingTransfers({ game, memories, manifest, sharedConfig, signal, io });
+        const allowTransfer = manifest.transferEnabled !== false;
+        const allowBuffCards = manifest.buffCardsEnabled !== false;
+        const allowCoffee = manifest.coffeeEnabled !== false;
+        const allowPublic = manifest.chatEnabled && manifest.publicChatEnabled !== false;
+        const allowPrivate = manifest.chatEnabled && manifest.privateChatEnabled !== false;
+        const allowGroups = manifest.chatEnabled && manifest.customGroupsEnabled !== false;
+        const anyChatAllowed = allowPublic || allowPrivate || allowGroups;
+        const interactionMode = manifest.interactionMode ?? "guided_two_step";
+        const promptFlags = {
+          interactionMode,
+          publicChatEnabled: allowPublic,
+          privateChatEnabled: allowPrivate,
+          customGroupsEnabled: allowGroups,
+          transferEnabled: allowTransfer,
+          buffCardsEnabled: allowBuffCards,
+          coffeeEnabled: allowCoffee,
+        };
+
+        if (allowTransfer) {
+          await resolveIncomingTransfers({ game, memories, manifest, sharedConfig, signal, io });
+        }
         ingestRoundChatsIntoMemories(game, memories, seenPublicMsgs, seenDmMsgs);
 
         const roundChatCounters = new Map<string, { pubUsed: number; privUsed: number }>();
@@ -1325,8 +1476,8 @@ async function runSingleLabGame(options: {
           roundChatCounters.set(p.id, { pubUsed: 0, privUsed: 0 });
         }
 
-        // 第 4 轮同轮两步闭环：开启沟通时先并发聊意向并同步全场，再基于本轮最新发言拍板投资
-        if (manifest.chatEnabled) {
+        // 先聊后投模式（引导温和或自由语气）执行同轮两步闭环；彻底放手一步直出时直接走第二步
+        if (anyChatAllowed && interactionMode !== "free_one_step") {
           const chatPlans = await Promise.all(
             game.players.map(async (p) => {
               const obs = buildLabObservation(game, p.id);
@@ -1337,7 +1488,7 @@ async function runSingleLabGame(options: {
                 manifest,
                 sharedConfig,
                 label: `r${game.globalRound}-chat`,
-                userPrompt: buildLabChatPrompt(obs, mem.digest()),
+                userPrompt: buildLabChatPrompt(obs, mem.digest(), promptFlags),
                 validate: (data) => {
                   if (!data || typeof data !== "object") return null;
                   const raw = data as Partial<ChatPlanFields>;
@@ -1360,11 +1511,17 @@ async function runSingleLabGame(options: {
                 io,
                 budgetKind: "chat",
               });
-              return { player: p, plan: res.value, usage: res.usage, latencyMs: res.latencyMs };
+              return {
+                player: p,
+                plan: res.value,
+                rawThinking: res.rawThinking,
+                usage: res.usage,
+                latencyMs: res.latencyMs,
+              };
             })
           );
 
-          for (const { player, plan, usage, latencyMs } of chatPlans) {
+          for (const { player, plan, rawThinking, usage, latencyMs } of chatPlans) {
             ensureNotAborted(signal);
             const mem = memories.get(player.id)!;
             const counters = roundChatCounters.get(player.id)!;
@@ -1374,7 +1531,10 @@ async function runSingleLabGame(options: {
               plan,
               mem,
               counters,
-              allowCreateGroup: true,
+              allowCreateGroup: allowGroups,
+              allowPublic,
+              allowPrivate,
+              allowGroupMessages: allowGroups,
               maxMessagesThisStep: 3,
             });
             recordLabDecision(
@@ -1388,7 +1548,8 @@ async function runSingleLabGame(options: {
                 createGroup: plan.createGroup ?? null,
               },
               usage,
-              latencyMs
+              latencyMs,
+              rawThinking
             );
           }
 
@@ -1397,7 +1558,7 @@ async function runSingleLabGame(options: {
           await stepPauseMs(350, 15);
         }
 
-        // 先并发请求 6 名 AI 看完本轮发言后的完整行动方案，再按顺序严格校验并写入状态
+        // 请求 6 名 AI 给出完整行动方案，再按顺序严格校验并写入状态
         const plans = await Promise.all(
           game.players.map(async (p) => {
             const obs = buildLabObservation(game, p.id);
@@ -1408,7 +1569,7 @@ async function runSingleLabGame(options: {
               manifest,
               sharedConfig,
               label: `r${game.globalRound}-investment`,
-              userPrompt: buildLabInvestmentPrompt(obs, mem.digest(), manifest.chatEnabled),
+              userPrompt: buildLabInvestmentPrompt(obs, mem.digest(), anyChatAllowed, promptFlags),
               validate: (data) => {
                 if (!data || typeof data !== "object") return null;
                 const raw = data as Partial<InvestmentPlan>;
@@ -1428,15 +1589,21 @@ async function runSingleLabGame(options: {
               io,
               budgetKind: "investment",
             });
-            return { player: p, plan: res.value, usage: res.usage, latencyMs: res.latencyMs };
+            return {
+              player: p,
+              plan: res.value,
+              rawThinking: res.rawThinking,
+              usage: res.usage,
+              latencyMs: res.latencyMs,
+            };
           })
         );
 
-        for (const { player, plan, usage, latencyMs } of plans) {
+        for (const { player, plan, rawThinking, usage, latencyMs } of plans) {
           ensureNotAborted(signal);
           const mem = memories.get(player.id)!;
 
-          if (manifest.chatEnabled) {
+          if (anyChatAllowed) {
             const counters = roundChatCounters.get(player.id)!;
             applyLabChatPlan({
               game,
@@ -1444,21 +1611,26 @@ async function runSingleLabGame(options: {
               plan,
               mem,
               counters,
-              allowCreateGroup: false,
-              maxMessagesThisStep: 1,
+              allowCreateGroup: allowGroups && interactionMode === "free_one_step",
+              allowPublic,
+              allowPrivate,
+              allowGroupMessages: allowGroups,
+              maxMessagesThisStep: interactionMode === "free_one_step" ? 3 : 1,
             });
           }
 
-          // 买咖啡（最多 3 杯，不超过可用财富）
+          // 买咖啡（最多 3 杯，不超过可用财富；关闭时不执行）
           const avail = playerAvailableWealth(game, player);
-          const maxCups = Math.min(3, Math.max(0, Math.floor(avail / COFFEE_WEALTH_COST)));
+          const maxCups = allowCoffee
+            ? Math.min(3, Math.max(0, Math.floor(avail / COFFEE_WEALTH_COST)))
+            : 0;
           const cups = Math.min(Math.max(0, int(plan.coffee) ?? 0), maxCups);
           for (let c = 0; c < cups; c++) {
             purchaseCoffee(game, player);
           }
 
           // 道具卡
-          if (plan.useCard?.cardId && player.inventory.includes(plan.useCard.cardId)) {
+          if (allowBuffCards && plan.useCard?.cardId && player.inventory.includes(plan.useCard.cardId)) {
             const c = plan.useCard;
             const cardId = c.cardId!;
             if (cardId === "buff_lottery") {
@@ -1478,7 +1650,7 @@ async function runSingleLabGame(options: {
           }
 
           // 转账（amount > 0 才算真实转账）
-          if (plan.transfer && plan.transfer.toPlayerId) {
+          if (allowTransfer && plan.transfer && plan.transfer.toPlayerId) {
             const amount = int(plan.transfer.amount) ?? 0;
             const toPlayer = game.players.find(
               (x) => x.id === plan.transfer!.toPlayerId && x.id !== player.id
@@ -1533,13 +1705,14 @@ async function runSingleLabGame(options: {
               messages: plan.messages ?? [],
               groupMessages: plan.groupMessages ?? [],
               createGroup: plan.createGroup ?? null,
-              transfer: plan.transfer ?? null,
+              transfer: allowTransfer ? (plan.transfer ?? null) : null,
               coffee: cups,
-              useCard: plan.useCard ?? null,
+              useCard: allowBuffCards ? (plan.useCard ?? null) : null,
               investment: sanitizedInvest,
             },
             usage,
-            latencyMs
+            latencyMs,
+            rawThinking
           );
           mem.record(
             "action",
@@ -1550,7 +1723,9 @@ async function runSingleLabGame(options: {
         }
 
         // 结算前处理本轮刚发出的待收转账 + 彩票
-        await resolveIncomingTransfers({ game, memories, manifest, sharedConfig, signal, io });
+        if (allowTransfer) {
+          await resolveIncomingTransfers({ game, memories, manifest, sharedConfig, signal, io });
+        }
         ingestRoundChatsIntoMemories(game, memories, seenPublicMsgs, seenDmMsgs);
         settleAllPendingLotteryOffers(game);
         clearActionDeadline(game);
@@ -1588,6 +1763,14 @@ async function runSingleLabGame(options: {
       }
 
       if (game.phase === "AUCTION") {
+        if (manifest.auctionEnabled === false) {
+          game.autoHostNextActionAt = undefined;
+          endAuctionSession(game);
+          game.logs.push("⏭️ 本局已配置关闭拍卖会，直接进入下一时代");
+          if (io) broadcastUpdate(io, game);
+          await stepPauseMs(200, 10);
+          continue;
+        }
         let lastFocus: string | undefined;
         while ((game.phase as string) === "AUCTION") {
           ensureNotAborted(signal);
@@ -1661,6 +1844,7 @@ async function runSingleLabGame(options: {
                     return {
                       player: p,
                       decision: res.value,
+                      rawThinking: res.rawThinking,
                       usage: res.usage,
                       latencyMs: res.latencyMs,
                     };
@@ -1732,7 +1916,8 @@ async function runSingleLabGame(options: {
           res.value.reasoning,
           { name: res.value.name },
           res.usage,
-          res.latencyMs
+          res.latencyMs,
+          res.rawThinking
         );
         await finalizeCommunityName(io, game, res.value.name, "lab_agent");
         break;
@@ -1870,6 +2055,28 @@ export function startLabRun(params: LabStartParams): {
     providers.push(providerName);
   }
 
+  const interactionMode: LabInteractionMode =
+    params.interactionMode === "free_two_step" ||
+    params.interactionMode === "free_one_step" ||
+    params.interactionMode === "guided_two_step"
+      ? params.interactionMode
+      : "guided_two_step";
+  const thinkingMode: LabThinkingMode =
+    params.thinkingMode === "fast" ||
+    params.thinkingMode === "moderate" ||
+    params.thinkingMode === "deep"
+      ? params.thinkingMode
+      : "moderate";
+  const chatEnabled = params.chatEnabled !== false;
+  const publicChatEnabled = chatEnabled && params.publicChatEnabled !== false;
+  const privateChatEnabled = chatEnabled && params.privateChatEnabled !== false;
+  const customGroupsEnabled = chatEnabled && params.customGroupsEnabled !== false;
+  const effectiveChatEnabled = publicChatEnabled || privateChatEnabled || customGroupsEnabled;
+  const customSystemPrompt =
+    typeof params.customSystemPrompt === "string" && params.customSystemPrompt.trim()
+      ? params.customSystemPrompt.trim().slice(0, 6000)
+      : undefined;
+
   const stamp = timestampForId();
   const runId = `${condition}-${seedBase}-${stamp}`;
   const manifest: LabRunManifest = {
@@ -1891,12 +2098,22 @@ export function startLabRun(params: LabStartParams): {
     tokenBudgetPerAgent,
     maxOutputTokens: Math.max(64_000, AI_CONFIG.maxOutputTokens * 2),
     maxRetries: Math.max(3, AI_CONFIG.maxRetries),
-    chatEnabled: params.chatEnabled !== false,
+    chatEnabled: effectiveChatEnabled,
     memoryEnabled: params.memoryEnabled !== false,
     predictionEnabled: params.predictionEnabled !== false,
     autoSocialScore: params.autoSocialScore !== false,
     mock: Boolean(params.mock),
     roomId: makeRoomId(runId, 0),
+    interactionMode,
+    thinkingMode,
+    publicChatEnabled,
+    privateChatEnabled,
+    customGroupsEnabled,
+    transferEnabled: params.transferEnabled !== false,
+    auctionEnabled: params.auctionEnabled !== false,
+    buffCardsEnabled: params.buffCardsEnabled !== false,
+    coffeeEnabled: params.coffeeEnabled !== false,
+    ...(customSystemPrompt ? { customSystemPrompt } : {}),
   };
 
   const startedAt = Date.now();

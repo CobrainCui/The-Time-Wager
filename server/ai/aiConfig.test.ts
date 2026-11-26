@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   MAX_AI_PLAYER_SLOTS,
+  getProductAiModelCatalog,
   resolveAiModelConfig,
+  resolveAiModelConfigForPlayer,
   resolveAiModelConfigForSlot,
+  resolveProductDefaultSeatModels,
 } from "./aiConfig.js";
 
 const AI_KEYS = [
@@ -143,10 +146,61 @@ test("硅基流动共享密钥与占位符识别", () => {
   withEnv({ SILICONFLOW_API_KEY: "sk-siliconflow-placeholder" }, () => {
     assert.equal(resolveAiModelConfig(), null);
   });
-  withEnv({ SILICONFLOW_API_KEY: "sk-real-siliconflow-test" }, () => {
+  withEnv({ SILICONFLOW_API_KEY: "sk-real-siliconflow-test", AI_MODEL: "gpt-4o" }, () => {
     const cfg = resolveAiModelConfig();
     assert.equal(cfg?.apiKey, "sk-real-siliconflow-test");
     assert.equal(cfg?.baseURL, "https://api.siliconflow.cn/v1");
     assert.equal(cfg?.provider, "siliconflow");
+    assert.notEqual(cfg?.model, "gpt-4o");
   });
+});
+
+test("resolveAiModelConfigForPlayer 支持单座位模型覆盖且不泄露密钥到目录", () => {
+  withEnv({ SILICONFLOW_API_KEY: "sk-secret-value-123456" }, () => {
+    const base = resolveAiModelConfigForSlot(1);
+    const overridden = resolveAiModelConfigForPlayer({
+      aiSlot: 1,
+      aiModelOverride: "Qwen/Qwen3.8-27B",
+    });
+    assert.equal(overridden?.apiKey, base?.apiKey);
+    assert.equal(overridden?.model, "Qwen/Qwen3.8-27B");
+    assert.notEqual(base?.model, "Qwen/Qwen3.8-27B");
+
+    const catalog = getProductAiModelCatalog();
+    assert.equal(catalog.keyConfigured, true);
+    assert.equal(catalog.isSiliconFlow, true);
+    assert.ok(catalog.modelPoolGroups.length >= 7);
+    assert.equal(JSON.stringify(catalog).includes("sk-secret-value-123456"), false);
+  });
+});
+
+test("硅基流动过滤未验证旧模型并返回实测 5 家高速默认阵容", () => {
+  withEnv(
+    {
+      SILICONFLOW_API_KEY: "sk-secret-sf",
+      SILICONFLOW_MODEL: "zai-org/GLM-5.3-Flash",
+      AI_PLAYER_3_MODEL: "zai-org/GLM-5.3-Flash",
+    },
+    () => {
+      assert.equal(resolveAiModelConfig()?.model, "deepseek-ai/DeepSeek-V4.1-Flash");
+      assert.equal(resolveAiModelConfigForSlot(3)?.model, "deepseek-ai/DeepSeek-V4.1-Flash");
+      assert.deepEqual(resolveProductDefaultSeatModels(), [
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "Qwen/Qwen3.8-27B",
+        "zai-org/GLM-5.3",
+        "moonshotai/Kimi-K2.7-Code",
+        "tencent/Hy4-preview",
+      ]);
+    }
+  );
+  withEnv(
+    {
+      SILICONFLOW_API_KEY: "sk-secret-sf",
+      AI_PLAYER_3_MODEL: "zai-org/GLM-5.2",
+    },
+    () => {
+      assert.equal(resolveAiModelConfigForSlot(3)?.model, "zai-org/GLM-5.2");
+      assert.equal(resolveProductDefaultSeatModels()[2], "zai-org/GLM-5.2");
+    }
+  );
 });

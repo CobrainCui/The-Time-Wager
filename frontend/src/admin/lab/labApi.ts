@@ -1,10 +1,12 @@
 import { adminApiUrl, adminAuthHeaders } from "../adminFetch";
 import type {
   LabConfigSummary,
+  LabInteractionMode,
   LabLiveStatus,
   LabPreflightResult,
   LabRunsResponse,
   LabSessionDetail,
+  LabThinkingMode,
 } from "./LabTypes";
 
 async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -63,6 +65,16 @@ export async function startLabRunApi(payload: {
   mock: boolean;
   tokenBudgetPerAgent: number;
   models: string[];
+  interactionMode?: LabInteractionMode;
+  thinkingMode?: LabThinkingMode;
+  publicChatEnabled?: boolean;
+  privateChatEnabled?: boolean;
+  customGroupsEnabled?: boolean;
+  transferEnabled?: boolean;
+  auctionEnabled?: boolean;
+  buffCardsEnabled?: boolean;
+  coffeeEnabled?: boolean;
+  customSystemPrompt?: string;
 }): Promise<{ ok: boolean }> {
   return jsonRequest<{ ok: boolean }>("/api/admin/lab/runs/start", {
     method: "POST",

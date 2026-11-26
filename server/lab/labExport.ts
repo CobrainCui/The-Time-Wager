@@ -460,6 +460,7 @@ export async function buildLabSessionWorkbook(exportData: LabSessionExport): Pro
     类型: d.kind,
     模型: sanitizeCell(d.model ?? ""),
     推理: sanitizeCell(d.reasoning),
+    原始思考过程: sanitizeCell(d.rawThinking ?? ""),
     动作: sanitizeCell(JSON.stringify(d.action)),
     promptTokens: d.promptTokens ?? "",
     completionTokens: d.completionTokens ?? "",

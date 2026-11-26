@@ -7,7 +7,9 @@ import { AdminImageManager } from "./AdminImageManager";
 import { AdminSessionHistory } from "./AdminSessionHistory";
 import AdminFeedback from "./AdminFeedback";
 import { AdminLab } from "./lab/AdminLab";
+import { LabSessionPage } from "./lab/LabSessionPage";
 import { fetchLabStatus } from "./lab/labApi";
+import type { LabSessionListItem } from "./lab/LabTypes";
 import { AdminLogin } from "./AdminLogin";
 import { clearAdminToken, getAdminToken, setAdminToken } from "./adminToken";
 import { ConnectionGate } from "../components/ConnectionGate";
@@ -50,6 +52,7 @@ export default function AdminApp() {
   const [buffImages, setBuffImages] = useState<Record<string, number>>({});
   const [personaImages, setPersonaImages] = useState<Record<string, number>>({});
   const [adminScreen, setAdminScreen] = useState<AdminScreen>("rooms");
+  const [activeLabSession, setActiveLabSession] = useState<LabSessionListItem | null>(null);
   const [aiPlayersEnabled, setAiPlayersEnabled] = useState(true);
   const [labTransition, setLabTransition] = useState<{
     kind: "switching" | "switched" | "finished";
@@ -397,10 +400,21 @@ export default function AdminApp() {
           labTransition={labTransition}
         />
       ) : adminScreen === "lab" ? (
-        <AdminLab
-          onBack={() => setAdminScreen("rooms")}
-          onSpectateLabRoom={(roomId) => handleSpectate(roomId, "lab")}
-        />
+        activeLabSession ? (
+          <LabSessionPage
+            session={activeLabSession}
+            onBack={() => setActiveLabSession(null)}
+          />
+        ) : (
+          <AdminLab
+            onBack={() => {
+              setActiveLabSession(null);
+              setAdminScreen("rooms");
+            }}
+            onSpectateLabRoom={(roomId) => handleSpectate(roomId, "lab")}
+            onOpenSession={(session) => setActiveLabSession(session)}
+          />
+        )
       ) : adminScreen === "feedback" ? (
         <AdminFeedback onBack={() => setAdminScreen("rooms")} />
       ) : adminScreen === "sessions" ? (

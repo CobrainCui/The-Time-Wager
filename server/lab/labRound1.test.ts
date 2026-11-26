@@ -39,18 +39,15 @@ async function waitForLabFinish(timeoutMs = 30_000): Promise<void> {
   throw new Error("Timed out waiting for Lab run to finish");
 }
 
-test("硅基流动国产最新模型池包含 7 家厂商各 2 款共 14 款且 6 席默认模型各不相同", () => {
-  assert.equal(SILICONFLOW_MODEL_GROUPS.length, 7);
-  for (const group of SILICONFLOW_MODEL_GROUPS) {
-    assert.equal(group.models.length, 2, `${group.vendor} 应提供最近两款模型`);
-  }
-  assert.equal(SILICONFLOW_ALL_MODEL_IDS.length, 14);
+test("硅基流动国产实测可用模型池包含 8 家厂商共 12 款且 6 席默认模型各不相同", () => {
+  assert.equal(SILICONFLOW_MODEL_GROUPS.length, 8);
+  assert.equal(SILICONFLOW_ALL_MODEL_IDS.length, 12);
   assert.equal(DEFAULT_LAB_SIX_SEAT_MODELS.length, 6);
   assert.equal(new Set(DEFAULT_LAB_SIX_SEAT_MODELS).size, 6);
 
   const summary = getLabConfigSummary();
   assert.equal(summary.siliconflowBaseUrl, SILICONFLOW_DEFAULT_BASE_URL);
-  assert.equal(summary.modelPoolGroups.length, 7);
+  assert.equal(summary.modelPoolGroups.length, 8);
   assert.equal(summary.defaultSeatModels.length, 6);
   assert.equal(summary.defaultLabTokenBudgetPerAgent, 5_000_000);
   assert.equal(getDefaultLabTokenBudgetPerAgent(), 5_000_000);

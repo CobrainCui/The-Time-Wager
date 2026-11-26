@@ -298,6 +298,25 @@ export const LabLivePanel: React.FC<Props> = ({ game }) => {
                     🧠 心里想的{thought ? `（${DECISION_KIND_LABELS[thought.kind] || thought.kind} · 第${thought.globalRound}轮）` : ""}
                   </div>
                   {thought?.reasoning || "尚未产生思考记录"}
+                  {thought?.rawThinking && (
+                    <details style={{ marginTop: "0.3rem" }}>
+                      <summary style={{ cursor: "pointer", fontSize: uiRem(0.68), color: "#6ee7b7" }}>
+                        💭 查看原始思考原文（{thought.rawThinking.length} 字）
+                      </summary>
+                      <div
+                        style={{
+                          marginTop: "0.25rem",
+                          maxHeight: "140px",
+                          overflowY: "auto",
+                          whiteSpace: "pre-wrap",
+                          color: "#d1fae5",
+                          fontSize: uiRem(0.69),
+                        }}
+                      >
+                        {thought.rawThinking}
+                      </div>
+                    </details>
+                  )}
                 </div>
 
                 <div

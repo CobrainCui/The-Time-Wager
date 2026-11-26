@@ -54,7 +54,7 @@ export function registerLabAdminRoutes(app: express.Express): void {
   app.post("/api/admin/lab/runs/start", express.json(), requireAdminToken, (req, res) => {
     const body = req.body ?? {};
     const result = startLabRun({
-      condition: String(body.condition ?? "C1"),
+      condition: String(body.condition ?? "custom"),
       name: typeof body.name === "string" ? body.name : undefined,
       notes: typeof body.notes === "string" ? body.notes : undefined,
       games: Number(body.games ?? 1),
@@ -66,6 +66,26 @@ export function registerLabAdminRoutes(app: express.Express): void {
       mock: body.mock === true,
       tokenBudgetPerAgent: Number(body.tokenBudgetPerAgent),
       models: Array.isArray(body.models) ? body.models.map(String) : [],
+      interactionMode:
+        body.interactionMode === "free_two_step" ||
+        body.interactionMode === "free_one_step" ||
+        body.interactionMode === "guided_two_step"
+          ? body.interactionMode
+          : undefined,
+      thinkingMode:
+        body.thinkingMode === "fast" ||
+        body.thinkingMode === "moderate" ||
+        body.thinkingMode === "deep"
+          ? body.thinkingMode
+          : undefined,
+      publicChatEnabled: typeof body.publicChatEnabled === "boolean" ? body.publicChatEnabled : undefined,
+      privateChatEnabled: typeof body.privateChatEnabled === "boolean" ? body.privateChatEnabled : undefined,
+      customGroupsEnabled: typeof body.customGroupsEnabled === "boolean" ? body.customGroupsEnabled : undefined,
+      transferEnabled: typeof body.transferEnabled === "boolean" ? body.transferEnabled : undefined,
+      auctionEnabled: typeof body.auctionEnabled === "boolean" ? body.auctionEnabled : undefined,
+      buffCardsEnabled: typeof body.buffCardsEnabled === "boolean" ? body.buffCardsEnabled : undefined,
+      coffeeEnabled: typeof body.coffeeEnabled === "boolean" ? body.coffeeEnabled : undefined,
+      customSystemPrompt: typeof body.customSystemPrompt === "string" ? body.customSystemPrompt : undefined,
     });
     if (!result.ok) {
       res.status(409).json({ error: result.error });

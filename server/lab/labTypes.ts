@@ -4,8 +4,10 @@ import type {
   GroupMessage,
   LabAgentDecision,
   LabDirectMessage,
+  LabInteractionMode,
   LabPrediction,
   LabRoomMeta,
+  LabThinkingMode,
   Transaction,
 } from "../state/gameState.js";
 import type { SessionTelemetry } from "../state/sessionTelemetry.js";
@@ -36,6 +38,16 @@ export interface LabRunManifest {
   autoSocialScore: boolean;
   mock: boolean;
   roomId: string;
+  interactionMode?: LabInteractionMode;
+  thinkingMode?: LabThinkingMode;
+  publicChatEnabled?: boolean;
+  privateChatEnabled?: boolean;
+  customGroupsEnabled?: boolean;
+  transferEnabled?: boolean;
+  auctionEnabled?: boolean;
+  buffCardsEnabled?: boolean;
+  coffeeEnabled?: boolean;
+  customSystemPrompt?: string;
 }
 
 export interface LabSessionQc {
@@ -327,6 +339,16 @@ export interface LabStartParams {
   mock: boolean;
   tokenBudgetPerAgent: number;
   models: string[];
+  interactionMode?: LabInteractionMode;
+  thinkingMode?: LabThinkingMode;
+  publicChatEnabled?: boolean;
+  privateChatEnabled?: boolean;
+  customGroupsEnabled?: boolean;
+  transferEnabled?: boolean;
+  auctionEnabled?: boolean;
+  buffCardsEnabled?: boolean;
+  coffeeEnabled?: boolean;
+  customSystemPrompt?: string;
 }
 
 export interface LabLiveStatus {

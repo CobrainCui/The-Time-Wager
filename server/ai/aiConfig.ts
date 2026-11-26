@@ -8,7 +8,9 @@
  */
 import {
   DEFAULT_LAB_SIX_SEAT_MODELS,
+  SILICONFLOW_ALL_MODEL_IDS,
   SILICONFLOW_DEFAULT_BASE_URL,
+  SILICONFLOW_MODEL_GROUPS,
   SILICONFLOW_PLACEHOLDER_KEY,
 } from "../lab/siliconflowModels.js";
 
@@ -67,6 +69,32 @@ function isPlaceholderKey(key: string): boolean {
   );
 }
 
+const LEGACY_UNVERIFIED_LAB_MODELS = new Set([
+  "Qwen/Qwen3.5-397B-A17B",
+  "zai-org/GLM-5.3-Flash",
+  "moonshotai/Kimi-K3.1-Pro",
+  "moonshotai/Kimi-K3",
+  "MiniMaxAI/MiniMax-M3.1-Flash",
+  "MiniMaxAI/MiniMax-M3",
+  "stepfun-ai/Step-3.5-Flash",
+  "stepfun-ai/step3",
+  "tencent/Hy3",
+]);
+
+function isLegacyUnverifiedModel(model?: string): boolean {
+  const trimmed = (model ?? "").trim();
+  return Boolean(trimmed && LEGACY_UNVERIFIED_LAB_MODELS.has(trimmed));
+}
+
+function sanitizeSiliconFlowModel(model?: string): string | undefined {
+  const trimmed = (model ?? "").trim();
+  if (!trimmed) return undefined;
+  if (trimmed.toLowerCase() === "gpt-4o" || isLegacyUnverifiedModel(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 /**
  * 共享模型配置优先级：
  *   AI_API_KEY / AI_BASE_URL / AI_MODEL
@@ -91,12 +119,18 @@ function resolveSharedModelConfig(): AiModelConfig | null {
     return {
       apiKey: explicitKey,
       baseURL: rawBaseUrl || (looksSiliconFlow ? SILICONFLOW_DEFAULT_BASE_URL : undefined),
-      model: firstNonEmpty(
-        process.env.AI_MODEL,
-        process.env.SILICONFLOW_MODEL,
-        process.env.OPENAI_MODEL,
-        looksSiliconFlow ? DEFAULT_LAB_SIX_SEAT_MODELS[0] : "gpt-4o"
-      ),
+      model: looksSiliconFlow
+        ? firstNonEmpty(
+            sanitizeSiliconFlowModel(process.env.AI_MODEL),
+            sanitizeSiliconFlowModel(process.env.SILICONFLOW_MODEL),
+            DEFAULT_LAB_SIX_SEAT_MODELS[0]
+          )
+        : firstNonEmpty(
+            process.env.AI_MODEL,
+            process.env.SILICONFLOW_MODEL,
+            process.env.OPENAI_MODEL,
+            "gpt-4o"
+          ),
       provider: rawProvider || (looksSiliconFlow ? "siliconflow" : "custom"),
       source: "shared",
     };
@@ -109,8 +143,8 @@ function resolveSharedModelConfig(): AiModelConfig | null {
         firstNonEmpty(process.env.SILICONFLOW_BASE_URL, process.env.AI_BASE_URL, SILICONFLOW_DEFAULT_BASE_URL) ||
         SILICONFLOW_DEFAULT_BASE_URL,
       model: firstNonEmpty(
-        process.env.AI_MODEL,
-        process.env.SILICONFLOW_MODEL,
+        sanitizeSiliconFlowModel(process.env.SILICONFLOW_MODEL),
+        sanitizeSiliconFlowModel(process.env.AI_MODEL),
         DEFAULT_LAB_SIX_SEAT_MODELS[0]
       ),
       provider: firstNonEmpty(process.env.AI_PROVIDER, "siliconflow"),
@@ -143,11 +177,25 @@ function resolveSharedModelConfig(): AiModelConfig | null {
   return null;
 }
 
-/** 6AI 实验室 1～6 号座位默认模型列表（优先读取 LAB_PLAYER_<1..6>_MODEL，未填则用不同厂商默认阵容）。 */
+/** 6AI 实验室 1～6 号座位默认模型列表（优先读取 LAB_PLAYER_<1..6>_MODEL，旧占位预设自动回退为实测可用国产阵容）。 */
 export function resolveLabDefaultSeatModels(): string[] {
-  return DEFAULT_LAB_SIX_SEAT_MODELS.map((fallback, idx) =>
-    firstNonEmpty(process.env[`LAB_PLAYER_${idx + 1}_MODEL`], fallback)
-  );
+  return DEFAULT_LAB_SIX_SEAT_MODELS.map((fallback, idx) => {
+    const envVal = firstNonEmpty(process.env[`LAB_PLAYER_${idx + 1}_MODEL`]);
+    if (envVal && !LEGACY_UNVERIFIED_LAB_MODELS.has(envVal)) {
+      return envVal;
+    }
+    return fallback;
+  });
+}
+
+/** 产品版 1～5 号 AI 座位默认模型列表（优先读取 AI_PLAYER_<1..5>_MODEL，自动过滤未验证旧模型并沿用实验室实测可用阵容）。 */
+export function resolveProductDefaultSeatModels(): string[] {
+  return resolveLabDefaultSeatModels()
+    .slice(0, MAX_AI_PLAYER_SLOTS)
+    .map((fallback, idx) => {
+      const envVal = sanitizeSiliconFlowModel(process.env[`AI_PLAYER_${idx + 1}_MODEL`]);
+      return envVal || fallback;
+    });
 }
 
 function slotEnv(slot: number, field: string): string {
@@ -177,10 +225,16 @@ export function resolveAiModelConfigForSlot(slot?: number): AiModelConfig | null
   const slotProvider = slotEnv(normalizedSlot, "PROVIDER");
 
   if (slotKey && !isPlaceholderKey(slotKey)) {
+    const isSlotSiliconFlow =
+      /siliconflow/i.test(slotProvider || shared?.provider || "") ||
+      /siliconflow\./i.test(slotBaseURL || shared?.baseURL || "");
+    const resolvedSlotModel = isSlotSiliconFlow
+      ? sanitizeSiliconFlowModel(slotModel) || shared?.model || DEFAULT_LAB_SIX_SEAT_MODELS[0]
+      : slotModel || shared?.model || "gpt-4o";
     return {
       apiKey: slotKey,
       baseURL: slotBaseURL || shared?.baseURL,
-      model: slotModel || shared?.model || "gpt-4o",
+      model: resolvedSlotModel,
       provider: slotProvider || shared?.provider || "custom",
       source: `player-${normalizedSlot}`,
       slot: normalizedSlot,
@@ -188,13 +242,17 @@ export function resolveAiModelConfigForSlot(slot?: number): AiModelConfig | null
   }
 
   if (!shared) return null;
-  if (!slotBaseURL && !slotModel && !slotProvider) return shared;
+  const sharedIsSiliconFlow =
+    /siliconflow/i.test(slotProvider || shared.provider) ||
+    /siliconflow\./i.test(slotBaseURL || shared.baseURL || "");
+  const effectiveSlotModel = sharedIsSiliconFlow ? sanitizeSiliconFlowModel(slotModel) : slotModel;
+  if (!slotBaseURL && !effectiveSlotModel && !slotProvider) return shared;
 
   // 座位只覆盖了模型/地址/供应商标识时，沿用共享 Key。
   return {
     ...shared,
     baseURL: slotBaseURL || shared.baseURL,
-    model: slotModel || shared.model,
+    model: effectiveSlotModel || shared.model,
     provider: slotProvider || shared.provider,
     source: `player-${normalizedSlot}`,
     slot: normalizedSlot,
@@ -204,6 +262,52 @@ export function resolveAiModelConfigForSlot(slot?: number): AiModelConfig | null
 /** 共享配置（不区分座位）；保留旧调用。 */
 export function resolveAiModelConfig(): AiModelConfig | null {
   return resolveSharedModelConfig();
+}
+
+/**
+ * 解析具体某名 AI 玩家的模型配置（支持管理员在网页端逐座切换 `aiModelOverride`）。
+ */
+export function resolveAiModelConfigForPlayer(ai: {
+  aiSlot?: number;
+  aiModelOverride?: string;
+}): AiModelConfig | null {
+  const base = resolveAiModelConfigForSlot(ai.aiSlot);
+  if (!base) return null;
+  const override = ai.aiModelOverride?.trim();
+  if (!override) return base;
+  return {
+    ...base,
+    model: override,
+  };
+}
+
+/** 供产品版管理后台下拉选模型与测速使用（绝不含任何密钥）。 */
+export function getProductAiModelCatalog() {
+  const shared = resolveSharedModelConfig();
+  const defaultSeatModels = resolveProductDefaultSeatModels();
+  const isSiliconFlow = Boolean(
+    shared &&
+      (/siliconflow/i.test(shared.provider) ||
+        /siliconflow\./i.test(shared.baseURL ?? ""))
+  );
+  const suggested = new Set<string>(SILICONFLOW_ALL_MODEL_IDS);
+  if (shared?.model) suggested.add(shared.model);
+  for (let slot = 1; slot <= MAX_AI_PLAYER_SLOTS; slot++) {
+    const slotCfg = resolveAiModelConfigForSlot(slot);
+    if (slotCfg?.model) suggested.add(slotCfg.model);
+  }
+  for (const m of defaultSeatModels) suggested.add(m);
+
+  return {
+    keyConfigured: shared !== null,
+    provider: shared?.provider ?? "未配置",
+    isSiliconFlow,
+    defaultModel: shared?.model ?? defaultSeatModels[0],
+    defaultSeatModels,
+    modelPoolGroups: SILICONFLOW_MODEL_GROUPS,
+    suggestedModels: Array.from(suggested),
+    defaultTokenBudgetPerGame: AI_CONFIG.tokenBudgetPerGame,
+  };
 }
 
 export function isAiModelConfigured(slot?: number): boolean {
@@ -236,7 +340,7 @@ export const AI_CONFIG = {
    */
   disableThinking: envBool("AI_DISABLE_THINKING", false),
   /** 单次模型调用超时 */
-  decisionTimeoutMs: envInt("AI_DECISION_TIMEOUT_MS", 20_000, 1_000),
+  decisionTimeoutMs: envInt("AI_DECISION_TIMEOUT_MS", 35_000, 1_000),
   /** 允许模型重试次数（不含首次） */
   maxRetries: envInt("AI_MAX_RETRIES", 2, 0),
   /**
@@ -291,6 +395,18 @@ export const AI_CONFIG = {
   auctionMaxDecisions: envInt("AI_AUCTION_MAX_DECISIONS", 3, 1),
   /** AI 自动补位目标人数 */
   autoFillTarget: envInt("AI_AUTOFILL_TARGET", 6, 2),
+  /** 投资阶段有未锁定真人时的开场谈判窗口（ms；0 关闭） */
+  get investOpeningWindowMs(): number {
+    return envInt("AI_INVEST_OPENING_WINDOW_MS", 12_000, 0);
+  },
+  /** 多名 AI 谈判结束后的错峰锁定最大延迟（ms） */
+  get investStaggerMaxMs(): number {
+    return envInt("AI_INVEST_STAGGER_MAX_MS", 4_500, 0);
+  },
+  /** 投资阶段开场是否允许 AI 主动冒泡一句话 */
+  get openingChatEnabled(): boolean {
+    return envBool("AI_OPENING_CHAT_ENABLED", true);
+  },
   /** 日志级别：quiet 只记错误 */
   verboseLogging: envBool("AI_VERBOSE_LOG", false),
 } as const;

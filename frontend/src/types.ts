@@ -197,6 +197,8 @@ export interface Player {
   aiDifficulty?: "easy" | "normal" | "hard";
   /** AI 座位号 1..5（对应 AI_PLAYER_<n>_* 配置） */
   aiSlot?: number;
+  /** 管理员在网页端为该座位指定的模型覆盖 */
+  aiModelOverride?: string;
   /** 管理端展示用：该 AI 实际使用的模型（不含 Key） */
   aiModelLabel?: string;
   /** 6AI 实验室字段 */
@@ -311,6 +313,32 @@ export interface AiAgentFailure {
   kind: "preflight" | "model_error" | "invalid_output" | "not_configured";
 }
 
+export interface ProductAiDecision {
+  id: string;
+  timestamp: number;
+  phase: Phase;
+  era: number;
+  roundInEra: number;
+  globalRound: number;
+  playerId: string;
+  playerName: string;
+  kind:
+    | "investment"
+    | "auction"
+    | "transfer"
+    | "dm_reply"
+    | "group_chat"
+    | "group_welcome"
+    | "opening_chat"
+    | "community_name"
+    | "unlock_reinvest";
+  model?: string;
+  reasoning: string;
+  summary?: string;
+  totalTokens?: number;
+  latencyMs?: number;
+}
+
 export interface GameState {
   roomId: string;
   /** 本局 session id：新一局会变化，用于清空上一局的聊天/交易视图 */
@@ -368,6 +396,14 @@ export interface GameState {
   aiFailures?: Record<string, AiAgentFailure>;
   /** 投资倒计时是否因 AI 故障被系统暂停 */
   aiDeadlinePaused?: boolean;
+  /** 产品版 AI 决策内心戏日志（仅管理端上帝视图下发） */
+  aiDecisions?: ProductAiDecision[];
+  /** 产品版 AI 本局累计 token 消耗（仅管理端上帝视图下发） */
+  aiTokenUsage?: Record<string, number>;
+  /** 本房间每 AI 每局 token 上限（0 表示不限） */
+  aiTokenBudgetPerGame?: number;
+  /** 投资开场谈判窗口截止时间戳（仅管理端上帝视图下发） */
+  aiOpeningUntil?: number;
 
   activeProjects: ActiveProject[];
   uncompletedProjects: ActiveProject[];
@@ -558,6 +594,7 @@ export interface GameState {
     kind: string;
     model?: string;
     reasoning: string;
+    rawThinking?: string;
     action: unknown;
     totalTokens?: number;
     latencyMs?: number;
