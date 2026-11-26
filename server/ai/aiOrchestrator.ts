@@ -1,15 +1,16 @@
 import type { Server } from "socket.io";
 import { randomBytes } from "node:crypto";
-import type { ChatGroup, GameState, LotteryVisibility, Player } from "../state/gameState.js";
+import type { ChatGroup, GameState, LotteryVisibility, Player, ProductAiDecision } from "../state/gameState.js";
 import { getCommunityNamer } from "../state/gameState.js";
 import { AI_BOT_ENABLED, AI_SAFETY_ENABLED } from "../config/features.js";
 import { GROUP_CHAT_ENABLED } from "../config/playerChatFeatures.js";
 import {
   AI_CONFIG,
   isAiModelConfigured,
-  resolveAiModelConfigForSlot,
+  resolveAiModelConfigForPlayer,
   type AiModelConfig,
 } from "./aiConfig.js";
+import { ProductAiMemory } from "./aiMemory.js";
 import { profileForPlayer, type AiProfile } from "./aiPersona.js";
 import { buildAiObservation } from "./aiObservation.js";
 import {
@@ -21,8 +22,9 @@ import {
   buildDirectMessageReplyPrompt,
   buildGroupChatReplyPrompt,
   buildGroupWelcomePrompt,
+  buildOpeningChatPrompt,
 } from "./aiPrompt.js";
-import { askAiJson } from "./llmClient.js";
+import { askAiJson, type AiLlmResult } from "./llmClient.js";
 import {
   buildFallbackInvestmentPlan,
   chooseAuctionAction,
@@ -125,6 +127,12 @@ interface AiRoomState {
   contextRefreshCount: Map<string, number>;
   /** 正在解锁重投的 AI 数量（防止看门狗或自动主持误以为已全部完成） */
   reinvestingIds: Set<string>;
+  memories: Map<string, ProductAiMemory>;
+  recordedOutcomeRounds: Map<string, Set<number>>;
+  openingPhaseKey: string;
+  openingUntil: number;
+  openingWakeTimer: ReturnType<typeof setTimeout> | null;
+  openingChatDoneKey: string;
   lastErrorAt: number;
   lastAutoKickAt: number;
 }
@@ -171,6 +179,10 @@ function clearTimersInState(state: AiRoomState): void {
     clearTimeout(t);
   }
   state.transferTimers.clear();
+  if (state.openingWakeTimer) {
+    clearTimeout(state.openingWakeTimer);
+    state.openingWakeTimer = null;
+  }
 }
 
 function getRoomState(game: GameState): AiRoomState {
@@ -196,6 +208,12 @@ function getRoomState(game: GameState): AiRoomState {
       transferTimers: new Map(),
       contextRefreshCount: new Map(),
       reinvestingIds: new Set(),
+      memories: new Map(),
+      recordedOutcomeRounds: new Map(),
+      openingPhaseKey: "",
+      openingUntil: 0,
+      openingWakeTimer: null,
+      openingChatDoneKey: "",
       lastErrorAt: 0,
       lastAutoKickAt: 0,
     };
@@ -216,6 +234,11 @@ function getRoomState(game: GameState): AiRoomState {
     state.transferReadyAt.clear();
     state.contextRefreshCount.clear();
     state.reinvestingIds.clear();
+    state.memories.clear();
+    state.recordedOutcomeRounds.clear();
+    state.openingPhaseKey = "";
+    state.openingUntil = 0;
+    state.openingChatDoneKey = "";
     state.lastAutoKickAt = 0;
     clearTimersInState(state);
     state.auction.clear();
@@ -230,6 +253,14 @@ function getRoomState(game: GameState): AiRoomState {
     state.forced.clear();
     state.contextRefreshCount.clear();
     state.reinvestingIds.clear();
+    state.openingPhaseKey = "";
+    state.openingUntil = 0;
+    state.openingChatDoneKey = "";
+    if (state.openingWakeTimer) {
+      clearTimeout(state.openingWakeTimer);
+      state.openingWakeTimer = null;
+    }
+    game.aiOpeningUntil = undefined;
     state.lastAutoKickAt = 0;
     game.aiTurnStatuses = {};
     if (prevPhase !== game.phase || !isChatPhaseAllowed(game)) {
@@ -389,17 +420,142 @@ function sumInvestment(plan: Record<number, number>): number {
 }
 
 function modelConfigFor(ai: Player): AiModelConfig | null {
-  return resolveAiModelConfigForSlot(ai.aiSlot);
+  return resolveAiModelConfigForPlayer(ai);
+}
+
+function getAiMemory(state: AiRoomState, aiId: string): ProductAiMemory {
+  let mem = state.memories.get(aiId);
+  if (!mem) {
+    mem = new ProductAiMemory();
+    state.memories.set(aiId, mem);
+  }
+  return mem;
+}
+
+function syncSettlementMemories(game: GameState, ai: Player, state: AiRoomState): string {
+  const mem = getAiMemory(state, ai.id);
+  let seen = state.recordedOutcomeRounds.get(ai.id);
+  if (!seen) {
+    seen = new Set();
+    state.recordedOutcomeRounds.set(ai.id, seen);
+  }
+  for (const h of game.sessionTelemetry?.settlementHistory ?? []) {
+    if (seen.has(h.round)) continue;
+    seen.add(h.round);
+    let ownInvest = 0;
+    let ownGain = 0;
+    const highlights: string[] = [];
+    for (const r of h.results) {
+      const inv = r.playerInvestments[ai.id] ?? 0;
+      const gain = r.playerGains[ai.id]?.total ?? 0;
+      ownInvest += inv;
+      ownGain += gain;
+      if (r.isExploded && r.type !== "long" && inv > 0) {
+        highlights.push(`${r.name}爆雷`);
+      } else if (r.shortSold && inv > 0) {
+        highlights.push(`${r.name}被做空`);
+      }
+    }
+    const extra = highlights.length > 0 ? `（${highlights.join("、")}）` : "";
+    mem.record(
+      "outcome",
+      `结算：投${ownInvest}，净变${ownGain >= 0 ? `+${ownGain}` : ownGain}，现财富${ai.wealth}${extra}`,
+      { globalRound: h.round, era: h.currentEra, roundInEra: h.roundInEra }
+    );
+  }
+  return mem.digest();
+}
+
+function isFastFallbackRetryable(error?: string): boolean {
+  return /timeout|timed out|aborted|empty response|terminated|connection error|JSON\s*解析失败|429|500|502|503|504|ECONNRESET|ETIMEDOUT|fetch failed|network|socket|hang up/i.test(
+    error ?? ""
+  );
+}
+
+export async function askProductAiWithFallback(
+  system: string,
+  user: string,
+  options: {
+    config: AiModelConfig;
+    label: string;
+    thinking?: {
+      thinkingBudget: number;
+      reasoningEffort?: "minimal" | "low" | "medium" | "high";
+      timeoutMs: number;
+      maxOutputTokens: number;
+    };
+    fast: {
+      timeoutMs: number;
+      maxRetries?: number;
+      maxOutputTokens: number;
+    };
+  },
+  llmCaller: typeof askAiJson = askAiJson
+): Promise<AiLlmResult> {
+  if (!options.thinking) {
+    return llmCaller(system, user, {
+      config: options.config,
+      label: options.label,
+      disableThinking: true,
+      timeoutMs: options.fast.timeoutMs,
+      maxRetries: options.fast.maxRetries ?? 1,
+      maxOutputTokens: options.fast.maxOutputTokens,
+    });
+  }
+
+  const first = await llmCaller(system, user, {
+    config: options.config,
+    label: options.label,
+    disableThinking: false,
+    thinkingBudget: options.thinking.thinkingBudget,
+    reasoningEffort: options.thinking.reasoningEffort ?? "low",
+    timeoutMs: options.thinking.timeoutMs,
+    maxRetries: 0,
+    maxOutputTokens: options.thinking.maxOutputTokens,
+  });
+  if (first.ok && first.data) return first;
+  if (!isFastFallbackRetryable(first.error)) return first;
+
+  const fallbackUser = /JSON\s*解析失败/i.test(first.error ?? "")
+    ? `${user}\n\n注意：上一次回复不是完整合法的 JSON，请务必只输出一个完整的 JSON 对象（不要多余文字、不要在字符串中直接换行）。`
+    : user;
+
+  const fallback = await llmCaller(system, fallbackUser, {
+    config: options.config,
+    label: `${options.label}-fast`,
+    disableThinking: true,
+    timeoutMs: options.fast.timeoutMs,
+    maxRetries: options.fast.maxRetries ?? 1,
+    maxOutputTokens: options.fast.maxOutputTokens,
+  });
+  const totalUsage =
+    first.usage || fallback.usage
+      ? {
+          promptTokens: (first.usage?.promptTokens ?? 0) + (fallback.usage?.promptTokens ?? 0),
+          completionTokens:
+            (first.usage?.completionTokens ?? 0) + (fallback.usage?.completionTokens ?? 0),
+          totalTokens: (first.usage?.totalTokens ?? 0) + (fallback.usage?.totalTokens ?? 0),
+        }
+      : undefined;
+  return {
+    ...fallback,
+    usage: totalUsage,
+    latencyMs: (first.latencyMs ?? 0) + (fallback.latencyMs ?? 0),
+  };
 }
 
 function pausesOnAiFailure(game: GameState): boolean {
   return AI_CONFIG.strictAgent && !game.autoHostEnabled;
 }
 
-function hasUsableBudget(state: AiRoomState, ai: Player): boolean {
+function hasUsableBudget(state: AiRoomState, ai: Player, game?: GameState): boolean {
   if (!modelConfigFor(ai)) return false;
-  if (AI_CONFIG.tokenBudgetPerGame <= 0) return true;
-  return (state.tokens.get(ai.id) ?? 0) < AI_CONFIG.tokenBudgetPerGame;
+  const budget =
+    typeof game?.aiTokenBudgetPerGame === "number" && game.aiTokenBudgetPerGame >= 0
+      ? game.aiTokenBudgetPerGame
+      : AI_CONFIG.tokenBudgetPerGame;
+  if (budget <= 0) return true;
+  return (state.tokens.get(ai.id) ?? 0) < budget;
 }
 
 function recordAiFailure(
@@ -477,9 +633,52 @@ export function clearAiFailure(game: GameState, playerId: string, io: Server | n
   if (io) broadcastUpdate(io, game);
 }
 
-function recordTokens(state: AiRoomState, ai: Player, totalTokens?: number): void {
+function recordTokens(
+  state: AiRoomState,
+  ai: Player,
+  totalTokens?: number,
+  game?: GameState
+): void {
   if (!totalTokens || totalTokens <= 0) return;
   state.tokens.set(ai.id, (state.tokens.get(ai.id) ?? 0) + totalTokens);
+  if (game) {
+    const usage = (game.aiTokenUsage ??= {});
+    usage[ai.id] = (usage[ai.id] ?? 0) + totalTokens;
+  }
+}
+
+function recordAiDecision(
+  game: GameState,
+  ai: Player,
+  entry: {
+    kind: ProductAiDecision["kind"];
+    reasoning?: string;
+    summary?: string;
+    model?: string;
+    totalTokens?: number;
+    latencyMs?: number;
+  }
+): void {
+  const list = (game.aiDecisions ??= []);
+  list.push({
+    id: `aid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: now(),
+    phase: game.phase,
+    era: game.currentEra,
+    roundInEra: game.roundInEra,
+    globalRound: game.globalRound,
+    playerId: ai.id,
+    playerName: ai.name,
+    kind: entry.kind,
+    model: entry.model ?? modelConfigFor(ai)?.model ?? ai.aiModelLabel,
+    reasoning: String(entry.reasoning ?? "").replace(/\s+/g, " ").trim().slice(0, 600),
+    ...(entry.summary ? { summary: entry.summary.slice(0, 240) } : {}),
+    ...(typeof entry.totalTokens === "number" ? { totalTokens: entry.totalTokens } : {}),
+    ...(typeof entry.latencyMs === "number" ? { latencyMs: entry.latencyMs } : {}),
+  });
+  if (list.length > 300) {
+    game.aiDecisions = list.slice(-300);
+  }
 }
 
 function hasDuePendingIncomingTransfer(
@@ -498,6 +697,185 @@ function hasDuePendingIncomingTransfer(
   });
 }
 
+function hasUnreadyConnectedHuman(game: GameState): boolean {
+  return game.players.some((p) => !isAiPlayer(p) && p.connected && !p.ready);
+}
+
+function isOpeningWindowWaiting(game: GameState, state: AiRoomState): boolean {
+  if (game.phase !== "INVESTMENT") return false;
+  if (state.openingPhaseKey !== state.phaseKey) return false;
+  if (now() >= state.openingUntil) return false;
+  return hasUnreadyConnectedHuman(game);
+}
+
+function ensureOpeningNegotiationWindow(
+  game: GameState,
+  state: AiRoomState,
+  io: Server | null
+): boolean {
+  if (game.phase !== "INVESTMENT") return false;
+  if (AI_CONFIG.investOpeningWindowMs <= 0) return false;
+  if (!hasUnreadyConnectedHuman(game)) return false;
+  if (getInvestmentRemainingMs(game) <= 60_000) return false;
+
+  if (state.openingPhaseKey !== state.phaseKey) {
+    state.openingPhaseKey = state.phaseKey;
+    state.openingUntil = now() + AI_CONFIG.investOpeningWindowMs;
+    game.aiOpeningUntil = state.openingUntil;
+    if (state.openingWakeTimer) clearTimeout(state.openingWakeTimer);
+    const waitMs = Math.max(20, state.openingUntil - now() + 30);
+    state.openingWakeTimer = setTimeout(() => {
+      state.openingWakeTimer = null;
+      if (state.phaseKey === phaseKey(game)) {
+        state.openingUntil = 0;
+        game.aiOpeningUntil = undefined;
+        if (io) broadcastUpdate(io, game);
+        void handleAIPhase(game, io);
+      }
+    }, waitMs);
+    if (io) broadcastUpdate(io, game);
+
+    if (
+      state.openingChatDoneKey !== state.phaseKey &&
+      AI_CONFIG.openingChatEnabled &&
+      AI_CONFIG.chatEnabled &&
+      GROUP_CHAT_ENABLED &&
+      (game.safetyCrisisUntil ?? 0) <= now()
+    ) {
+      state.openingChatDoneKey = state.phaseKey;
+      const ais = aiPlayers(game).filter(
+        (p) => !p.ready && modelConfigFor(p) && hasUsableBudget(state, p, game)
+      );
+      if (ais.length > 0) {
+        const speaker = ais[(Math.max(1, game.globalRound) - 1) % ais.length];
+        void triggerAiOpeningChat(game, speaker, state, io);
+      }
+    }
+  }
+
+  return isOpeningWindowWaiting(game, state);
+}
+
+async function triggerAiOpeningChat(
+  game: GameState,
+  ai: Player,
+  state: AiRoomState,
+  io: Server | null
+): Promise<void> {
+  const startKey = state.phaseKey;
+  const publicGroup = (game.chatGroups ?? []).find((g) => g.kind === "public");
+  if (!publicGroup) return;
+  const cfg = modelConfigFor(ai);
+  if (!cfg || !hasUsableBudget(state, ai, game)) return;
+
+  const delayMs = Math.min(
+    randomBetween(1_200, 2_800),
+    Math.max(0, Math.floor(AI_CONFIG.investOpeningWindowMs * 0.45))
+  );
+  if (delayMs > 0) await sleep(delayMs);
+  if (game.phase !== "INVESTMENT" || state.phaseKey !== startKey) return;
+  if (!isChatPhaseAllowed(game) || (game.safetyCrisisUntil ?? 0) > now()) return;
+  if (!hasUnreadyConnectedHuman(game) || ai.ready) return;
+
+  const channelKey = `group:${publicGroup.id}`;
+  setAiChatStatus(game, channelKey, ai, "thinking", io);
+  try {
+    const profile = profileForPlayer(ai);
+    const obs = buildAiObservation(game, ai);
+    const memDigest = syncSettlementMemories(game, ai, state);
+    const result = await askAiJson(
+      buildSystemPrompt(profile),
+      buildOpeningChatPrompt(obs, profile, memDigest),
+      {
+        label: `opening-chat-r${game.globalRound}`,
+        timeoutMs: 12_000,
+        maxRetries: 0,
+        disableThinking: true,
+        maxOutputTokens: 800,
+        config: cfg,
+      }
+    );
+    if (game.phase !== "INVESTMENT" || state.phaseKey !== startKey) {
+      setAiChatStatus(game, channelKey, ai, "clear", io);
+      return;
+    }
+    if (!result.ok || !result.data) {
+      setAiChatStatus(game, channelKey, ai, "clear", io);
+      return;
+    }
+    markAiPreflightOk(ai);
+    recordTokens(state, ai, result.usage?.totalTokens, game);
+    const parsed = result.data as { silent?: unknown; reply?: unknown; reasoning?: unknown };
+    const rawReply = typeof parsed.reply === "string" ? parsed.reply.trim().slice(0, 80) : "";
+    const posted =
+      parsed.silent !== true &&
+      rawReply &&
+      isChatPhaseAllowed(game) &&
+      (game.safetyCrisisUntil ?? 0) <= now() &&
+      sendAiChat(game, ai, rawReply);
+
+    if (posted) {
+      setAiChatStatus(game, channelKey, ai, "clear", io);
+      getAiMemory(state, ai.id).record(
+        "social",
+        `[全场开场] 我先说：「${rawReply.slice(0, 40)}」`,
+        { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
+      );
+      if (io) {
+        for (const target of game.players) {
+          if (target.id === ai.id || !target.socketId) continue;
+          io.to(target.socketId).emit("playerNotify", {
+            type: "chat",
+            message: `全场 · ${ai.name}：${rawReply.slice(0, 48)}`,
+          });
+        }
+      }
+    } else {
+      setAiChatStatus(game, channelKey, ai, "clear", io);
+    }
+    recordAiDecision(game, ai, {
+      kind: "opening_chat",
+      reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+      summary: posted ? `全场开场：「${rawReply.slice(0, 32)}」` : "开场保持观察",
+      model: cfg.model,
+      totalTokens: result.usage?.totalTokens,
+      latencyMs: result.latencyMs,
+    });
+    if (io) broadcastUpdate(io, game);
+  } catch {
+    setAiChatStatus(game, channelKey, ai, "clear", io);
+  }
+}
+
+/** 所有在线真人都已提前锁定投资时，立即结束谈判等待并唤醒 AI 提交投资。 */
+export function wakeAiOpeningWindowIfHumansReady(game: GameState, io: Server | null): boolean {
+  if (game.isLabExperiment || !AI_BOT_ENABLED) return false;
+  if (game.phase !== "INVESTMENT") return false;
+  if (hasUnreadyConnectedHuman(game)) return false;
+  const state = AI_ROOMS.get(game.roomId);
+  const hadWindow = Boolean(
+    (state && (state.openingUntil > now() || state.openingWakeTimer)) ||
+      (game.aiOpeningUntil ?? 0) > now()
+  );
+  if (!hadWindow) return false;
+  if (state) {
+    if (state.openingWakeTimer) {
+      clearTimeout(state.openingWakeTimer);
+      state.openingWakeTimer = null;
+    }
+    state.openingUntil = 0;
+  }
+  game.aiOpeningUntil = undefined;
+  if (io) broadcastUpdate(io, game);
+  void handleAIPhase(game, io);
+  return true;
+}
+
+export function isAiInOpeningWindow(game: GameState): boolean {
+  const state = AI_ROOMS.get(game.roomId);
+  if (!state) return false;
+  return isOpeningWindowWaiting(game, state);
+}
 function isDone(game: GameState, ai: Player, state: AiRoomState): boolean {
   if (!game.players.some((p) => p.id === ai.id)) return true;
   const failure = game.aiFailures?.[ai.id];
@@ -513,6 +891,9 @@ function isDone(game: GameState, ai: Player, state: AiRoomState): boolean {
   }
   if (hasDuePendingIncomingTransfer(game, ai, state) || Boolean(findPendingLotteryOffer(game, ai.id))) {
     return false;
+  }
+  if (game.phase === "INVESTMENT" && isOpeningWindowWaiting(game, state)) {
+    return true;
   }
   if (game.phase === "AUCTION") {
     if (!AI_CONFIG.auctionEnabled) return true;
@@ -544,6 +925,11 @@ function triggerAiUnlockAndReinvest(
 
   state.reinvestingIds.add(ai.id);
   game.logs.push(`🔓 AI「${ai.name}」因${reason}解锁本轮投资，重新调整方案`);
+  recordAiDecision(game, ai, {
+    kind: "unlock_reinvest",
+    reasoning: `因${reason}解锁已锁定方案，重新评估投资`,
+    summary: `解锁重投（${reason}）`,
+  });
   appendSessionEvent(
     game,
     "ai_action",
@@ -609,7 +995,7 @@ async function resolveAiIncomingTransfers(
 
       if (AI_CONFIG.strictAgent) {
         const modelConfig = modelConfigFor(ai);
-        if (!modelConfig || !hasUsableBudget(state, ai)) {
+        if (!modelConfig || !hasUsableBudget(state, ai, game)) {
           AI_TRANSFER_NEXT_TRY.set(ai.id, now() + AI_TRANSFER_RETRY_MS);
           game.logs.push(
             `⚠️ AI「${ai.name}」暂时无法处理转账（${
@@ -620,9 +1006,10 @@ async function resolveAiIncomingTransfers(
         }
         setAiChatStatus(game, dmKey, ai, "thinking", io);
         const observation = buildAiObservation(game, ai);
+        const memDigest = syncSettlementMemories(game, ai, state);
         const result = await askAiJson(
           buildSystemPrompt(profileForPlayer(ai)),
-          buildTransferDecisionPrompt(observation, tx),
+          buildTransferDecisionPrompt(observation, tx, memDigest),
           {
             label: "transfer-decision",
             disableThinking: true,
@@ -642,6 +1029,7 @@ async function resolveAiIncomingTransfers(
           accept?: unknown;
           reply?: unknown;
           unlockToReinvest?: unknown;
+          reasoning?: unknown;
         };
         if (typeof parsed.accept !== "boolean") {
           AI_TRANSFER_NEXT_TRY.set(ai.id, now() + AI_TRANSFER_RETRY_MS);
@@ -650,10 +1038,23 @@ async function resolveAiIncomingTransfers(
           break;
         }
         markAiPreflightOk(ai);
-        recordTokens(state, ai, result.usage?.totalTokens);
+        recordTokens(state, ai, result.usage?.totalTokens, game);
         accept = parsed.accept;
         replyText = typeof parsed.reply === "string" ? parsed.reply.trim().slice(0, 80) : "";
         unlockToReinvest = parsed.unlockToReinvest === true;
+        recordAiDecision(game, ai, {
+          kind: "transfer",
+          reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+          summary: `${accept ? "接收" : "退回"} ${tx.fromName} 转账 ${tx.amount}${replyText ? ` · 回复「${replyText.slice(0, 24)}」` : ""}`,
+          model: modelConfig.model,
+          totalTokens: result.usage?.totalTokens,
+          latencyMs: result.latencyMs,
+        });
+        getAiMemory(state, ai.id).record(
+          "social",
+          `${accept ? "收下" : "退回"} ${tx.fromName} 转账 ${tx.amount}${tx.note ? `（${tx.note.slice(0, 36)}）` : ""}`,
+          { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
+        );
         AI_TRANSFER_NEXT_TRY.set(ai.id, now() + 1_200);
       } else {
         accept = decideIncomingTransfer(game, ai, tx).accept;
@@ -850,7 +1251,7 @@ export async function handleAiDirectMessage(
   const key = message.id || `${fromPlayerId}:${note.slice(0, 32)}`;
   if (state.dmReplied.has(key) || state.dmReplied.size >= DM_REPLY_MAX_PER_GAME) return;
   const modelConfig = modelConfigFor(ai);
-  if (!modelConfig || !hasUsableBudget(state, ai)) return;
+  if (!modelConfig || !hasUsableBudget(state, ai, game)) return;
   state.dmReplied.set(key, now());
 
   const dmKey = `dm:${fromPlayerId}:${ai.id}`;
@@ -882,6 +1283,7 @@ async function processAiDmBatch(
   io: Server | null
 ): Promise<void> {
   const state = getRoomState(game);
+  const originPhaseKey = phaseKey(game);
   const dmKey = `dm:${fromPlayerId}:${ai.id}`;
   try {
     if (!isChatPhaseAllowed(game) || (game.safetyCrisisUntil ?? 0) > now()) {
@@ -894,14 +1296,15 @@ async function processAiDmBatch(
       return;
     }
     const modelConfig = modelConfigFor(ai);
-    if (!modelConfig || !hasUsableBudget(state, ai)) {
+    if (!modelConfig || !hasUsableBudget(state, ai, game)) {
       setAiChatStatus(game, dmKey, ai, "clear", io);
       return;
     }
 
+    const dmMemDigest = syncSettlementMemories(game, ai, state);
     const result = await askAiJson(
       buildSystemPrompt(profileForPlayer(ai)),
-      buildDirectMessageReplyPrompt(buildAiObservation(game, ai), sender.id, sender.name, notes),
+      buildDirectMessageReplyPrompt(buildAiObservation(game, ai), sender.id, sender.name, notes, dmMemDigest),
       {
         label: "dm-reply",
         timeoutMs: Math.max(DM_REPLY_TIMEOUT_MS, AI_CONFIG.decisionTimeoutMs),
@@ -913,7 +1316,7 @@ async function processAiDmBatch(
     );
     await ensureMinimumElapsed(firstAt, AI_CONFIG.dmDelayMinMs, AI_CONFIG.dmDelayMaxMs);
 
-    if (!game.players.some((p) => p.id === ai.id) || !isChatPhaseAllowed(game)) {
+    if (!game.players.some((p) => p.id === ai.id) || !isChatPhaseAllowed(game) || phaseKey(game) !== originPhaseKey) {
       setAiChatStatus(game, dmKey, ai, "clear", io);
       return;
     }
@@ -923,12 +1326,13 @@ async function processAiDmBatch(
     }
 
     markAiPreflightOk(ai);
-    recordTokens(state, ai, result.usage?.totalTokens);
+    recordTokens(state, ai, result.usage?.totalTokens, game);
 
     const parsed = result.data as {
       silent?: unknown;
       reply?: unknown;
       unlockToReinvest?: unknown;
+      reasoning?: unknown;
       transfer?: { amount?: unknown; note?: unknown } | null;
     };
 
@@ -984,6 +1388,25 @@ async function processAiDmBatch(
         "ai_action",
         { kind: "dm_silent", toPlayerId: sender.id, source: "llm" },
         ai.id
+      );
+    }
+
+    recordAiDecision(game, ai, {
+      kind: "dm_reply",
+      reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+      summary:
+        !wantsSilent && reply
+          ? `私信→${sender.name}：「${reply.slice(0, 32)}」`
+          : `已读 ${sender.name} 私信（保持沉默）`,
+      model: modelConfig.model,
+      totalTokens: result.usage?.totalTokens,
+      latencyMs: result.latencyMs,
+    });
+    if (!wantsSilent && reply) {
+      getAiMemory(state, ai.id).record(
+        "social",
+        `与${sender.name}私信：「${notes[notes.length - 1]?.slice(0, 30) ?? ""}」→我回「${reply.slice(0, 36)}」`,
+        { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
       );
     }
 
@@ -1052,7 +1475,7 @@ export function handleAiGroupMessage(
   const previewResponders = selectGroupResponders(game, group, [cleanText], senderId);
   for (const ai of previewResponders) {
     const cfg = modelConfigFor(ai);
-    if (cfg && hasUsableBudget(state, ai)) {
+    if (cfg && hasUsableBudget(state, ai, game)) {
       setAiChatStatus(game, channelKey, ai, "thinking", io, false);
     }
   }
@@ -1089,6 +1512,7 @@ async function processAiGroupBatch(
   io: Server | null
 ): Promise<void> {
   const state = getRoomState(game);
+  const originPhaseKey = phaseKey(game);
   const channelKey = `group:${groupId}`;
   const group = (game.chatGroups ?? []).find((g) => g.id === groupId);
   if (!group) return;
@@ -1107,7 +1531,7 @@ async function processAiGroupBatch(
   // 确保全部候选进入 thinking
   for (const ai of responders) {
     const cfg = modelConfigFor(ai);
-    if (cfg && hasUsableBudget(state, ai)) {
+    if (cfg && hasUsableBudget(state, ai, game)) {
       setAiChatStatus(game, channelKey, ai, "thinking", io, false);
     }
   }
@@ -1129,7 +1553,7 @@ async function processAiGroupBatch(
         continue;
       }
       const cfg = modelConfigFor(ai);
-      if (!cfg || !hasUsableBudget(state, ai)) {
+      if (!cfg || !hasUsableBudget(state, ai, game)) {
         setAiChatStatus(game, channelKey, ai, "clear", io, false);
         continue;
       }
@@ -1137,17 +1561,22 @@ async function processAiGroupBatch(
       const callStart = now();
       const addressedToMe = joinedText.includes(ai.name);
       const obs = buildAiObservation(game, ai);
+      const groupMemDigest = syncSettlementMemories(game, ai, state);
       const result = await askAiJson(
         buildSystemPrompt(profileForPlayer(ai)),
-        buildGroupChatReplyPrompt(obs, {
-          groupId: group.id,
-          groupName: group.name,
-          isPublic: group.kind === "public",
-          triggerSenderName: batch.senderName,
-          recentTriggerTexts: batch.texts,
-          addressedToMe,
-          alreadyRepliedCount: repliedInBatch,
-        }),
+        buildGroupChatReplyPrompt(
+          obs,
+          {
+            groupId: group.id,
+            groupName: group.name,
+            isPublic: group.kind === "public",
+            triggerSenderName: batch.senderName,
+            recentTriggerTexts: batch.texts,
+            addressedToMe,
+            alreadyRepliedCount: repliedInBatch,
+          },
+          groupMemDigest
+        ),
         {
           label: group.kind === "public" ? "public-chat-reply" : "group-chat-reply",
           timeoutMs: Math.max(DM_REPLY_TIMEOUT_MS, AI_CONFIG.decisionTimeoutMs),
@@ -1169,7 +1598,7 @@ async function processAiGroupBatch(
       await ensureMinimumElapsed(stepIndex === 0 ? batch.firstAt : callStart, minWait, maxWait);
       stepIndex += 1;
 
-      if (!isChatPhaseAllowed(game) || (game.safetyCrisisUntil ?? 0) > now()) {
+      if (!isChatPhaseAllowed(game) || phaseKey(game) !== originPhaseKey || (game.safetyCrisisUntil ?? 0) > now()) {
         setAiChatStatus(game, channelKey, ai, "clear", io, false);
         continue;
       }
@@ -1179,11 +1608,12 @@ async function processAiGroupBatch(
       }
 
       markAiPreflightOk(ai);
-      recordTokens(state, ai, result.usage?.totalTokens);
+      recordTokens(state, ai, result.usage?.totalTokens, game);
       const parsed = result.data as {
         silent?: unknown;
         reply?: unknown;
         unlockToReinvest?: unknown;
+        reasoning?: unknown;
       };
       const wantsSilent = parsed.silent === true;
       const rawReply = typeof parsed.reply === "string" ? parsed.reply.trim().slice(0, 80) : "";
@@ -1213,6 +1643,24 @@ async function processAiGroupBatch(
         }
       } else {
         setAiChatStatus(game, channelKey, ai, "silent", io);
+      }
+
+      recordAiDecision(game, ai, {
+        kind: "group_chat",
+        reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+        summary: posted
+          ? `[${group.kind === "public" ? "全场" : group.name}] 「${rawReply.slice(0, 32)}」`
+          : `[${group.kind === "public" ? "全场" : group.name}] 保持沉默`,
+        model: cfg.model,
+        totalTokens: result.usage?.totalTokens,
+        latencyMs: result.latencyMs,
+      });
+      if (posted) {
+        getAiMemory(state, ai.id).record(
+          "social",
+          `[${group.kind === "public" ? "全场" : group.name}] ${batch.senderName}说后我回：「${rawReply.slice(0, 40)}」`,
+          { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
+        );
       }
 
       if (parsed.unlockToReinvest === true) {
@@ -1247,10 +1695,11 @@ export function handleAiGroupCreated(
   if (aiMembers.length === 0) return;
 
   const state = getRoomState(game);
+  const originPhaseKey = phaseKey(game);
   const channelKey = `group:${group.id}`;
   for (const ai of aiMembers) {
     const cfg = modelConfigFor(ai);
-    if (cfg && hasUsableBudget(state, ai)) {
+    if (cfg && hasUsableBudget(state, ai, game)) {
       setAiChatStatus(game, channelKey, ai, "thinking", io, false);
     }
   }
@@ -1272,7 +1721,7 @@ export function handleAiGroupCreated(
           continue;
         }
         const cfg = modelConfigFor(ai);
-        if (!cfg || !hasUsableBudget(state, ai)) {
+        if (!cfg || !hasUsableBudget(state, ai, game)) {
           setAiChatStatus(game, channelKey, ai, "clear", io, false);
           continue;
         }
@@ -1300,13 +1749,18 @@ export function handleAiGroupCreated(
           idx === 0 ? 3_200 : 1_800
         );
 
-        if (!result.ok || !result.data || !isChatPhaseAllowed(game)) {
+        if (!result.ok || !result.data || !isChatPhaseAllowed(game) || phaseKey(game) !== originPhaseKey) {
           setAiChatStatus(game, channelKey, ai, "clear", io, false);
           continue;
         }
         markAiPreflightOk(ai);
-        recordTokens(state, ai, result.usage?.totalTokens);
-        const parsed = result.data as { silent?: unknown; reply?: unknown; unlockToReinvest?: unknown };
+        recordTokens(state, ai, result.usage?.totalTokens, game);
+        const parsed = result.data as {
+          silent?: unknown;
+          reply?: unknown;
+          unlockToReinvest?: unknown;
+          reasoning?: unknown;
+        };
         const rawReply = typeof parsed.reply === "string" ? parsed.reply.trim().slice(0, 80) : "";
         const posted = parsed.silent !== true && rawReply && sendAiGroupChat(game, ai, group.id, rawReply);
         if (posted) {
@@ -1327,6 +1781,16 @@ export function handleAiGroupCreated(
         } else {
           setAiChatStatus(game, channelKey, ai, "silent", io);
         }
+        recordAiDecision(game, ai, {
+          kind: "group_welcome",
+          reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+          summary: posted
+            ? `入群[${group.name}]：「${rawReply.slice(0, 32)}」`
+            : `入群[${group.name}] 保持沉默`,
+          model: cfg.model,
+          totalTokens: result.usage?.totalTokens,
+          latencyMs: result.latencyMs,
+        });
         if (parsed.unlockToReinvest === true) {
           triggerAiUnlockAndReinvest(game, ai, state, io, "新群协商");
         }
@@ -1596,16 +2060,17 @@ export function applyCrisisProtocol(
 }
 
 function investmentContextSignature(game: GameState, ai: Player): string {
-  const memberGroupIds = new Set(
+  // 仅追踪个人账本、直达私聊/转账以及本人所在的自定义小群动态；避免全场闲聊刷屏引发全桌 AI 重复重算
+  const privateGroupIds = new Set(
     (game.chatGroups ?? [])
-      .filter((g) => g.kind === "public" || g.memberIds.includes(ai.id))
+      .filter((g) => g.kind !== "public" && g.memberIds.includes(ai.id))
       .map((g) => g.id)
   );
   const lastTxTs = (game.transactions ?? [])
     .filter((t) => t.toId === ai.id && (t.status === "pending" || t.amount === 0))
     .reduce((m, t) => Math.max(m, t.timestamp), 0);
-  const lastGroupTs = (game.groupMessages ?? [])
-    .filter((m) => m.fromId !== ai.id && memberGroupIds.has(m.groupId))
+  const lastPrivateGroupTs = (game.groupMessages ?? [])
+    .filter((m) => m.fromId !== ai.id && privateGroupIds.has(m.groupId))
     .reduce((m, msg) => Math.max(m, msg.timestamp), 0);
   const lastFeedTs = (game.publicFeed ?? []).reduce((m, item) => Math.max(m, item.timestamp), 0);
   return [
@@ -1614,7 +2079,7 @@ function investmentContextSignature(game: GameState, ai: Player): string {
     (ai.inventory ?? []).length,
     (ai.activeBuffs ?? []).map((b) => b.cardId).join(","),
     lastTxTs,
-    lastGroupTs,
+    lastPrivateGroupTs,
     lastFeedTs,
   ].join("|");
 }
@@ -1624,32 +2089,50 @@ async function decideInvestmentPlan(
   ai: Player,
   profile: AiProfile,
   state: AiRoomState
-): Promise<{ plan: AiInvestmentPlan | null; usedLlm: boolean; failure?: string }> {
+): Promise<{
+  plan: AiInvestmentPlan | null;
+  usedLlm: boolean;
+  failure?: string;
+  totalTokens?: number;
+  latencyMs?: number;
+}> {
   const modelConfig = modelConfigFor(ai);
-  // 投资阶段默认开启快速结构化推理（显式算账写在 reasoning 字段，4–15s 完成一轮；如需慢思考可设 AI_INVEST_THINKING=true）
-  const investDisableThinking =
-    (process.env.AI_INVEST_THINKING ?? "").trim().toLowerCase() === "true" ? false : true;
-  const investOptions = {
-    config: modelConfig,
-    disableThinking: investDisableThinking,
-    ...(investDisableThinking
-      ? { maxOutputTokens: 2_500 }
-      : { reasoningEffort: "low" as const, thinkingBudget: 1024 }),
-  };
+  // normal/hard 默认开启轻度思考，超时自动切极速重试；easy 或 AI_INVEST_THINKING=false 保持极速。
+  const explicitInvestThink = (process.env.AI_INVEST_THINKING ?? "").trim().toLowerCase();
+  const useLightThinking =
+    explicitInvestThink === "false"
+      ? false
+      : explicitInvestThink === "true" || profile.difficulty !== "easy";
   if (!modelConfig) {
     if (pausesOnAiFailure(game)) {
       return { plan: null, usedLlm: false, failure: "该座位未配置可用模型" };
     }
-  } else if (hasUsableBudget(state, ai)) {
+  } else if (hasUsableBudget(state, ai, game)) {
     const observation = buildAiObservation(game, ai);
-    const result = await askAiJson(
-      buildSystemPrompt(profile),
-      buildInvestmentPrompt(observation, profile),
-      { label: `invest-r${game.globalRound}`, ...investOptions }
-    );
+    const memDigest = syncSettlementMemories(game, ai, state);
+    const investPrompt = buildInvestmentPrompt(observation, profile, memDigest);
+    const result = await askProductAiWithFallback(buildSystemPrompt(profile), investPrompt, {
+      config: modelConfig,
+      label: `invest-r${game.globalRound}`,
+      thinking: useLightThinking
+        ? {
+            thinkingBudget: profile.difficulty === "hard" ? 896 : 384,
+            reasoningEffort: "low",
+            timeoutMs: Math.min(20_000, Math.max(15_000, AI_CONFIG.decisionTimeoutMs)),
+            maxOutputTokens: 4_096,
+          }
+        : undefined,
+      fast: {
+        timeoutMs: Math.max(20_000, Math.min(25_000, AI_CONFIG.decisionTimeoutMs)),
+        maxRetries: 1,
+        maxOutputTokens: 3_000,
+      },
+    });
     if (result.ok && result.data) {
       markAiPreflightOk(ai);
-      recordTokens(state, ai, result.usage?.totalTokens);
+      recordTokens(state, ai, result.usage?.totalTokens, game);
+      let totalTokens = result.usage?.totalTokens ?? 0;
+      let latencyMs = result.latencyMs ?? 0;
       const sanitized = sanitizeInvestmentPlan(
         game,
         ai,
@@ -1658,21 +2141,28 @@ async function decideInvestmentPlan(
       );
       if (sumInvestment(sanitized.investment) <= 0 && spendableEnergy(ai) > 0) {
         if (AI_CONFIG.strictAgent) {
-          if (hasUsableBudget(state, ai)) {
+          if (hasUsableBudget(state, ai, game)) {
             const retry = await askAiJson(
               buildSystemPrompt(profile),
               [
-                buildInvestmentPrompt(buildAiObservation(game, ai), profile),
+                buildInvestmentPrompt(buildAiObservation(game, ai), profile, memDigest),
                 "",
                 "## 纠正",
                 `上一次输出没有给任何项目分配精力，但你现在还有 ${spendableEnergy(ai)} 点可用精力。`,
                 "本轮必须在 investment 中至少投入 1 点精力（若已经买咖啡等把精力用光，可以留空）。只输出 JSON。",
               ].join("\n"),
-              { label: `invest-r${game.globalRound}-retry`, ...investOptions }
+              {
+                label: `invest-r${game.globalRound}-retry`,
+                config: modelConfig,
+                disableThinking: true,
+                maxOutputTokens: 2_500,
+              }
             );
             if (retry.ok && retry.data) {
               markAiPreflightOk(ai);
-              recordTokens(state, ai, retry.usage?.totalTokens);
+              recordTokens(state, ai, retry.usage?.totalTokens, game);
+              totalTokens += retry.usage?.totalTokens ?? 0;
+              latencyMs += retry.latencyMs ?? 0;
               const retryPlan = sanitizeInvestmentPlan(
                 game,
                 ai,
@@ -1680,7 +2170,7 @@ async function decideInvestmentPlan(
                 profile
               );
               if (sumInvestment(retryPlan.investment) > 0) {
-                return { plan: retryPlan, usedLlm: true };
+                return { plan: retryPlan, usedLlm: true, totalTokens, latencyMs };
               }
             }
           }
@@ -1693,7 +2183,7 @@ async function decideInvestmentPlan(
         sanitized.investment = fallback.investment;
         if (sanitized.coffee <= 0) sanitized.coffee = fallback.coffee;
       }
-      return { plan: sanitized, usedLlm: true };
+      return { plan: sanitized, usedLlm: true, totalTokens, latencyMs };
     }
     const reason = result.error ?? "模型未返回有效 JSON";
     if (pausesOnAiFailure(game)) {
@@ -1717,6 +2207,19 @@ async function runInvestmentTurn(
   await politeDelay(1);
   if (!INVEST_PHASES.has(game.phase) || ai.ready) return false;
   if (!game.players.some((p) => p.id === ai.id)) return false;
+  if (
+    AI_CONFIG.investStaggerMaxMs > 0 &&
+    hasUnreadyConnectedHuman(game) &&
+    getInvestmentRemainingMs(game) > 60_000
+  ) {
+    const slotBase = Math.max(0, (ai.aiSlot ?? 1) - 1);
+    const maxStagger = AI_CONFIG.investStaggerMaxMs;
+    const perSlot = Math.floor((maxStagger * Math.min(slotBase, 4)) / 5);
+    const jitter = randomBetween(0, Math.max(100, Math.floor(maxStagger / 4)));
+    await sleep(Math.min(maxStagger, perSlot + jitter));
+    if (!INVEST_PHASES.has(game.phase) || ai.ready) return false;
+    if (!game.players.some((p) => p.id === ai.id)) return false;
+  }
 
   const hasModel = Boolean(modelConfigFor(ai));
   if (hasModel) setAiTurnStatus(game, ai, "thinking", io);
@@ -1743,7 +2246,7 @@ async function runInvestmentTurn(
       if (!game.players.some((p) => p.id === ai.id)) return false;
     }
 
-    const { plan, usedLlm, failure } = decision;
+    const { plan, usedLlm, failure, totalTokens, latencyMs } = decision;
     if (!plan) {
       state.forced.add(ai.id);
       recordAiFailure(game, ai, io, failure ?? "模型决策失败", "model_error");
@@ -1753,6 +2256,32 @@ async function runInvestmentTurn(
     if (!INVEST_PHASES.has(game.phase) || ai.ready) return false;
 
     const acted = applyInvestmentPlan(game, ai, plan, state, io);
+    if (usedLlm) {
+      const investPairs = Object.entries(plan.investment ?? {})
+        .filter(([, v]) => Number(v) > 0)
+        .map(([pid, v]) => {
+          const proj = game.activeProjects.find((p) => p.id === Number(pid));
+          return `${proj?.name ?? `#${pid}`}:${v}`;
+        });
+      const summaryParts: string[] = [];
+      if (investPairs.length > 0) summaryParts.push(`投 ${investPairs.join("、")}`);
+      if ((plan.coffee ?? 0) > 0) summaryParts.push(`咖啡×${plan.coffee}`);
+      const cards = plan.useCards?.length ? plan.useCards : plan.useCard ? [plan.useCard] : [];
+      if (cards.length > 0) summaryParts.push(`道具 ${cards.map((c) => c.cardId).join("、")}`);
+      if (plan.transfer && plan.transfer.amount > 0) summaryParts.push(`转账 ${plan.transfer.amount}`);
+      recordAiDecision(game, ai, {
+        kind: "investment",
+        reasoning: plan.reasoning || "",
+        summary: summaryParts.join(" · ") || "空过本轮",
+        totalTokens,
+        latencyMs,
+      });
+      getAiMemory(state, ai.id).record(
+        "action",
+        summaryParts.join("；") || "本轮未分配精力",
+        { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
+      );
+    }
     if (usedLlm && plan.reasoning) {
       appendSessionEvent(
         game,
@@ -1798,26 +2327,52 @@ async function decideAuctionPlan(
   ai: Player,
   profile: AiProfile,
   state: AiRoomState
-): Promise<{ plan: AiAuctionPlan | null; usedLlm: boolean; failure?: string }> {
+): Promise<{
+  plan: AiAuctionPlan | null;
+  usedLlm: boolean;
+  failure?: string;
+  totalTokens?: number;
+  latencyMs?: number;
+}> {
   const modelConfig = modelConfigFor(ai);
-  if (modelConfig && hasUsableBudget(state, ai)) {
+  if (modelConfig && hasUsableBudget(state, ai, game)) {
     const observation = buildAiObservation(game, ai);
-    const result = await askAiJson(
+    const memDigest = syncSettlementMemories(game, ai, state);
+    const useHardThinking =
+      profile.difficulty === "hard" &&
+      (process.env.AI_INVEST_THINKING ?? "").trim().toLowerCase() !== "false";
+    const result = await askProductAiWithFallback(
       buildSystemPrompt(profile),
-      buildAuctionPrompt(observation, profile),
+      buildAuctionPrompt(observation, profile, memDigest),
       {
-        label: `auction-e${game.currentEra}`,
         config: modelConfig,
-        disableThinking: true,
-        maxOutputTokens: 1_500,
+        label: `auction-e${game.currentEra}`,
+        thinking: useHardThinking
+          ? {
+              thinkingBudget: 384,
+              reasoningEffort: "low",
+              timeoutMs: 12_000,
+              maxOutputTokens: 1_800,
+            }
+          : undefined,
+        fast: {
+          timeoutMs: 10_000,
+          maxRetries: 0,
+          maxOutputTokens: 1_500,
+        },
       }
     );
     if (result.ok && result.data) {
       const plan = normalizeAuctionPlan(result.data);
       if (plan) {
         markAiPreflightOk(ai);
-        recordTokens(state, ai, result.usage?.totalTokens);
-        return { plan, usedLlm: true };
+        recordTokens(state, ai, result.usage?.totalTokens, game);
+        return {
+          plan,
+          usedLlm: true,
+          totalTokens: result.usage?.totalTokens,
+          latencyMs: result.latencyMs,
+        };
       }
       if (AI_CONFIG.strictAgent) {
         return { plan: null, usedLlm: true, failure: "模型返回了不合法的拍卖动作" };
@@ -1968,6 +2523,26 @@ async function runAuctionTurn(
       }
 
       lot.doneSignature = auctionSignature(game);
+      if (decided.usedLlm) {
+        const aucSummary =
+          plan.action === "bid"
+            ? `出价 ${plan.amount} 竞拍 ${focus}`
+            : plan.action === "force_buy"
+              ? `强买强卖 ${focus}`
+              : `放弃竞拍 ${focus}`;
+        recordAiDecision(game, ai, {
+          kind: "auction",
+          reasoning: plan.reasoning || "",
+          summary: aucSummary,
+          totalTokens: decided.totalTokens,
+          latencyMs: decided.latencyMs,
+        });
+        getAiMemory(state, ai.id).record("action", aucSummary, {
+          globalRound: game.globalRound,
+          era: game.currentEra,
+          roundInEra: game.roundInEra,
+        });
+      }
       appendSessionEvent(
         game,
         "ai_action",
@@ -2006,6 +2581,7 @@ async function runAiTurn(
       return acted || resolved;
     }
     if (game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") {
+      if (isOpeningWindowWaiting(game, state)) return resolved;
       const acted = await runInvestmentTurn(game, ai, profile, state, io);
       return acted || resolved;
     }
@@ -2074,7 +2650,7 @@ export async function ensureAiCommunityNaming(
     const profile = profileForPlayer(namer);
     let name = "";
     const modelConfig = modelConfigFor(namer);
-    if (modelConfig && hasUsableBudget(state, namer)) {
+    if (modelConfig && hasUsableBudget(state, namer, game)) {
       setAiTurnStatus(game, namer, "thinking", io);
       const observation = buildAiObservation(game, namer);
       const result = await askAiJson(
@@ -2090,14 +2666,23 @@ export async function ensureAiCommunityNaming(
       setAiTurnStatus(game, namer, "idle", io);
       if (result.ok) {
         markAiPreflightOk(namer);
-        recordTokens(state, namer, result.usage?.totalTokens);
-        const raw = (result.data as { name?: unknown } | null)?.name;
+        recordTokens(state, namer, result.usage?.totalTokens, game);
+        const parsedName = result.data as { name?: unknown; reasoning?: unknown } | null;
+        const raw = parsedName?.name;
         name = sanitizeCommunityName(raw);
         if (AI_SAFETY_ENABLED) {
           const guarded = guardAgentOutput(name, "name");
           name = guarded.ok ? guarded.text : "";
         }
         if (name) {
+          recordAiDecision(game, namer, {
+            kind: "community_name",
+            reasoning: typeof parsedName?.reasoning === "string" ? parsedName.reasoning : "",
+            summary: `命名社区「${name}」`,
+            model: modelConfig.model,
+            totalTokens: result.usage?.totalTokens,
+            latencyMs: result.latencyMs,
+          });
           appendSessionEvent(
             game,
             "ai_action",
@@ -2162,6 +2747,9 @@ async function handleAIPhaseInner(game: GameState, io: Server | null): Promise<v
   }
 
   const state = getRoomState(game);
+  if (game.phase === "INVESTMENT") {
+    ensureOpeningNegotiationWindow(game, state, io);
+  }
   const phaseAtStart = game.phase;
   let actedAny = false;
   logDebug(`handleAIPhase phase=${game.phase} ai=${ais.length}`);
@@ -2220,7 +2808,12 @@ function ensureAiProgressInner(game: GameState, io: Server | null): boolean {
   const effectiveMaxTurn = AI_CONFIG.disableThinking
     ? AI_CONFIG.maxTurnMs
     : Math.max(AI_CONFIG.maxTurnMs, 90_000);
-  const overdue = now() - state.phaseStartedAt > effectiveMaxTurn;
+  const openingWait = isOpeningWindowWaiting(game, state);
+  const effectivePhaseStart = Math.max(
+    state.phaseStartedAt,
+    state.openingPhaseKey === state.phaseKey ? state.openingUntil : 0
+  );
+  const overdue = !openingWait && now() - effectivePhaseStart > effectiveMaxTurn;
   const turnBudget = Math.max(
     effectiveMaxTurn,
     effectiveDecisionTimeout * (AI_CONFIG.maxRetries + 1) + 5_000
@@ -2300,6 +2893,7 @@ function ensureAiProgressInner(game: GameState, io: Server | null): boolean {
     }
 
     if (!READY_PHASES.has(game.phase) || ai.ready) continue;
+    if (game.phase === "INVESTMENT" && openingWait) continue;
     const startedAt = state.inFlight.get(ai.id);
     const hardTimeout = startedAt != null && now() - startedAt > turnBudget + 5_000;
     if (startedAt != null) {
@@ -2381,6 +2975,8 @@ export function forgetAiPlayer(roomId: string, playerId: string): void {
   state.groupCreateRound.delete(playerId);
   state.tokens.delete(playerId);
   state.reinvestingIds.delete(playerId);
+  state.memories.delete(playerId);
+  state.recordedOutcomeRounds.delete(playerId);
 }
 
 export function pruneAiRooms(activeRoomIds: Set<string>): void {

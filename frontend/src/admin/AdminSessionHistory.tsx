@@ -531,8 +531,19 @@ export const AdminSessionHistory: React.FC<Props> = ({ onBack }) => {
                 {(detail.playersSummary.length ? detail.playersSummary : [{ name: "—", wealth: 0 }]).map((p) => (
                   <tr key={p.name}>
                     <td style={{ padding: "0.35rem 0" }}>
-                      {p.name}
-                      {p.isAI ? " (AI)" : ""}
+                      <div>
+                        {p.name}
+                        {p.isAI ? " (AI)" : ""}
+                      </div>
+                      {(p.aiModelLabel || (p.aiTokensUsed ?? 0) > 0) && (
+                        <div style={{ fontSize: uiRem(0.68), color: "var(--color-text-muted)" }}>
+                          {p.aiModelLabel ? p.aiModelLabel.split("/").pop() : ""}
+                          {p.aiModelLabel && (p.aiTokensUsed ?? 0) > 0 ? " · " : ""}
+                          {(p.aiTokensUsed ?? 0) > 0
+                            ? `${(p.aiTokensUsed ?? 0).toLocaleString()} tok`
+                            : ""}
+                        </div>
+                      )}
                     </td>
                     <td style={{ textAlign: "right", fontFamily: "var(--font-mono)" }}>
                       {p.wealth.toLocaleString()}

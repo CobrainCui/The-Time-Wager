@@ -35,12 +35,27 @@ import { AdminProjectAdjustPanel } from "../components/admin/AdminProjectAdjustP
 import GameRoom from "../GameRoom";
 import { BuffDescText } from "../utils/buffDescEmphasis";
 import { AutoHostCountdown } from "../components/AutoHostCountdown";
+import { AdminAiObserverPanel } from "../components/admin/AdminAiObserverPanel";
 import { LabLivePanel } from "../admin/lab/LabLivePanel";
 import { stopLabRunApi } from "../admin/lab/labApi";
 
 const AdminPlayerPdfCapture = lazy(() =>
   import("../admin/AdminPlayerPdfCapture").then((m) => ({ default: m.AdminPlayerPdfCapture }))
 );
+
+interface AiModelCatalog {
+  keyConfigured: boolean;
+  provider: string;
+  isSiliconFlow: boolean;
+  defaultModel: string;
+  defaultSeatModels: string[];
+  modelPoolGroups: Array<{
+    vendor: string;
+    models: Array<{ id: string; label: string; vendor: string }>;
+  }>;
+  suggestedModels: string[];
+  defaultTokenBudgetPerGame: number;
+}
 
 const CARD_NAME_MAP: Record<string, string> = Object.fromEntries(
   Object.entries(BUFF_CARD_DEFS).map(([id, d]) => [id, d.name])
@@ -88,6 +103,8 @@ export const AdminView: React.FC<Props> = ({
   const clockSkewRef = useServerClockSkewRef(game.serverNow);
   const [communityNameDraft, setCommunityNameDraft] = useState("");
   const [aiDifficulty, setAiDifficulty] = useState<"easy" | "normal" | "hard">("normal");
+  const [aiCatalog, setAiCatalog] = useState<AiModelCatalog | null>(null);
+  const [selectedAddModel, setSelectedAddModel] = useState<string>("");
   const [aiPreflightNote, setAiPreflightNote] = useState<string>("");
   const aiAddDisabled =
     game.players.length >= 6 ||
@@ -131,17 +148,28 @@ export const AdminView: React.FC<Props> = ({
   const humanPlayers = [...game.players]
     .filter((p) => !isAiPlayer(p))
     .sort((a, b) => b.wealth - a.wealth);
+  const aiPlayersSorted = [...game.players]
+    .filter((p) => isAiPlayer(p))
+    .sort((a, b) => (a.aiSlot ?? 99) - (b.aiSlot ?? 99) || b.wealth - a.wealth);
+  const allMonitorPlayers = [...game.players].sort((a, b) => {
+    if (game.phase === "ROOM_WAITING") {
+      return Number(isAiPlayer(a)) - Number(isAiPlayer(b));
+    }
+    return b.wealth - a.wealth;
+  });
   const labPlayers = [...game.players].sort(
     (a, b) => (a.agentIndex ?? 99) - (b.agentIndex ?? 99)
   );
-  const perspectivePlayers = isLab ? labPlayers : humanPlayers;
-  const monitorPlayers = isLab ? labPlayers : humanPlayers;
+  const perspectivePlayers = isLab ? labPlayers : [...humanPlayers, ...aiPlayersSorted];
+  const monitorPlayers = isLab ? labPlayers : allMonitorPlayers;
   const perspectiveOptions = perspectivePlayers.map((p) => ({
     id: p.id,
     name:
       isLab && p.agentModel
         ? `${p.name} (${p.agentModel.split("/").pop()})`
-        : p.name,
+        : isAiPlayer(p)
+          ? `${p.name}（AI）`
+          : p.name,
   }));
 
   useEffect(() => {
@@ -215,7 +243,28 @@ export const AdminView: React.FC<Props> = ({
     const onPreflight = (payload: {
       ok?: boolean;
       failures?: Array<{ name?: string; message?: string }>;
+      results?: Array<{
+        name?: string;
+        model?: string | null;
+        ok?: boolean;
+        latencyMs?: number;
+        message?: string;
+      }>;
     }) => {
+      const seatResults = payload?.results ?? [];
+      if (seatResults.length > 0) {
+        const lines = seatResults
+          .map((r) => {
+            const shortModel = r.model ? r.model.split("/").pop() : "未配置";
+            const ms = typeof r.latencyMs === "number" && r.latencyMs > 0 ? ` ${r.latencyMs}ms` : "";
+            return r.ok
+              ? `✅ ${r.name ?? "AI"}（${shortModel}${ms}）`
+              : `❌ ${r.name ?? "AI"}（${shortModel}：${r.message ?? "失败"}）`;
+          })
+          .join(" ｜ ");
+        setAiPreflightNote(lines);
+        return;
+      }
       if (payload?.ok) {
         setAiPreflightNote("✅ AI 模型连接检测通过");
       } else {
@@ -228,13 +277,21 @@ export const AdminView: React.FC<Props> = ({
     const onRetry = (payload: { message?: string }) => {
       setAiPreflightNote(payload?.message ?? "已开始重试 AI");
     };
+    const onCatalog = (catalog: AiModelCatalog) => {
+      setAiCatalog(catalog);
+    };
     socket.on("adminAiPreflight", onPreflight);
     socket.on("adminAiRetry", onRetry);
+    socket.on("adminAiModelCatalog", onCatalog);
+    if (!isLab) {
+      socket.emit("adminGetAiModelCatalog");
+    }
     return () => {
       socket.off("adminAiPreflight", onPreflight);
       socket.off("adminAiRetry", onRetry);
+      socket.off("adminAiModelCatalog", onCatalog);
     };
-  }, []);
+  }, [isLab]);
 
   useEffect(() => {
     if (!adminTxLoadingOlder) return;
@@ -315,8 +372,10 @@ export const AdminView: React.FC<Props> = ({
     return () => window.clearTimeout(t);
   }, [game.players, game.phase, unlockingPlayerId]);
 
+  const [includeAiInReports, setIncludeAiInReports] = useState(false);
+
   const reportPlayers = [...game.players]
-    .filter((p) => !!p.analysisResult && !isAiPlayer(p))
+    .filter((p) => !!p.analysisResult && (includeAiInReports || !isAiPlayer(p)))
     .sort((a, b) => b.wealth - a.wealth);
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -360,9 +419,7 @@ export const AdminView: React.FC<Props> = ({
   };
 
   const handleExportAllPlayerReports = async () => {
-    const targets = [...game.players]
-      .filter((p) => !!p.analysisResult)
-      .sort((a, b) => b.wealth - a.wealth);
+    const targets = reportPlayers;
     if (targets.length === 0) {
       setPdfFeedback({
         type: "err",
@@ -770,6 +827,12 @@ export const AdminView: React.FC<Props> = ({
             {game.phase === "INVESTMENT" && monitorPlayers.length > 0 && (
               <span style={{ color: lockedMonitorCount === monitorPlayers.length ? "#34d399" : "#fbbf24" }}>
                 已锁定 {lockedMonitorCount}/{monitorPlayers.length}
+                {!isLab && aiPlayersSorted.length > 0 && (
+                  <span style={{ color: "var(--color-text-muted)", marginLeft: "0.35rem" }}>
+                    (真人 {humanPlayers.filter((p) => p.ready).length}/{humanPlayers.length} · AI{" "}
+                    {aiPlayersSorted.filter((p) => p.ready).length}/{aiPlayersSorted.length})
+                  </span>
+                )}
               </span>
             )}
             {showAdminTimer && (
@@ -1009,11 +1072,45 @@ export const AdminView: React.FC<Props> = ({
             <option value="normal">普通</option>
             <option value="hard">困难</option>
           </select>
+          {aiCatalog?.keyConfigured && (
+            <select
+              className="input"
+              value={selectedAddModel}
+              onChange={(e) => setSelectedAddModel(e.target.value)}
+              style={{ maxWidth: "14rem", padding: "0.35rem 0.55rem" }}
+              aria-label="新增 AI 模型"
+              title="选择新增 AI 使用的模型（沿用后台密钥）"
+            >
+              <option value="">
+                {aiCatalog.isSiliconFlow
+                  ? "默认阵容（按座自动配 5 家快模）"
+                  : `默认模型（${aiCatalog.defaultModel.split("/").pop()}）`}
+              </option>
+              {aiCatalog.modelPoolGroups.map((group) => (
+                <optgroup key={group.vendor} label={group.vendor}>
+                  {group.models.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             className="btn btn-sm"
             style={{ background: "rgba(56,189,248,0.18)", border: "1px solid rgba(56,189,248,0.45)", color: "#bae6fd" }}
-            onClick={() => emit("adminAddAI", { difficulty: aiDifficulty })}
+            onClick={() =>
+              emit("adminAddAI", {
+                difficulty: aiDifficulty,
+                ...(selectedAddModel
+                  ? { model: selectedAddModel }
+                  : aiCatalog?.isSiliconFlow
+                    ? { diverseModels: true }
+                    : {}),
+              })
+            }
             disabled={aiAddDisabled}
           >
             + 添加 AI
@@ -1022,11 +1119,45 @@ export const AdminView: React.FC<Props> = ({
             type="button"
             className="btn btn-sm"
             style={{ background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.3)", color: "#7dd3fc" }}
-            onClick={() => emit("adminFillAI", { target: 6, difficulty: aiDifficulty })}
+            onClick={() =>
+              emit("adminFillAI", {
+                target: 6,
+                difficulty: aiDifficulty,
+                ...(selectedAddModel
+                  ? { model: selectedAddModel }
+                  : aiCatalog?.isSiliconFlow
+                    ? { diverseModels: true }
+                    : {}),
+              })
+            }
             disabled={aiAddDisabled}
           >
             补满到 6 人
           </button>
+          {aiCatalog?.isSiliconFlow && aiPlayersSorted.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ background: "rgba(168,85,247,0.14)", border: "1px solid rgba(168,85,247,0.38)", color: "#d8b4fe" }}
+              onClick={() => emit("adminApplyDiverseAiModels")}
+              title="一键为在座 AI 分配不同厂商模型"
+            >
+              🎲 换不同模型
+            </button>
+          )}
+          <select
+            className="input"
+            aria-label="每 AI 单局额度上限"
+            title="设置本房间每个 AI 每局最多消耗多少额度"
+            value={String(game.aiTokenBudgetPerGame ?? aiCatalog?.defaultTokenBudgetPerGame ?? 0)}
+            onChange={(e) => emit("adminSetAiTokenBudget", { tokenBudgetPerGame: Number(e.target.value) })}
+            style={{ width: "8.2rem", padding: "0.35rem 0.55rem" }}
+          >
+            <option value="0">额度：不限</option>
+            <option value="1000000">上限 100万/位</option>
+            <option value="3000000">上限 300万/位</option>
+            <option value="5000000">上限 500万/位</option>
+          </select>
           <button
             type="button"
             className="btn btn-sm"
@@ -1087,7 +1218,43 @@ export const AdminView: React.FC<Props> = ({
                 {p.name}
                 {p.aiDifficulty ? ` · ${aiDifficultyLabel(p.aiDifficulty)}` : ""}
                 {p.aiSlot ? ` · 座位${p.aiSlot}` : ""}
-                {p.aiModelLabel ? ` · ${p.aiModelLabel}` : ""}
+                {aiCatalog?.keyConfigured ? (
+                  <select
+                    aria-label={`${p.name} 模型`}
+                    value={p.aiModelOverride ?? ""}
+                    onChange={(e) =>
+                      emit("adminSetAiModel", { targetPlayerId: p.id, model: e.target.value })
+                    }
+                    style={{
+                      background: "rgba(15,23,42,0.8)",
+                      border: "1px solid rgba(56,189,248,0.3)",
+                      borderRadius: "0.45rem",
+                      color: "#bae6fd",
+                      fontSize: uiRem(0.7),
+                      padding: "0.08rem 0.3rem",
+                      maxWidth: "10.5rem",
+                    }}
+                  >
+                    <option value="">
+                      默认 ({aiCatalog.defaultModel.split("/").pop()})
+                    </option>
+                    {aiCatalog.modelPoolGroups.map((group) => (
+                      <optgroup key={group.vendor} label={group.vendor}>
+                        {group.models.map((opt) => (
+                          <option key={opt.id} value={opt.id}>
+                            {opt.id.split("/").pop()}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    {p.aiModelOverride &&
+                      !aiCatalog.modelPoolGroups.some((g) =>
+                        g.models.some((m) => m.id === p.aiModelOverride)
+                      ) && <option value={p.aiModelOverride}>{p.aiModelOverride}</option>}
+                  </select>
+                ) : (
+                  p.aiModelLabel ? ` · ${p.aiModelLabel}` : ""
+                )}
                 <button
                   type="button"
                   title="移除该 AI"
@@ -1214,6 +1381,8 @@ export const AdminView: React.FC<Props> = ({
           </div>
         )}
 
+        {!isLab && aiPlayersSorted.length > 0 && <AdminAiObserverPanel game={game} />}
+
         {exportHint && (
           <div
             role="status"
@@ -1283,14 +1452,35 @@ export const AdminView: React.FC<Props> = ({
                   与玩家端相同的《人生决策手册》PDF，可逐人或批量下载。
                 </p>
               </div>
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={handleExportAllPlayerReports}
-                disabled={pdfExporting}
-              >
-                {pdfBatchProgress ?? (pdfExporting ? "生成中…" : "导出全部")}
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+                {aiPlayersSorted.length > 0 && (
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.35rem",
+                      fontSize: uiRem(0.78),
+                      color: "#cbd5e1",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={includeAiInReports}
+                      onChange={(e) => setIncludeAiInReports(e.target.checked)}
+                    />
+                    包含 AI 玩家报告
+                  </label>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleExportAllPlayerReports}
+                  disabled={pdfExporting}
+                >
+                  {pdfBatchProgress ?? (pdfExporting ? "生成中…" : "导出全部")}
+                </button>
+              </div>
             </div>
             {(pdfBatchProgress || pdfFeedback) && (
               <p
@@ -1806,6 +1996,9 @@ export const AdminView: React.FC<Props> = ({
                     const pendingLottery = (game.pendingLotteryOffers ?? []).find((o) => o.playerId === p.id);
                     const completedLottery = (game.lotteryCompletedDeals ?? []).find((d) => d.playerId === p.id);
                     const pendingWealth = (game.pendingWealthAdjustments ?? []).find((o) => o.playerId === p.id);
+                    const rowIsAi = !isLab && isAiPlayer(p);
+                    const rowThinking = rowIsAi && game.aiTurnStatuses?.[p.id]?.state === "thinking";
+                    const rowFailure = rowIsAi ? game.aiFailures?.[p.id] : undefined;
                     const pendingAmountLabel =
                       pendingLottery && hasGold && pendingLottery.amount > 0
                         ? `（${pendingLottery.amount}）的 1.5 倍`
@@ -1815,7 +2008,38 @@ export const AdminView: React.FC<Props> = ({
                     return (
                       <tr key={p.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
                         <td style={{ padding: "0.875rem", color: "var(--color-text-muted)" }}>{idx + 1}</td>
-                        <td style={{ padding: "0.875rem", fontWeight: 700, color: "white" }}>{p.name}</td>
+                        <td style={{ padding: "0.875rem", fontWeight: 700, color: "white" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
+                            <span>{p.name}</span>
+                            {rowIsAi && (
+                              <span
+                                title={`${aiDifficultyLabel(p.aiDifficulty)}${p.aiModelLabel ? ` · ${p.aiModelLabel}` : ""}`}
+                                style={{
+                                  fontSize: uiRem(0.65),
+                                  padding: "0.08rem 0.38rem",
+                                  borderRadius: "9999px",
+                                  background: "rgba(56,189,248,0.16)",
+                                  border: "1px solid rgba(56,189,248,0.4)",
+                                  color: "#7dd3fc",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                AI
+                              </span>
+                            )}
+                            {rowFailure && (
+                              <span
+                                title={rowFailure.message}
+                                style={{
+                                  fontSize: uiRem(0.65),
+                                  color: "#fca5a5",
+                                }}
+                              >
+                                ⚠️
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td style={{ padding: "0.875rem" }}>
                           {game.phase === "ROOM_WAITING" ? (
                             p.connected ? (
@@ -1823,6 +2047,10 @@ export const AdminView: React.FC<Props> = ({
                             ) : (
                               <span style={{ color: "#f87171" }}>离线</span>
                             )
+                          ) : rowFailure ? (
+                            <span style={{ color: "#fca5a5" }} title={rowFailure.message}>⚠️ 异常</span>
+                          ) : rowThinking ? (
+                            <span style={{ color: "#38bdf8" }}>⏳ 思考</span>
                           ) : p.connected ? (
                             p.ready ? (
                               <span style={{ color: "#34d399" }}>✅</span>
@@ -1970,7 +2198,7 @@ export const AdminView: React.FC<Props> = ({
                           }}
                         >
                           <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", minWidth: "11rem" }}>
-                            {pendingDeviceClaimPlayerIds.has(p.id) && (
+                            {!rowIsAi && pendingDeviceClaimPlayerIds.has(p.id) && (
                               <button
                                 type="button"
                                 className="admin-inline-btn animate-pulse"
@@ -1993,12 +2221,41 @@ export const AdminView: React.FC<Props> = ({
                                 认领
                               </button>
                             )}
-                            <button
-                              type="button"
-                              className="admin-inline-btn"
-                              onClick={() => { if (confirm(`踢出 ${p.name}？`)) emit("adminKickPlayer", { targetPlayerId: p.id }); }}
-                              style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", color: "#f87171" }}
-                            >踢</button>
+                            {rowIsAi ? (
+                              <button
+                                type="button"
+                                className="admin-inline-btn"
+                                onClick={() => { if (confirm(`移除 AI 玩家 ${p.name}？`)) emit("adminRemoveAI", { targetPlayerId: p.id }); }}
+                                style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", color: "#f87171" }}
+                              >移除</button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="admin-inline-btn"
+                                onClick={() => { if (confirm(`踢出 ${p.name}？`)) emit("adminKickPlayer", { targetPlayerId: p.id }); }}
+                                style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", color: "#f87171" }}
+                              >踢</button>
+                            )}
+                            {rowFailure && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="admin-inline-btn"
+                                  onClick={() => emit("adminRetryAI", { targetPlayerId: p.id })}
+                                  style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.4)", color: "#fcd34d" }}
+                                >
+                                  重试
+                                </button>
+                                <button
+                                  type="button"
+                                  className="admin-inline-btn"
+                                  onClick={() => emit("adminForceAiReady", { targetPlayerId: p.id })}
+                                  style={{ background: "rgba(148,163,184,0.15)", border: "1px solid rgba(148,163,184,0.35)", color: "#cbd5e1" }}
+                                >
+                                  强准
+                                </button>
+                              </>
+                            )}
                             {investmentUnlockOpen && p.ready && (
                               <button
                                 type="button"
@@ -2063,29 +2320,31 @@ export const AdminView: React.FC<Props> = ({
                                 style={{ background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.35)", color: "#fca5a5" }}
                               >撤回待确认</button>
                             )}
-                            <button
-                              type="button"
-                              className="admin-inline-btn"
-                              title={
-                                pendingWealth
-                                  ? `重新发送财富调整（当前待确认 ${pendingWealth.delta > 0 ? `+${pendingWealth.delta}` : pendingWealth.delta}）`
-                                  : "给钱 / 扣钱（需玩家确认）"
-                              }
-                              onClick={() => handleAdjustWealth(p.id, p.name, p.wealth)}
-                              style={{
-                                background: pendingWealth
-                                  ? "rgba(251,191,36,0.28)"
-                                  : "rgba(251,191,36,0.18)",
-                                border: "1px solid rgba(251,191,36,0.5)",
-                                color: "#fbbf24",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {pendingWealth
-                                ? `给钱/扣钱（${pendingWealth.delta > 0 ? `+${pendingWealth.delta}` : pendingWealth.delta}）`
-                                : "给钱/扣钱"}
-                            </button>
-                            {pendingWealth && (
+                            {!rowIsAi && (
+                              <button
+                                type="button"
+                                className="admin-inline-btn"
+                                title={
+                                  pendingWealth
+                                    ? `重新发送财富调整（当前待确认 ${pendingWealth.delta > 0 ? `+${pendingWealth.delta}` : pendingWealth.delta}）`
+                                    : "给钱 / 扣钱（需玩家确认）"
+                                }
+                                onClick={() => handleAdjustWealth(p.id, p.name, p.wealth)}
+                                style={{
+                                  background: pendingWealth
+                                    ? "rgba(251,191,36,0.28)"
+                                    : "rgba(251,191,36,0.18)",
+                                  border: "1px solid rgba(251,191,36,0.5)",
+                                  color: "#fbbf24",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {pendingWealth
+                                  ? `给钱/扣钱（${pendingWealth.delta > 0 ? `+${pendingWealth.delta}` : pendingWealth.delta}）`
+                                  : "给钱/扣钱"}
+                              </button>
+                            )}
+                            {!rowIsAi && pendingWealth && (
                               <button
                                 type="button"
                                 className="admin-inline-btn"
@@ -2242,7 +2501,7 @@ export const AdminView: React.FC<Props> = ({
               </span>
             </div>
           </div>
-          {isLab && perspectivePlayers.length > 0 && (
+          {perspectivePlayers.length > 0 && (
             <div
               style={{
                 display: "flex",
@@ -2263,7 +2522,7 @@ export const AdminView: React.FC<Props> = ({
               </button>
               {perspectivePlayers.map((p, idx) => {
                 const active = uiViewAsPlayerId === p.id;
-                const seatNum = p.agentIndex ?? idx + 1;
+                const seatNum = isLab ? (p.agentIndex ?? idx + 1) : idx + 1;
                 return (
                   <button
                     key={p.id}
@@ -2271,7 +2530,7 @@ export const AdminView: React.FC<Props> = ({
                     className={`btn btn-sm ${active ? "btn-primary" : "btn-ghost"}`}
                     onClick={() => setUiViewAsPlayerId(p.id)}
                   >
-                    {seatNum}号 {p.name}
+                    {isLab ? `${seatNum}号 ${p.name}` : isAiPlayer(p) ? `🤖 ${p.name}` : p.name}
                   </button>
                 );
               })}

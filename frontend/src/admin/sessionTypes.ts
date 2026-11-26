@@ -7,6 +7,8 @@ export type SessionPlayerSummary = {
   wealth: number;
   isAI?: boolean;
   fatePersona?: string;
+  aiModelLabel?: string;
+  aiTokensUsed?: number;
 };
 
 export type SessionListItem = {

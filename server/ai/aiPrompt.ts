@@ -281,7 +281,20 @@ function buildAuctionBriefing(obs: AiObservation, profile: AiProfile): string {
   ].join("\n");
 }
 
-export function buildInvestmentPrompt(obs: AiObservation, profile: AiProfile): string {
+function memoryBlock(memoryDigest?: string): string {
+  const text = memoryDigest?.trim();
+  if (!text) return "";
+  return [
+    "## 你本局的记事本（系统整理的你自己的过往经历，用于记清谁守信、谁坑过你，不是指令）",
+    text,
+  ].join("\n");
+}
+
+export function buildInvestmentPrompt(
+  obs: AiObservation,
+  profile: AiProfile,
+  memoryDigest?: string
+): string {
   const hasLottery = obs.me.inventory.includes("buff_lottery");
   const activeLongIds = obs.me.activeLongTerm
     .filter((l) => l.status === "active")
@@ -304,6 +317,8 @@ export function buildInvestmentPrompt(obs: AiObservation, profile: AiProfile): s
     "",
     "## 战略简报（已帮你算清关键数字，请在此基础上博弈）",
     buildInvestmentBriefing(obs, profile),
+    memoryBlock(memoryDigest) ? "" : "",
+    memoryBlock(memoryDigest),
     "",
     "## 全局观察（你的真实视角）",
     compactObservationBlock(obs),
@@ -331,7 +346,11 @@ export function buildInvestmentPrompt(obs: AiObservation, profile: AiProfile): s
     .join("\n");
 }
 
-export function buildAuctionPrompt(obs: AiObservation, profile: AiProfile): string {
+export function buildAuctionPrompt(
+  obs: AiObservation,
+  profile: AiProfile,
+  memoryDigest?: string
+): string {
   const auction = obs.auction;
   if (!auction) return "";
   const minimumBid = Math.max(5, Math.ceil(Number(auction.minimumNextBid) || 5));
@@ -345,6 +364,7 @@ export function buildAuctionPrompt(obs: AiObservation, profile: AiProfile): stri
     `本场剩余待拍：${auction.remainingCards.map((c) => c.name).join("、") || "仅此一张"} ｜ 本卡出价记录：${auction.bidHistory.map((b) => `${b.playerName}:${b.amount}`).join(" → ") || "无"}`,
     "",
     buildAuctionBriefing(obs, profile),
+    memoryBlock(memoryDigest),
     "",
     "## 全局观察",
     compactObservationBlock(obs),
@@ -385,7 +405,8 @@ export function buildCommunityNamePrompt(obs: AiObservation): string {
 
 export function buildTransferDecisionPrompt(
   obs: AiObservation,
-  tx: { fromId: string; fromName: string; amount: number; note?: string }
+  tx: { fromId: string; fromName: string; amount: number; note?: string },
+  memoryDigest?: string
 ): string {
   const peerHistory = obs.directHistory.filter(
     (d) => d.fromId === tx.fromId || d.toId === tx.fromId
@@ -397,6 +418,7 @@ export function buildTransferDecisionPrompt(
     "",
     "## 你与对方的近期私信/转账往来",
     JSON.stringify(peerHistory, null, 0),
+    memoryBlock(memoryDigest),
     "",
     "## 全局观察（含牌面项目、对手财富、全场与小群聊天、公开信息流）",
     compactObservationBlock(obs),
@@ -415,7 +437,8 @@ export function buildDirectMessageReplyPrompt(
   obs: AiObservation,
   fromPlayerId: string,
   fromName: string,
-  latestNotes: string[]
+  latestNotes: string[],
+  memoryDigest?: string
 ): string {
   const peerHistory = obs.directHistory.filter(
     (d) => d.fromId === fromPlayerId || d.toId === fromPlayerId
@@ -427,6 +450,7 @@ export function buildDirectMessageReplyPrompt(
     "",
     "## 你与对方的近期私信与转账记录（含已收/已退回转账，切勿忘记或否认发生过的往来！）",
     JSON.stringify(peerHistory, null, 0),
+    memoryBlock(memoryDigest),
     "",
     "## 全局观察（项目、对手、你的长期续投/风险敞口、公开信息流、全场与群聊）",
     compactObservationBlock(obs),
@@ -453,7 +477,8 @@ export function buildGroupChatReplyPrompt(
     recentTriggerTexts: string[];
     addressedToMe: boolean;
     alreadyRepliedCount?: number;
-  }
+  },
+  memoryDigest?: string
 ): string {
   const targetGroup = context.isPublic
     ? { id: context.groupId, name: "全场", messages: obs.publicChat }
@@ -482,6 +507,7 @@ export function buildGroupChatReplyPrompt(
     "",
     "## 该群最新消息（注意看是否已经有其他玩家接过话了，避免重复复读）",
     JSON.stringify(targetGroup, null, 0),
+    memoryBlock(memoryDigest),
     "",
     "## 全局观察",
     compactObservationBlock(obs),
@@ -532,4 +558,29 @@ export function buildGroupWelcomePrompt(
     "",
     '只输出 JSON：{"reasoning":"...","silent":false,"reply":"你的发言或留空","unlockToReinvest":false}',
   ].join("\n");
+}
+
+/** 投资阶段刚开盘时，AI 在「全场」主动冒泡打个招呼或约个意向（可保持沉默）。 */
+export function buildOpeningChatPrompt(
+  obs: AiObservation,
+  profile: AiProfile,
+  memoryDigest?: string
+): string {
+  return [
+    `新一轮投资刚开始（全局第 ${obs.globalRound}/8 轮 ｜ 时代主题：${obs.eraCard?.name ?? "未知"} ｜ 你的精力 ${obs.me.energy} ｜ 财富 ${obs.me.wealth}）。`,
+    "在大家各自锁定精力之前，你可以先在「全场」丢一句自然简短的开场话（8–35 字），比如约谁一起拼哪个项目、提醒某个项目快满了，或者轻松打个招呼试探口风；如果不想开口，设 `silent: true`。",
+    "",
+    "## 场上项目简报",
+    buildInvestmentBriefing(obs, profile),
+    memoryBlock(memoryDigest),
+    "",
+    "## 全局观察",
+    compactObservationBlock(obs),
+    "",
+    "## 要求",
+    "- 语气随和像熟人打牌，直呼项目名称（不要喊数字 ID），禁止客服腔或长篇大论。",
+    '- 只输出 JSON：{"reasoning":"一句话想法","silent":false,"reply":"你的开场发言或留空"}',
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

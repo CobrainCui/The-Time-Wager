@@ -16,6 +16,8 @@ export type GameSessionPlayerSummary = {
   wealth: number;
   isAI?: boolean;
   fatePersona?: string;
+  aiModelLabel?: string;
+  aiTokensUsed?: number;
 };
 
 export type GameSessionRecord = {
@@ -155,6 +157,12 @@ export function archiveCompletedSession(game: GameState): GameSessionRecord {
       wealth: p.wealth,
       isAI: isAiPlayer(p),
       fatePersona: p.analysisResult?.primaryPersona,
+      ...(isAiPlayer(p)
+        ? {
+            aiModelLabel: p.aiModelLabel,
+            aiTokensUsed: game.aiTokenUsage?.[p.id] ?? 0,
+          }
+        : {}),
     }));
 
   const record: GameSessionRecord = {

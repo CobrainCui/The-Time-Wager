@@ -12,7 +12,7 @@ import type { GameState, Player } from "../state/gameState.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 import {
   AI_CONFIG,
-  resolveAiModelConfigForSlot,
+  resolveAiModelConfigForPlayer,
   type AiModelConfig,
 } from "./aiConfig.js";
 
@@ -25,10 +25,21 @@ export interface AiPreflightFailure {
   message: string;
 }
 
+export interface AiPreflightSeatResult {
+  playerId: string;
+  name: string;
+  slot: number | null;
+  model: string | null;
+  ok: boolean;
+  latencyMs: number;
+  message?: string;
+}
+
 export interface AiPreflightResult {
   ok: boolean;
   checked: number;
   failures: AiPreflightFailure[];
+  results?: AiPreflightSeatResult[];
   at: number;
   /** 全部命中缓存时为 true（没有产生新请求） */
   cached: boolean;
@@ -37,11 +48,12 @@ export interface AiPreflightResult {
 interface CacheEntry {
   ok: boolean;
   at: number;
+  latencyMs?: number;
   message?: string;
 }
 
 const cache = new Map<string, CacheEntry>();
-const inFlight = new Map<string, Promise<{ ok: boolean; message?: string }>>();
+const inFlight = new Map<string, Promise<{ ok: boolean; latencyMs: number; message?: string }>>();
 
 function aiPlayers(game: GameState): Player[] {
   return game.players.filter((p) => isAiPlayer(p) && p.connected);
@@ -58,7 +70,10 @@ function isFresh(entry: CacheEntry, now: number): boolean {
   return now - entry.at < ttl;
 }
 
-async function pingConfig(cfg: AiModelConfig): Promise<{ ok: boolean; message?: string }> {
+async function pingConfig(
+  cfg: AiModelConfig
+): Promise<{ ok: boolean; latencyMs: number; message?: string }> {
+  const started = Date.now();
   try {
     const client = new OpenAI({
       apiKey: cfg.apiKey,
@@ -77,18 +92,19 @@ async function pingConfig(cfg: AiModelConfig): Promise<{ ok: boolean; message?: 
       },
       { timeout: AI_CONFIG.preflightTimeoutMs }
     );
-    return { ok: true };
+    return { ok: true, latencyMs: Date.now() - started };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
       ok: false,
+      latencyMs: Date.now() - started,
       message: message.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***").slice(0, 200),
     };
   }
 }
 
 function failureFor(ai: Player, message: string, kind: AiPreflightFailure["kind"]): AiPreflightFailure {
-  const cfg = resolveAiModelConfigForSlot(ai.aiSlot);
+  const cfg = resolveAiModelConfigForPlayer(ai);
   return {
     playerId: ai.id,
     name: ai.name,
@@ -105,23 +121,39 @@ function failureFor(ai: Player, message: string, kind: AiPreflightFailure["kind"
  */
 export function cachedAiPreflight(game: GameState, now = Date.now()): AiPreflightResult | null {
   const ais = aiPlayers(game);
-  if (ais.length === 0) return { ok: true, checked: 0, failures: [], at: now, cached: true };
+  if (ais.length === 0) {
+    return { ok: true, checked: 0, failures: [], results: [], at: now, cached: true };
+  }
 
   const failures: AiPreflightFailure[] = [];
+  const results: AiPreflightSeatResult[] = [];
   for (const ai of ais) {
-    const cfg = resolveAiModelConfigForSlot(ai.aiSlot);
+    const cfg = resolveAiModelConfigForPlayer(ai);
     if (!cfg) {
-      failures.push(
-        failureFor(
-          ai,
-          `座位 ${ai.aiSlot ?? "?"} 未配置模型 Key；严格模式不允许开局。`,
-          "not_configured"
-        )
-      );
+      const msg = `座位 ${ai.aiSlot ?? "?"} 未配置模型 Key；严格模式不允许开局。`;
+      failures.push(failureFor(ai, msg, "not_configured"));
+      results.push({
+        playerId: ai.id,
+        name: ai.name,
+        slot: ai.aiSlot ?? null,
+        model: null,
+        ok: false,
+        latencyMs: 0,
+        message: msg,
+      });
       continue;
     }
     const entry = cache.get(signature(ai, cfg));
     if (!entry || !isFresh(entry, now)) return null;
+    results.push({
+      playerId: ai.id,
+      name: ai.name,
+      slot: ai.aiSlot ?? null,
+      model: cfg.model,
+      ok: entry.ok,
+      latencyMs: entry.latencyMs ?? 0,
+      ...(entry.message ? { message: entry.message } : {}),
+    });
     if (!entry.ok) {
       failures.push(
         failureFor(ai, entry.message ?? "模型连接检测失败", "preflight")
@@ -132,6 +164,7 @@ export function cachedAiPreflight(game: GameState, now = Date.now()): AiPrefligh
     ok: failures.length === 0,
     checked: ais.length,
     failures,
+    results,
     at: now,
     cached: true,
   };
@@ -174,17 +207,28 @@ export async function verifyAiAgents(
   }
 
   const ais = aiPlayers(game);
-  if (ais.length === 0) return { ok: true, checked: 0, failures: [], at: now, cached: false };
+  if (ais.length === 0) {
+    return { ok: true, checked: 0, failures: [], results: [], at: now, cached: false };
+  }
 
   const failures: AiPreflightFailure[] = [];
+  const results: AiPreflightSeatResult[] = [];
   const bySignature = new Map<string, { cfg: AiModelConfig; players: Player[] }>();
 
   for (const ai of ais) {
-    const cfg = resolveAiModelConfigForSlot(ai.aiSlot);
+    const cfg = resolveAiModelConfigForPlayer(ai);
     if (!cfg) {
-      failures.push(
-        failureFor(ai, `座位 ${ai.aiSlot ?? "?"} 未配置模型 Key；严格模式不允许开局。`, "not_configured")
-      );
+      const msg = `座位 ${ai.aiSlot ?? "?"} 未配置模型 Key；严格模式不允许开局。`;
+      failures.push(failureFor(ai, msg, "not_configured"));
+      results.push({
+        playerId: ai.id,
+        name: ai.name,
+        slot: ai.aiSlot ?? null,
+        model: null,
+        ok: false,
+        latencyMs: 0,
+        message: msg,
+      });
       continue;
     }
     const sig = signature(ai, cfg);
@@ -202,7 +246,23 @@ export async function verifyAiAgents(
         inFlight.set(sig, pending);
       }
       const result = await pending;
-      cache.set(sig, { ok: result.ok, at: Date.now(), message: result.message });
+      cache.set(sig, {
+        ok: result.ok,
+        at: Date.now(),
+        latencyMs: result.latencyMs,
+        message: result.message,
+      });
+      for (const ai of players) {
+        results.push({
+          playerId: ai.id,
+          name: ai.name,
+          slot: ai.aiSlot ?? null,
+          model: cfg.model,
+          ok: result.ok,
+          latencyMs: result.latencyMs,
+          ...(result.message ? { message: result.message } : {}),
+        });
+      }
       if (!result.ok) {
         for (const ai of players) {
           failures.push(failureFor(ai, result.message ?? "模型连接检测失败", "preflight"));
@@ -215,6 +275,7 @@ export async function verifyAiAgents(
     ok: failures.length === 0,
     checked: entries.length,
     failures,
+    results,
     at: Date.now(),
     cached: false,
   };
@@ -222,7 +283,7 @@ export async function verifyAiAgents(
 
 /** 模型成功响应后写入通过缓存（避免重复检测）。 */
 export function markAiPreflightOk(ai: Player): void {
-  const cfg = resolveAiModelConfigForSlot(ai.aiSlot);
+  const cfg = resolveAiModelConfigForPlayer(ai);
   if (!cfg) return;
   cache.set(signature(ai, cfg), { ok: true, at: Date.now() });
 }

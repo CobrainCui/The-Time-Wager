@@ -11,6 +11,7 @@ import { GROUP_CHAT_ENABLED } from "../config/playerChatFeatures.js";
 import { serializationForMemberSocket } from "./adminPerspective.js";
 import type { SettlementBaseline } from "../logic/settlementBaseline.js";
 import { computeWealthRanks } from "../util/playerRank.js";
+import { AI_CONFIG } from "../ai/aiConfig.js";
 import type { Socket } from "socket.io";
 
 const HIDDEN_INVESTMENT_PHASES = new Set<GameState["phase"]>(["INVESTMENT", "BUFF_USAGE"]);
@@ -90,6 +91,10 @@ export function serializeGameForClient(
     adminProjectAdjustments: _adminProjectAdjustments,
     hostRevision: _hostRevision,
     aiFailures: _aiFailures,
+    aiDecisions: rawAiDecisions,
+    aiTokenUsage: rawAiTokenUsage,
+    aiTokenBudgetPerGame: rawAiTokenBudgetPerGame,
+    aiOpeningUntil: rawAiOpeningUntil,
     logs: _logs,
     // 道具/打火机内部流水只供服务端结算，不下发玩家
     lighterBurnDeclarations: _lighterBurnDeclarations,
@@ -192,6 +197,13 @@ export function serializeGameForClient(
           auctionBids: auctionBids ?? [],
           aiFailures: game.aiFailures ?? {},
           aiDeadlinePaused: game.aiDeadlinePaused ?? false,
+          aiDecisions: (rawAiDecisions ?? []).slice(-120),
+          aiTokenUsage: rawAiTokenUsage ?? {},
+          aiTokenBudgetPerGame:
+            typeof rawAiTokenBudgetPerGame === "number"
+              ? rawAiTokenBudgetPerGame
+              : AI_CONFIG.tokenBudgetPerGame,
+          ...(typeof rawAiOpeningUntil === "number" ? { aiOpeningUntil: rawAiOpeningUntil } : {}),
           logs: game.logs,
           roundBuffPlays: game.roundBuffPlays ?? [],
           lighterBurnDeclarations: game.lighterBurnDeclarations ?? [],
@@ -228,10 +240,12 @@ export function serializeGameForClient(
         inventory,
         activeBuffs,
         usedCards,
+        aiModelOverride,
         // 旧局内存可能仍带幽灵字段，避免漏进玩家 payload
         lighterBurnGhostIds: _lighterBurnGhostIds,
         ...rest
       } = p as typeof p & { lighterBurnGhostIds?: string[] };
+      const godOnlyPlayerFields = isGodView && aiModelOverride ? { aiModelOverride } : {};
       const slackAttribution =
         isGodView
           ? { slackedBy: p.slackedBy ?? [], slackEnergyLost: p.slackEnergyLost ?? [] }
@@ -245,6 +259,7 @@ export function serializeGameForClient(
         return {
           ...restWithoutEnergy,
           ...energyField,
+          ...godOnlyPlayerFields,
           rank: wealthRanks.get(p.id) ?? p.rank,
           ...slackAttribution,
           inventory,
@@ -262,6 +277,7 @@ export function serializeGameForClient(
       return {
         ...restWithoutEnergy,
         ...energyField,
+        ...godOnlyPlayerFields,
         rank: wealthRanks.get(p.id) ?? p.rank,
         ...slackAttribution,
         // 他人手牌 / 已发动 / 已用对玩家隐藏

@@ -5,7 +5,13 @@ import { syncEnergyAfterRosterChange } from "../logic/energySchedule.js";
 import { syncChatGroupsOnRosterChange } from "../logic/chatGroups.js";
 import { isAiPlayer } from "../util/isAiPlayer.js";
 import { AI_BOT_ENABLED } from "../config/features.js";
-import { AI_CONFIG, MAX_AI_PLAYER_SLOTS, resolveAiModelConfigForSlot } from "./aiConfig.js";
+import {
+  AI_CONFIG,
+  MAX_AI_PLAYER_SLOTS,
+  resolveAiModelConfigForPlayer,
+  resolveAiModelConfigForSlot,
+  resolveProductDefaultSeatModels,
+} from "./aiConfig.js";
 import {
   aiPersonaCatalog,
   normalizeDifficulty,
@@ -19,6 +25,10 @@ export interface AddAiOptions {
   difficulty?: AiDifficulty | string;
   /** 指定展示名（仍需唯一） */
   name?: string;
+  /** 指定该座位使用的模型 ID（沿用服务端已配置的密钥） */
+  model?: string;
+  /** 为硅基流动共享密钥自动按座位分配不同厂商模型 */
+  diverseModels?: boolean;
 }
 
 /** 产品版 AI 不预设人格，用中性昵称；具体打法交给模型自由发挥。
@@ -71,12 +81,31 @@ function nextAiSlot(game: GameState): number {
   return (countAiPlayers(game) % MAX_AI_PLAYER_SLOTS) + 1;
 }
 
-function aiModelLabelForSlot(slot: number): string {
-  const cfg = resolveAiModelConfigForSlot(slot);
+function aiModelLabelForPlayer(slot: number, modelOverride?: string): string {
+  const cfg = resolveAiModelConfigForPlayer({ aiSlot: slot, aiModelOverride: modelOverride });
   return cfg ? `${cfg.provider}:${cfg.model}` : "未配置模型";
 }
 
-function newAiPlayer(id: string, name: string, difficulty: AiDifficulty, slot: number): Player {
+function resolveRequestedModelOverride(slot: number, options: AddAiOptions): string | undefined {
+  const explicit = options.model?.trim();
+  if (explicit) return explicit.slice(0, 120);
+  if (options.diverseModels === false) return undefined;
+  const base = resolveAiModelConfigForSlot(slot);
+  if (!base || base.source !== "shared") return undefined;
+  const looksSiliconFlow =
+    /siliconflow/i.test(base.provider) || /siliconflow\./i.test(base.baseURL ?? "");
+  if (!looksSiliconFlow) return undefined;
+  const defaults = resolveProductDefaultSeatModels();
+  return defaults[(slot - 1) % defaults.length];
+}
+
+function newAiPlayer(
+  id: string,
+  name: string,
+  difficulty: AiDifficulty,
+  slot: number,
+  modelOverride?: string
+): Player {
   return {
     id,
     name,
@@ -104,7 +133,8 @@ function newAiPlayer(id: string, name: string, difficulty: AiDifficulty, slot: n
     isAI: true,
     aiDifficulty: difficulty,
     aiSlot: slot,
-    aiModelLabel: aiModelLabelForSlot(slot),
+    ...(modelOverride ? { aiModelOverride: modelOverride } : {}),
+    aiModelLabel: aiModelLabelForPlayer(slot, modelOverride),
   };
 }
 
@@ -148,12 +178,44 @@ export function addAiPlayer(game: GameState, options: AddAiOptions = {}): AddAiR
     : FREEFORM_NAMES[index % FREEFORM_NAMES.length];
   const name = uniqueAiName(game, base);
   const id = uniquePlayerId(game);
+  const modelOverride = resolveRequestedModelOverride(slot, options);
 
-  const player = newAiPlayer(id, name, difficulty, slot);
+  const player = newAiPlayer(id, name, difficulty, slot, modelOverride);
   game.players.push(player);
   syncEnergyAfterRosterChange(game, player);
   syncChatGroupsOnRosterChange(game);
-  game.logs.push(`🤖 AI 玩家「${name}」加入（自由发挥 · ${difficulty} · 座位${slot}）`);
+  game.logs.push(
+    `🤖 AI 玩家「${name}」加入（自由发挥 · ${difficulty} · 座位${slot}${modelOverride ? ` · ${modelOverride.split("/").pop()}` : ""}）`
+  );
+  return { ok: true, player };
+}
+
+/** 管理员在网页端动态切换某名在座 AI 使用的模型（沿用服务端密钥）。 */
+export function setAiPlayerModel(
+  game: GameState,
+  playerId: string,
+  rawModel: string
+): { ok: true; player: Player } | { ok: false; error: string } {
+  const player = game.players.find((p) => p.id === playerId && isAiPlayer(p));
+  if (!player) return { ok: false, error: "找不到该 AI 玩家" };
+  const cleaned = String(rawModel ?? "").trim().slice(0, 120);
+  if (cleaned && /[\s\r\n<>]/.test(cleaned)) {
+    return { ok: false, error: "模型名称包含非法空白或字符" };
+  }
+  const slot = player.aiSlot ?? 1;
+  const nextCfg = resolveAiModelConfigForPlayer({
+    aiSlot: slot,
+    aiModelOverride: cleaned || undefined,
+  });
+  if (!nextCfg) {
+    return { ok: false, error: `座位 ${slot} 未配置可用模型密钥` };
+  }
+  player.aiModelOverride = cleaned || undefined;
+  player.aiModelLabel = `${nextCfg.provider}:${nextCfg.model}`;
+  if (game.aiFailures?.[player.id]) {
+    delete game.aiFailures[player.id];
+  }
+  game.logs.push(`🧠 管理员将 AI「${player.name}」模型切换为 ${nextCfg.model}`);
   return { ok: true, player };
 }
 
@@ -209,6 +271,7 @@ export function aiRosterSummary(game: GameState) {
         slot: p.aiSlot ?? null,
         /** 该座位实际使用的模型；未配置 Key 时显示「未配置模型」 */
         model: p.aiModelLabel ?? "本地策略",
+        modelOverride: p.aiModelOverride ?? null,
         wealth: p.wealth,
         ready: p.ready,
       })),

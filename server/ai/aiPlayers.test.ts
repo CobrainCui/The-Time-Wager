@@ -1,14 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createInitialGame, type GameState, type Player } from "../state/gameState.js";
-import { addAiPlayer, countAiPlayers, fillAiPlayers, removeAiPlayer } from "./aiRoster.js";
+import {
+  addAiPlayer,
+  countAiPlayers,
+  fillAiPlayers,
+  removeAiPlayer,
+  setAiPlayerModel,
+} from "./aiRoster.js";
 import { buildFallbackInvestmentPlan, chooseAuctionAction, sanitizeInvestmentPlan } from "./aiPolicy.js";
 import {
+  askProductAiWithFallback,
+  ensureAiProgress,
+  forgetAiRoom,
   getAiPhaseKey,
   handleAIPhase,
+  isAiInOpeningWindow,
   pruneGroupThinkingStatuses,
   sweepStaleChatThinkingStatuses,
+  wakeAiOpeningWindowIfHumansReady,
 } from "./aiOrchestrator.js";
+import { buildOpeningChatPrompt } from "./aiPrompt.js";
+import { ProductAiMemory } from "./aiMemory.js";
+import { verifyAiAgents } from "./aiPreflight.js";
 import { profileFor, profileForPlayer } from "./aiPersona.js";
 import { buildAiObservation } from "./aiObservation.js";
 import { buildSystemPrompt } from "./aiPrompt.js";
@@ -19,6 +33,8 @@ import { createLotteryOffer } from "../logic/lotterySettle.js";
 import { acceptLotteryOffer } from "../logic/lotteryDraw.js";
 import { serializeGameForClient } from "../network/broadcast.js";
 import { createCustomChatGroup } from "../logic/chatGroups.js";
+import { buildSessionExport } from "../export/sessionExport.js";
+import { resetGameSession } from "../state/gameState.js";
 import {
   shortTermProjects,
   longTermProjects,
@@ -582,4 +598,312 @@ test("sanitizeInvestmentPlan redistributes energy clipped from over-headroom sho
     (sanitized.investment[shortSmall.id] ?? 0) + (sanitized.investment[safeLong.id] ?? 0),
     15
   );
+});
+
+test("serializeGameForClient exposes aiDecisions/aiTokenUsage only to god view and resetGameSession clears them", () => {
+  const { game, human, ai } = makeGame();
+  game.aiDecisions = [
+    {
+      id: "d1",
+      timestamp: Date.now(),
+      phase: "INVESTMENT",
+      era: 1,
+      roundInEra: 1,
+      globalRound: 1,
+      playerId: ai.id,
+      playerName: ai.name,
+      kind: "investment",
+      model: "test-model",
+      reasoning: "秘密内心推理",
+      summary: "投 15",
+      totalTokens: 1234,
+      latencyMs: 500,
+    },
+  ];
+  game.aiTokenUsage = { [ai.id]: 1234 };
+  game.aiTokenBudgetPerGame = 3_000_000;
+
+  const playerPayload = serializeGameForClient(game, {}, human.id) as Record<string, unknown>;
+  assert.equal(playerPayload.aiDecisions, undefined);
+  assert.equal(playerPayload.aiTokenUsage, undefined);
+  assert.equal(playerPayload.aiTokenBudgetPerGame, undefined);
+
+  const godPayload = serializeGameForClient(game, { isGodView: true }, null) as {
+    aiDecisions?: unknown[];
+    aiTokenUsage?: Record<string, number>;
+    aiTokenBudgetPerGame?: number;
+  };
+  assert.equal(godPayload.aiDecisions?.length, 1);
+  assert.equal(godPayload.aiTokenUsage?.[ai.id], 1234);
+  assert.equal(godPayload.aiTokenBudgetPerGame, 3_000_000);
+
+  const exported = buildSessionExport(game);
+  const exportedAi = exported.players.find((p) => p.id === ai.id);
+  assert.equal(exportedAi?.aiTokensUsed, 1234);
+
+  ai.aiModelOverride = "deepseek-ai/DeepSeek-V4.1-Flash";
+  resetGameSession(game);
+  assert.deepEqual(game.aiDecisions, []);
+  assert.deepEqual(game.aiTokenUsage, {});
+  const godAfter = serializeGameForClient(game, { isGodView: true }, null) as {
+    players: Array<{ id: string; aiModelOverride?: string }>;
+  };
+  const humanAfter = serializeGameForClient(game, { isGodView: false }, human.id) as {
+    players: Array<{ id: string; aiModelOverride?: string }>;
+  };
+  assert.equal(godAfter.players.find((p) => p.id === ai.id)?.aiModelOverride, "deepseek-ai/DeepSeek-V4.1-Flash");
+  assert.equal(humanAfter.players.find((p) => p.id === ai.id)?.aiModelOverride, undefined);
+});
+
+test("ProductAiMemory records, masks PII, formats digest by round, and clears", () => {
+  const mem = new ProductAiMemory();
+  assert.equal(mem.digest(), "");
+  mem.record("action", "投新能源汽车 8 点", { globalRound: 1, era: 1, roundInEra: 1 });
+  mem.record("social", "和玩家A约好，电话 13812345678", { globalRound: 1, era: 1, roundInEra: 1 });
+  mem.record("outcome", "净赚 +120", { globalRound: 2, era: 1, roundInEra: 2 });
+
+  const d = mem.digest();
+  assert.match(d, /第 1 轮/);
+  assert.match(d, /第 2 轮/);
+  assert.equal(d.includes("13812345678"), false);
+  mem.clear();
+  assert.equal(mem.size(), 0);
+});
+
+test("setAiPlayerModel switches seat model dynamically and verifyAiAgents includes results array", async () => {
+  const savedKey = process.env.AI_API_KEY;
+  process.env.AI_API_KEY = "sk-test-roster-model";
+  try {
+    const game = createInitialGame("model-switch", []);
+    const added = addAiPlayer(game, { model: "Qwen/Qwen3.8-27B" });
+    assert.equal(added.ok, true);
+    if (!added.ok) return;
+    assert.equal(added.player.aiModelOverride, "Qwen/Qwen3.8-27B");
+    assert.match(added.player.aiModelLabel ?? "", /Qwen3\.8-27B/);
+
+    const bad = setAiPlayerModel(game, added.player.id, "bad model with space");
+    assert.equal(bad.ok, false);
+
+    const switched = setAiPlayerModel(game, added.player.id, "zai-org/GLM-5.3");
+    assert.equal(switched.ok, true);
+    assert.equal(added.player.aiModelOverride, "zai-org/GLM-5.3");
+    assert.match(added.player.aiModelLabel ?? "", /GLM-5\.3/);
+
+    delete process.env.AI_API_KEY;
+    const preflight = await verifyAiAgents(game, { force: true });
+    assert.equal(preflight.ok, false);
+    assert.equal(preflight.results?.length, 1);
+    assert.equal(typeof preflight.results?.[0]?.latencyMs, "number");
+  } finally {
+    if (savedKey === undefined) delete process.env.AI_API_KEY;
+    else process.env.AI_API_KEY = savedKey;
+  }
+});
+
+test("fillAiPlayers on SiliconFlow assigns 5 verified domestic models by default and honors diverseModels=false", () => {
+  const savedAiKey = process.env.AI_API_KEY;
+  const savedSfKey = process.env.SILICONFLOW_API_KEY;
+  const savedSfModel = process.env.SILICONFLOW_MODEL;
+  delete process.env.AI_API_KEY;
+  delete process.env.SILICONFLOW_MODEL;
+  process.env.SILICONFLOW_API_KEY = "sk-sf-diverse-test";
+  try {
+    const g1 = createInitialGame("sf-default-lineup", []);
+    const added = fillAiPlayers(g1, 6);
+    assert.equal(added, 5);
+    assert.deepEqual(
+      g1.players.map((p) => p.aiModelOverride),
+      [
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "Qwen/Qwen3.8-27B",
+        "zai-org/GLM-5.3",
+        "moonshotai/Kimi-K2.7-Code",
+        "tencent/Hy4-preview",
+      ]
+    );
+
+    const g2 = createInitialGame("sf-uniform-lineup", []);
+    const added2 = fillAiPlayers(g2, 6, { diverseModels: false });
+    assert.equal(added2, 5);
+    assert.deepEqual(
+      g2.players.map((p) => p.aiModelOverride),
+      [undefined, undefined, undefined, undefined, undefined]
+    );
+  } finally {
+    if (savedAiKey === undefined) delete process.env.AI_API_KEY;
+    else process.env.AI_API_KEY = savedAiKey;
+    if (savedSfKey === undefined) delete process.env.SILICONFLOW_API_KEY;
+    else process.env.SILICONFLOW_API_KEY = savedSfKey;
+    if (savedSfModel === undefined) delete process.env.SILICONFLOW_MODEL;
+    else process.env.SILICONFLOW_MODEL = savedSfModel;
+  }
+});
+
+test("askProductAiWithFallback switches from light thinking to fast mode on timeout", async () => {
+  const calls: Array<{ disableThinking?: boolean; thinkingBudget?: number; user: string }> = [];
+  const res = await askProductAiWithFallback(
+    "sys",
+    "usr",
+    {
+      config: { apiKey: "sk-x", model: "deepseek-ai/DeepSeek-V4.1-Flash", provider: "siliconflow", source: "shared" },
+      label: "invest-r1",
+      thinking: { thinkingBudget: 640, reasoningEffort: "low", timeoutMs: 35_000, maxOutputTokens: 4096 },
+      fast: { timeoutMs: 25_000, maxRetries: 1, maxOutputTokens: 3000 },
+    },
+    async (_sys, user, opts) => {
+      calls.push({ disableThinking: opts?.disableThinking, thinkingBudget: opts?.thinkingBudget, user });
+      if (calls.length === 1) {
+        return {
+          ok: false,
+          data: null,
+          raw: "",
+          latencyMs: 24_000,
+          usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+          error: "invest-r1: attempt 1: timeout 24000ms",
+        };
+      }
+      return {
+        ok: true,
+        data: { investment: { 101: 15 }, reasoning: "ok" },
+        raw: "{}",
+        latencyMs: 1_200,
+        usage: { promptTokens: 90, completionTokens: 60, totalTokens: 150 },
+      };
+    }
+  );
+  assert.equal(res.ok, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]?.disableThinking, false);
+  assert.equal(calls[0]?.thinkingBudget, 640);
+  assert.equal(calls[1]?.disableThinking, true);
+  assert.equal(calls[1]?.user, "usr");
+  assert.equal(res.usage?.totalTokens, 300);
+  assert.equal(res.latencyMs, 25_200);
+});
+
+test("askProductAiWithFallback retries fast mode with JSON reminder on JSON parse error and on connection error", async () => {
+  const seenPrompts: string[] = [];
+  let attempt = 0;
+  const jsonRes = await askProductAiWithFallback(
+    "sys",
+    "base-prompt",
+    {
+      config: { apiKey: "sk-x", model: "deepseek-ai/DeepSeek-V4.1-Flash", provider: "siliconflow", source: "shared" },
+      label: "invest-json",
+      thinking: { thinkingBudget: 640, reasoningEffort: "low", timeoutMs: 35_000, maxOutputTokens: 4096 },
+      fast: { timeoutMs: 25_000, maxRetries: 1, maxOutputTokens: 3000 },
+    },
+    async (_sys, user) => {
+      seenPrompts.push(user);
+      attempt += 1;
+      if (attempt === 1) {
+        return { ok: false, data: null, raw: "{", latencyMs: 1000, error: "invest-json: attempt 1: JSON 解析失败" };
+      }
+      return { ok: true, data: { investment: { 101: 10 }, reasoning: "fixed" }, raw: "{}", latencyMs: 500 };
+    }
+  );
+  assert.equal(jsonRes.ok, true);
+  assert.equal(seenPrompts.length, 2);
+  assert.match(seenPrompts[1] ?? "", /完整合法的 JSON/);
+
+  let connCalls = 0;
+  const connRes = await askProductAiWithFallback(
+    "sys",
+    "base-prompt",
+    {
+      config: { apiKey: "sk-x", model: "zai-org/GLM-5.3", provider: "siliconflow", source: "shared" },
+      label: "invest-conn",
+      thinking: { thinkingBudget: 640, reasoningEffort: "low", timeoutMs: 35_000, maxOutputTokens: 4096 },
+      fast: { timeoutMs: 25_000, maxRetries: 1, maxOutputTokens: 3000 },
+    },
+    async () => {
+      connCalls += 1;
+      if (connCalls === 1) {
+        return { ok: false, data: null, raw: "", latencyMs: 800, error: "invest-conn: attempt 1: Connection error." };
+      }
+      return { ok: true, data: { investment: { 101: 8 }, reasoning: "ok" }, raw: "{}", latencyMs: 400 };
+    }
+  );
+  assert.equal(connRes.ok, true);
+  assert.equal(connCalls, 2);
+});
+
+test("opening negotiation window pauses AI locking until humans lock in or window ends", async () => {
+  const prevWin = process.env.AI_INVEST_OPENING_WINDOW_MS;
+  const prevStagger = process.env.AI_INVEST_STAGGER_MAX_MS;
+  const prevChat = process.env.AI_OPENING_CHAT_ENABLED;
+  process.env.AI_INVEST_OPENING_WINDOW_MS = "10000";
+  process.env.AI_INVEST_STAGGER_MAX_MS = "0";
+  process.env.AI_OPENING_CHAT_ENABLED = "false";
+
+  const { game, human, ai } = makeGame();
+  game.roomId = "ai-opening-win-test";
+  try {
+    game.investmentEndsAt = Date.now() + 180_000;
+
+    await handleAIPhase(game, null);
+    assert.equal(isAiInOpeningWindow(game), true);
+    assert.equal(ai.ready, false);
+    assert.equal(typeof game.aiOpeningUntil, "number");
+    assert.equal(ensureAiProgress(game, null), false);
+
+    // 人类玩家全部锁定后立即唤醒 AI
+    human.ready = true;
+    const woke = wakeAiOpeningWindowIfHumansReady(game, null);
+    assert.equal(woke, true);
+    assert.equal(isAiInOpeningWindow(game), false);
+
+    for (let i = 0; i < 40 && !ai.ready; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.equal(ai.ready, true);
+  } finally {
+    forgetAiRoom(game.roomId);
+    if (prevWin === undefined) delete process.env.AI_INVEST_OPENING_WINDOW_MS;
+    else process.env.AI_INVEST_OPENING_WINDOW_MS = prevWin;
+    if (prevStagger === undefined) delete process.env.AI_INVEST_STAGGER_MAX_MS;
+    else process.env.AI_INVEST_STAGGER_MAX_MS = prevStagger;
+    if (prevChat === undefined) delete process.env.AI_OPENING_CHAT_ENABLED;
+    else process.env.AI_OPENING_CHAT_ENABLED = prevChat;
+  }
+});
+
+test("opening negotiation window is skipped when disabled or no unready connected human exists", async () => {
+  const prevWin = process.env.AI_INVEST_OPENING_WINDOW_MS;
+  const prevStagger = process.env.AI_INVEST_STAGGER_MAX_MS;
+  const prevChat = process.env.AI_OPENING_CHAT_ENABLED;
+  process.env.AI_INVEST_OPENING_WINDOW_MS = "0";
+  process.env.AI_INVEST_STAGGER_MAX_MS = "0";
+  process.env.AI_OPENING_CHAT_ENABLED = "false";
+
+  const { game, ai } = makeGame();
+  game.roomId = "ai-opening-skip-test";
+  try {
+    game.investmentEndsAt = Date.now() + 180_000;
+
+    await handleAIPhase(game, null);
+    assert.equal(isAiInOpeningWindow(game), false);
+    assert.equal(ai.ready, true);
+  } finally {
+    forgetAiRoom(game.roomId);
+    if (prevWin === undefined) delete process.env.AI_INVEST_OPENING_WINDOW_MS;
+    else process.env.AI_INVEST_OPENING_WINDOW_MS = prevWin;
+    if (prevStagger === undefined) delete process.env.AI_INVEST_STAGGER_MAX_MS;
+    else process.env.AI_INVEST_STAGGER_MAX_MS = prevStagger;
+    if (prevChat === undefined) delete process.env.AI_OPENING_CHAT_ENABLED;
+    else process.env.AI_OPENING_CHAT_ENABLED = prevChat;
+  }
+});
+
+test("buildOpeningChatPrompt formats opening negotiation prompt with memory block", () => {
+  const { game, ai } = makeGame();
+  const obs = buildAiObservation(game, ai);
+  const prompt = buildOpeningChatPrompt(
+    obs,
+    profileForPlayer(ai),
+    "第1轮记忆：观察各玩家资金节奏",
+  );
+  assert.ok(prompt.includes(game.activeProjects[0]!.name));
+  assert.ok(prompt.includes("第1轮记忆：观察各玩家资金节奏"));
+  assert.ok(prompt.includes('"silent":false,"reply"'));
 });

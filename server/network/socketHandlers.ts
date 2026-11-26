@@ -37,7 +37,14 @@ import {
 } from "../logic/coffeeLogic.js";
 import { broadcastUpdate, emitSerializedGameUpdate } from "./broadcast.js";
 import { AI_BOT_ENABLED, AI_SAFETY_ENABLED } from "../config/features.js";
-import { addAiPlayer, removeAiPlayer, fillAiPlayers, aiRosterSummary, countAiPlayers } from "../ai/aiRoster.js";
+import {
+  addAiPlayer,
+  removeAiPlayer,
+  fillAiPlayers,
+  aiRosterSummary,
+  countAiPlayers,
+  setAiPlayerModel,
+} from "../ai/aiRoster.js";
 import {
   handleAIPhase,
   forgetAiRoom,
@@ -46,10 +53,11 @@ import {
   handleAiDirectMessage,
   handleAiGroupMessage,
   handleAiGroupCreated,
+  wakeAiOpeningWindowIfHumansReady,
 } from "../ai/aiOrchestrator.js";
 import { applyAiPreflightToGame, verifyAiAgents } from "../ai/aiPreflight.js";
 import { normalizeDifficulty } from "../ai/aiPersona.js";
-import { AI_CONFIG } from "../ai/aiConfig.js";
+import { AI_CONFIG, getProductAiModelCatalog } from "../ai/aiConfig.js";
 import {
   CRISIS_REPLY,
   SAFETY_CRISIS_WINDOW_MS,
@@ -1931,11 +1939,13 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
   // === AI 玩家（产品级） ===
   // 主持可添加/移除 AI、补满座位、查看当前 AI 列表。
   // AI 由服务端托管；严格模式下未配置/未连通模型会拒绝添加与开局，不会偷偷用本地策略。
-  socket.on("adminAddAI", ({ roomId, persona, difficulty, name } = {} as {
+  socket.on("adminAddAI", ({ roomId, persona, difficulty, name, model, diverseModels } = {} as {
     roomId?: string;
     persona?: string;
     difficulty?: string;
     name?: string;
+    model?: string;
+    diverseModels?: boolean;
   }) => {
     if (!socket.data.isSuperAdmin) return;
     if (!AI_BOT_ENABLED) {
@@ -1947,7 +1957,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       socket.emit("error", "房间不存在");
       return;
     }
-    const result = addAiPlayer(game, { persona, difficulty, name });
+    const result = addAiPlayer(game, { persona, difficulty, name, model, diverseModels });
     if (!result.ok) {
       socket.emit("error", result.error);
       return;
@@ -1982,11 +1992,13 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     void handleAIPhase(game, io);
   });
 
-  socket.on("adminFillAI", ({ roomId, target, persona, difficulty } = {} as {
+  socket.on("adminFillAI", ({ roomId, target, persona, difficulty, model, diverseModels } = {} as {
     roomId?: string;
     target?: number;
     persona?: string;
     difficulty?: string;
+    model?: string;
+    diverseModels?: boolean;
   }) => {
     if (!socket.data.isSuperAdmin) return;
     if (!AI_BOT_ENABLED) {
@@ -2001,6 +2013,8 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const added = fillAiPlayers(game, Number(target) || 6, {
       persona,
       difficulty,
+      model,
+      diverseModels,
     });
     if (added === 0) {
       socket.emit(
@@ -2028,6 +2042,92 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
     const game = rooms[roomId ?? ""];
     if (!game) return;
     socket.emit("adminAiRoster", aiRosterSummary(game));
+  });
+
+  socket.on("adminGetAiModelCatalog", () => {
+    if (!socket.data.isSuperAdmin) return;
+    socket.emit("adminAiModelCatalog", getProductAiModelCatalog());
+  });
+
+  socket.on("adminSetAiModel", ({ roomId, targetPlayerId, model } = {} as {
+    roomId?: string;
+    targetPlayerId?: string;
+    model?: string;
+  }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId ?? ""];
+    if (!game) return;
+    const res = setAiPlayerModel(game, String(targetPlayerId ?? ""), String(model ?? ""));
+    if (!res.ok) {
+      socket.emit("error", res.error);
+      return;
+    }
+    broadcastUpdate(io, game);
+    if (AI_CONFIG.strictAgent) {
+      void verifyAiAgents(game, { force: true }).then((preflight) => {
+        applyAiPreflightToGame(game, preflight);
+        broadcastUpdate(io, game);
+        socket.emit("adminAiPreflight", preflight);
+      });
+    }
+  });
+
+  socket.on("adminApplyDiverseAiModels", ({ roomId, models } = {} as {
+    roomId?: string;
+    models?: string[];
+  }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId ?? ""];
+    if (!game) return;
+    const catalog = getProductAiModelCatalog();
+    const pool =
+      Array.isArray(models) && models.length > 0
+        ? models.map((m) => String(m ?? "").trim()).filter(Boolean)
+        : catalog.defaultSeatModels;
+    const ais = game.players
+      .filter((p) => isAiPlayer(p))
+      .sort((a, b) => (a.aiSlot ?? 99) - (b.aiSlot ?? 99));
+    if (ais.length === 0 || pool.length === 0) return;
+    let updated = 0;
+    ais.forEach((ai, idx) => {
+      const targetModel = pool[idx % pool.length];
+      if (!targetModel) return;
+      const res = setAiPlayerModel(game, ai.id, targetModel);
+      if (res.ok) updated += 1;
+    });
+    if (updated > 0) {
+      game.logs.push(`🎲 管理员为 ${updated} 名 AI 分配了不同模型阵容`);
+      broadcastUpdate(io, game);
+      if (AI_CONFIG.strictAgent) {
+        void verifyAiAgents(game, { force: true }).then((preflight) => {
+          applyAiPreflightToGame(game, preflight);
+          broadcastUpdate(io, game);
+          socket.emit("adminAiPreflight", preflight);
+        });
+      }
+    }
+  });
+
+  socket.on("adminSetAiTokenBudget", ({ roomId, tokenBudgetPerGame } = {} as {
+    roomId?: string;
+    tokenBudgetPerGame?: number;
+  }) => {
+    if (!socket.data.isSuperAdmin) return;
+    const game = rooms[roomId ?? ""];
+    if (!game) return;
+    const raw = Number(tokenBudgetPerGame);
+    if (!Number.isFinite(raw) || raw < 0) {
+      socket.emit("error", "额度上限须为非负整数（0 表示不限）");
+      return;
+    }
+    const nextBudget = raw === 0 ? 0 : Math.max(50_000, Math.min(100_000_000, Math.trunc(raw)));
+    game.aiTokenBudgetPerGame = nextBudget;
+    game.logs.push(
+      nextBudget === 0
+        ? "♾️ 管理员将本房间 AI 单局消耗上限设为不限"
+        : `📊 管理员将本房间 AI 单局消耗上限设为 ${Math.round(nextBudget / 10_000)} 万/位`
+    );
+    broadcastUpdate(io, game);
   });
 
   // 严格 Agent 模式：开局前 / 修复配置后检测模型连通性
@@ -2212,6 +2312,7 @@ export function registerSocketHandlers(io: Server, socket: Socket) {
       return;
     }
     togglePlayerReady(game, player.id);
+    wakeAiOpeningWindowIfHumansReady(game, io);
     tryAdvancePhase(game);
     broadcastUpdate(io, game);
   });

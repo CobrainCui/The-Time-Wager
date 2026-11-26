@@ -34,13 +34,15 @@ function eraThemeNames(eraSequence: number[]): string[] {
   });
 }
 
-function playerExportRow(p: Player) {
+function playerExportRow(p: Player, game: GameState) {
   return {
     id: p.id,
     name: p.name,
     isAI: p.isAI ?? false,
     aiPersona: p.aiPersona ?? "",
     aiDifficulty: p.aiDifficulty ?? "",
+    aiModelLabel: p.aiModelLabel ?? "",
+    aiTokensUsed: isAiPlayer(p) ? (game.aiTokenUsage?.[p.id] ?? 0) : 0,
     energy: p.energy,
     wealth: p.wealth,
     rank: p.rank,
@@ -87,7 +89,7 @@ export function buildSessionExport(game: GameState) {
       exportedAt,
     },
     players: game.players.map((p) => ({
-      ...playerExportRow(p),
+      ...playerExportRow(p, game),
       ruleEnginePersona: p.analysisResult
         ? { source: "rule_engine", data: p.analysisResult }
         : null,
@@ -165,6 +167,8 @@ export async function buildSessionWorkbook(
     AI: p.isAI,
     AI人格: sanitizeCell(p.aiPersona),
     AI难度: sanitizeCell(p.aiDifficulty),
+    AI模型: sanitizeCell(p.aiModelLabel),
+    AI消耗: p.aiTokensUsed ?? 0,
     财富: p.wealth,
     精力: p.energy,
     排名: p.rank,
