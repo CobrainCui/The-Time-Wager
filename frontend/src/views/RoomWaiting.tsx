@@ -9,6 +9,8 @@ interface Props {
   me: Player;
   /** 主持公共预览：不高亮座位 */
   embed?: boolean;
+  /** 局中问题反馈入口 */
+  onOpenIssueFeedback?: () => void;
 }
 
 const MIN_PLAYERS = 4;
@@ -40,7 +42,7 @@ function copyText(text: string): Promise<boolean> {
  * 等待房（自助开局）。
  * 房主在这里决定「和几个 AI 打、多难」，然后直接开始，不需要主持人。
  */
-export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
+export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false, onOpenIssueFeedback }) => {
   const [copied, setCopied] = useState<"code" | "link" | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -277,6 +279,15 @@ export const RoomWaiting: React.FC<Props> = ({ game, me, embed = false }) => {
           <button type="button" className="waiting-invite" onClick={() => void handleCopy("link")}>
             {copied === "link" ? "✔ 邀请链接已复制" : "🔗 复制邀请链接"}
           </button>
+          {!embed && onOpenIssueFeedback && (
+            <button
+              type="button"
+              className="waiting-feedback-link"
+              onClick={onOpenIssueFeedback}
+            >
+              遇到问题或有建议？点此反馈
+            </button>
+          )}
         </div>
       </div>
     </div>

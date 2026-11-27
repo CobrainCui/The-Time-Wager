@@ -1,13 +1,22 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  FEEDBACK_TAGS,
+  ALL_DISPLAYABLE_TAGS,
+  FEEDBACK_CONSTRUCTIVE_TAGS,
+  FEEDBACK_CONTENT_MAX,
+  FEEDBACK_POSITIVE_TAGS,
   fetchFeedback,
+  getOwnedReviewToken,
+  saveOwnedReview,
   submitFeedback,
+  toggleFeedbackHelpful,
+  updateOwnFeedback,
+  type FeedbackGameContext,
   type FeedbackItem,
   type FeedbackSource,
+  type FeedbackStats,
   type FeedbackSummary,
-  type FeedbackTag,
+  type PublicFeedbackSort,
 } from "../../api/feedback";
 
 type FeedbackMode = "list" | "write";
@@ -18,15 +27,35 @@ export interface FeedbackWallProps {
   source: FeedbackSource;
   initialMode?: FeedbackMode;
   initialRating?: number;
+  gameContext?: FeedbackGameContext;
+  sessionKey?: string;
+  initialEditItem?: FeedbackItem | null;
+  onReviewSaved?: (item: FeedbackItem) => void;
 }
 
 type FeedbackDialogProps = Omit<FeedbackWallProps, "open">;
 
 const PAGE_SIZE = 20;
-const MAX_CONTENT = 300;
 const MAX_TAGS = 3;
+const LONG_CONTENT_CHAR_THRESHOLD = 140;
+const LONG_CONTENT_LINE_THRESHOLD = 4;
 
-function clampRating(value: number | undefined): number {
+const SORT_OPTIONS: Array<{ value: PublicFeedbackSort; label: string }> = [
+  { value: "featured", label: "精选优先" },
+  { value: "newest", label: "最新发布" },
+  { value: "highest", label: "好评优先" },
+  { value: "lowest", label: "差评优先" },
+];
+
+const RATING_LABELS: Record<number, string> = {
+  1: "1 星 · 体验较差",
+  2: "2 星 · 有点失望",
+  3: "3 星 · 中规中矩",
+  4: "4 星 · 挺好玩的",
+  5: "5 星 · 强烈推荐",
+};
+
+function clampInitialRating(value: number | undefined): number {
   if (!value || !Number.isFinite(value)) return 0;
   return Math.min(5, Math.max(1, Math.round(value)));
 }
@@ -43,6 +72,21 @@ function formatAverage(value: number): string {
   return Number.isFinite(value) ? value.toFixed(1) : "0.0";
 }
 
+function getReputationLabel(stats: FeedbackStats | null): string {
+  if (!stats || stats.count === 0) return "虚位以待";
+  if (stats.count < 3) return "口碑收集中";
+  if (stats.positiveRate >= 90) return "好评如潮";
+  if (stats.positiveRate >= 80) return "特别好评";
+  if (stats.positiveRate >= 65) return "多半好评";
+  if (stats.positiveRate >= 50) return "褒贬不一";
+  return "有待改进";
+}
+
+function isLongContent(text: string): boolean {
+  if (Array.from(text).length > LONG_CONTENT_CHAR_THRESHOLD) return true;
+  return text.split("\n").length > LONG_CONTENT_LINE_THRESHOLD;
+}
+
 function StarsView({ rating }: { rating: number }) {
   const safe = Math.min(5, Math.max(0, Math.round(rating)));
   return (
@@ -56,24 +100,52 @@ function StarsView({ rating }: { rating: number }) {
   );
 }
 
+const CONSTRUCTIVE_TAG_SET = new Set<string>(FEEDBACK_CONSTRUCTIVE_TAGS);
+
 const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
   onClose,
   source,
   initialMode = "list",
   initialRating,
+  gameContext,
+  sessionKey,
+  initialEditItem = null,
+  onReviewSaved,
 }) => {
   const [mode, setMode] = useState<FeedbackMode>(initialMode);
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [summary, setSummary] = useState<FeedbackSummary | null>(null);
+  const [stats, setStats] = useState<FeedbackStats | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
-  const [rating, setRating] = useState(() => clampRating(initialRating));
-  const [content, setContent] = useState("");
-  const [tags, setTags] = useState<FeedbackTag[]>([]);
+  // 筛选与排序
+  const [sort, setSort] = useState<PublicFeedbackSort>("featured");
+  const [ratingFilter, setRatingFilter] = useState<number | null>(null);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [withContentOnly, setWithContentOnly] = useState(false);
+  const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [votingIds, setVotingIds] = useState<Set<string>>(() => new Set());
+
+  // 写评 / 修改态
+  const [editingId, setEditingId] = useState<string | null>(
+    initialEditItem ? String(initialEditItem.id) : null
+  );
+  const [rating, setRating] = useState(() =>
+    initialEditItem ? clampInitialRating(initialEditItem.rating) : clampInitialRating(initialRating)
+  );
+  const [content, setContent] = useState(() => initialEditItem?.content ?? "");
+  const [tags, setTags] = useState<string[]>(() =>
+    initialEditItem ? [...initialEditItem.tags] : []
+  );
+  const [attachGameContext, setAttachGameContext] = useState(() => {
+    if (initialEditItem) return Boolean(initialEditItem.gameContext);
+    return source === "game_over" && Boolean(gameContext);
+  });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -82,37 +154,64 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  const loadFirstPage = useCallback(async () => {
-    const seq = ++loadSeq.current;
-    try {
-      const page = await fetchFeedback(0, PAGE_SIZE);
-      if (seq !== loadSeq.current) return;
-      setItems(page.items);
-      setSummary({ count: page.count, average: page.average });
-      setHasMore(page.hasMore);
-      setLoadError(null);
-    } catch (err) {
-      if (seq !== loadSeq.current) return;
-      setLoadError(err instanceof Error ? err.message : "加载评价失败，请稍后重试");
-    } finally {
-      if (seq === loadSeq.current) setLoading(false);
-    }
-  }, []);
+  const hasActiveFilters =
+    ratingFilter !== null || tagFilter !== null || withContentOnly || verifiedOnly;
+
+  const currentQuery = useMemo(
+    () => ({
+      sort,
+      rating: ratingFilter,
+      tag: tagFilter,
+      withContent: withContentOnly,
+      verifiedOnly,
+    }),
+    [sort, ratingFilter, tagFilter, withContentOnly, verifiedOnly]
+  );
+
+  const loadFirstPage = useCallback(
+    async (queryOverride?: typeof currentQuery) => {
+      const q = queryOverride ?? currentQuery;
+      const seq = ++loadSeq.current;
+      try {
+        const page = await fetchFeedback({
+          offset: 0,
+          limit: PAGE_SIZE,
+          ...q,
+        });
+        if (seq !== loadSeq.current) return;
+        setItems(page.items);
+        setSummary({ count: page.count, average: page.average });
+        if (page.stats) setStats(page.stats);
+        setHasMore(page.hasMore);
+        setLoadError(null);
+      } catch (err) {
+        if (seq !== loadSeq.current) return;
+        setLoadError(err instanceof Error ? err.message : "加载评价失败，请稍后重试");
+      } finally {
+        if (seq === loadSeq.current) setLoading(false);
+      }
+    },
+    [currentQuery]
+  );
 
   useEffect(() => {
     const seq = ++loadSeq.current;
-    fetchFeedback(0, PAGE_SIZE)
+    fetchFeedback({
+      offset: 0,
+      limit: PAGE_SIZE,
+      ...currentQuery,
+    })
       .then((page) => {
         if (seq !== loadSeq.current) return;
         setItems(page.items);
         setSummary({ count: page.count, average: page.average });
+        if (page.stats) setStats(page.stats);
         setHasMore(page.hasMore);
+        setLoadError(null);
       })
       .catch((err) => {
         if (seq !== loadSeq.current) return;
-        setLoadError(
-          err instanceof Error ? err.message : "加载评价失败，请稍后重试"
-        );
+        setLoadError(err instanceof Error ? err.message : "加载评价失败，请稍后重试");
       })
       .finally(() => {
         if (seq === loadSeq.current) setLoading(false);
@@ -120,7 +219,7 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
     return () => {
       loadSeq.current += 1;
     };
-  }, []);
+  }, [currentQuery]);
 
   // 锁住页面滚动，关闭时恢复原值。
   useEffect(() => {
@@ -159,6 +258,21 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
     }
   };
 
+  const resetFilters = () => {
+    setLoading(true);
+    setRatingFilter(null);
+    setTagFilter(null);
+    setWithContentOnly(false);
+    setVerifiedOnly(false);
+  };
+
+  const applyFilterChange = (updater: () => void) => {
+    setLoading(true);
+    setLoadError(null);
+    setLoadMoreError(null);
+    updater();
+  };
+
   const handleRetry = () => {
     setLoading(true);
     setLoadingMore(false);
@@ -173,7 +287,11 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
     setLoadingMore(true);
     setLoadMoreError(null);
     try {
-      const page = await fetchFeedback(items.length, PAGE_SIZE);
+      const page = await fetchFeedback({
+        offset: items.length,
+        limit: PAGE_SIZE,
+        ...currentQuery,
+      });
       if (seq !== loadSeq.current) return;
       setItems((prev) => {
         const seen = new Set(prev.map((item) => String(item.id)));
@@ -181,6 +299,7 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
         return [...prev, ...next];
       });
       setSummary({ count: page.count, average: page.average });
+      if (page.stats) setStats(page.stats);
       setHasMore(page.hasMore);
     } catch (err) {
       if (seq !== loadSeq.current) return;
@@ -190,7 +309,7 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
     }
   };
 
-  const toggleTag = (tag: FeedbackTag) => {
+  const toggleTag = (tag: string) => {
     setTags((prev) => {
       if (prev.includes(tag)) return prev.filter((item) => item !== tag);
       if (prev.length >= MAX_TAGS) return prev;
@@ -198,7 +317,92 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
     });
   };
 
+  const handleHelpfulToggle = async (item: FeedbackItem) => {
+    const idKey = String(item.id);
+    if (votingIds.has(idKey)) return;
+
+    const prevVoted = Boolean(item.viewerHasVoted);
+    const prevCount = item.helpfulCount ?? 0;
+    const nextVoted = !prevVoted;
+    const nextCount = Math.max(0, prevCount + (nextVoted ? 1 : -1));
+
+    setVotingIds((prev) => new Set(prev).add(idKey));
+    setItems((prev) =>
+      prev.map((it) =>
+        String(it.id) === idKey
+          ? { ...it, viewerHasVoted: nextVoted, helpfulCount: nextCount }
+          : it
+      )
+    );
+
+    try {
+      const res = await toggleFeedbackHelpful(item.id);
+      setItems((prev) =>
+        prev.map((it) =>
+          String(it.id) === idKey
+            ? { ...it, viewerHasVoted: res.voted, helpfulCount: res.helpfulCount }
+            : it
+        )
+      );
+    } catch {
+      // 失败回滚
+      setItems((prev) =>
+        prev.map((it) =>
+          String(it.id) === idKey
+            ? { ...it, viewerHasVoted: prevVoted, helpfulCount: prevCount }
+            : it
+        )
+      );
+    } finally {
+      setVotingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(idKey);
+        return next;
+      });
+    }
+  };
+
+  const startEditItem = (item: FeedbackItem) => {
+    setEditingId(String(item.id));
+    setRating(clampInitialRating(item.rating));
+    setContent(item.content);
+    setTags([...item.tags]);
+    setAttachGameContext(Boolean(item.gameContext));
+    setSubmitError(null);
+    setSuccess(null);
+    setMode("write");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setRating(clampInitialRating(initialRating));
+    setContent("");
+    setTags([]);
+    setAttachGameContext(source === "game_over" && Boolean(gameContext));
+    setSubmitError(null);
+    setMode("list");
+  };
+
+  const toggleExpand = (idKey: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(idKey)) next.delete(idKey);
+      else next.add(idKey);
+      return next;
+    });
+  };
+
   const canSubmit = !submitting && rating >= 1 && rating <= 5;
+  const activeContext =
+    editingId != null
+      ? items.find((it) => String(it.id) === editingId)?.gameContext ??
+        (initialEditItem && String(initialEditItem.id) === editingId
+          ? initialEditItem.gameContext
+          : undefined) ??
+        (source === "game_over" ? gameContext : undefined)
+      : source === "game_over"
+        ? gameContext
+        : undefined;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -206,25 +410,69 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
     setSubmitError(null);
     setSuccess(null);
     try {
-      const result = await submitFeedback({
-        rating,
-        content: content.trim(),
-        tags,
-        source,
-      });
-      setItems((prev) => {
-        const id = String(result.item.id);
-        return [result.item, ...prev.filter((item) => String(item.id) !== id)];
-      });
-      setSummary(result.summary);
-      setSuccess("谢谢你的评价");
-      setMode("list");
-      setContent("");
-      setTags([]);
-      setLoadingMore(false);
-      setLoadError(null);
-      setLoadMoreError(null);
-      void loadFirstPage();
+      if (editingId) {
+        const token = getOwnedReviewToken(editingId);
+        if (!token) {
+          setSubmitError("本机未找到该评价的修改凭证，无法编辑");
+          return;
+        }
+        const result = await updateOwnFeedback(editingId, {
+          editToken: token,
+          rating,
+          content: content.trim(),
+          tags,
+          ...(activeContext && attachGameContext
+            ? { gameContext: activeContext }
+            : { clearGameContext: true }),
+        });
+        setItems((prev) =>
+          prev.map((it) => (String(it.id) === editingId ? { ...it, ...result.item } : it))
+        );
+        setSummary(result.summary);
+        if (result.stats) setStats(result.stats);
+        onReviewSaved?.(result.item);
+        setSuccess("已更新你的评价");
+        setEditingId(null);
+        setContent("");
+        setTags([]);
+        setMode("list");
+        void loadFirstPage();
+      } else {
+        const result = await submitFeedback({
+          rating,
+          content: content.trim(),
+          tags,
+          source,
+          ...(source === "game_over" && attachGameContext && gameContext
+            ? { gameContext }
+            : {}),
+        });
+        saveOwnedReview(result.item.id, result.editToken, sessionKey);
+        onReviewSaved?.(result.item);
+        setSummary(result.summary);
+        if (result.stats) setStats(result.stats);
+        setSuccess("谢谢你的评价");
+        setContent("");
+        setTags([]);
+        setRating(0);
+        setMode("list");
+        const nextQuery: typeof currentQuery = {
+          sort: "newest",
+          rating: null,
+          tag: null,
+          withContent: false,
+          verifiedOnly: false,
+        };
+        setSort("newest");
+        setRatingFilter(null);
+        setTagFilter(null);
+        setWithContentOnly(false);
+        setVerifiedOnly(false);
+        setLoadingMore(false);
+        setLoadError(null);
+        setLoadMoreError(null);
+        void loadFirstPage(nextQuery);
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "提交失败，请稍后重试");
     } finally {
@@ -232,14 +480,30 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
     }
   };
 
-  const empty = !loading && !loadError && items.length === 0;
+  const overallCount = stats?.count ?? summary?.count ?? 0;
+  const completelyEmpty = !loading && !loadError && overallCount === 0 && !hasActiveFilters;
+  const filteredEmpty = !loading && !loadError && items.length === 0 && !completelyEmpty;
+
+  const showConstructiveFirst = rating >= 1 && rating <= 3;
+  const tagGroups = showConstructiveFirst
+    ? [
+        { title: "待改进的地方", list: FEEDBACK_CONSTRUCTIVE_TAGS },
+        { title: "也有值得夸的", list: FEEDBACK_POSITIVE_TAGS },
+      ]
+    : [
+        { title: "体验亮点", list: FEEDBACK_POSITIVE_TAGS },
+        { title: "希望改进", list: FEEDBACK_CONSTRUCTIVE_TAGS },
+      ];
+
+  const contextPreview = [
+    activeContext?.modeLabel,
+    activeContext?.personaName ? `人格：${activeContext.personaName}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <div
-      className="feedback-backdrop"
-      role="presentation"
-      onClick={onClose}
-    >
+    <div className="feedback-backdrop" role="presentation" onClick={onClose}>
       <div
         className="feedback-panel"
         role="dialog"
@@ -274,7 +538,8 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
             className={`feedback-tab${mode === "list" ? " is-active" : ""}`}
             onClick={() => switchMode("list")}
           >
-            玩家评价
+            玩家口碑
+            {overallCount > 0 && <span className="feedback-tab-count">{overallCount}</span>}
           </button>
           <button
             type="button"
@@ -285,7 +550,7 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
             className={`feedback-tab${mode === "write" ? " is-active" : ""}`}
             onClick={() => switchMode("write")}
           >
-            写评价
+            {editingId ? "修改评价" : "写评价"}
           </button>
         </div>
 
@@ -306,6 +571,139 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
               role="tabpanel"
               aria-labelledby="feedback-tab-list"
             >
+              {/* 口碑总览卡 */}
+              {stats && stats.count > 0 && (
+                <section className="feedback-overview" aria-label="评分口碑概览">
+                  <div className="feedback-overview-top">
+                    <div className="feedback-score-box">
+                      <div className="feedback-score-row">
+                        <strong className="feedback-score-num">
+                          {formatAverage(stats.average)}
+                        </strong>
+                        <span className="feedback-score-badge">
+                          {getReputationLabel(stats)}
+                        </span>
+                      </div>
+                      <StarsView rating={Math.round(stats.average)} />
+                      <div className="feedback-score-meta">
+                        <span>{stats.count} 条评价</span>
+                        {stats.verifiedCount > 0 && (
+                          <span>· {stats.verifiedCount} 条已完局</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="feedback-dist" role="group" aria-label="按星级筛选">
+                      {([5, 4, 3, 2, 1] as const).map((star) => {
+                        const starCount = stats.distribution[star] ?? 0;
+                        const pct =
+                          stats.count > 0 ? Math.round((starCount / stats.count) * 100) : 0;
+                        const active = ratingFilter === star;
+                        return (
+                          <button
+                            key={star}
+                            type="button"
+                            className={`feedback-dist-row${active ? " is-active" : ""}`}
+                            aria-pressed={active}
+                            onClick={() =>
+                              applyFilterChange(() =>
+                                setRatingFilter((prev) => (prev === star ? null : star))
+                              )
+                            }
+                            title={`只看 ${star} 星评价`}
+                          >
+                            <span className="feedback-dist-star">{star}★</span>
+                            <span className="feedback-dist-track">
+                              <span
+                                className="feedback-dist-fill"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </span>
+                            <span className="feedback-dist-count">{starCount}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {stats.tagCounts.length > 0 && (
+                    <div className="feedback-tag-cloud" role="group" aria-label="热门标签筛选">
+                      {stats.tagCounts.slice(0, 8).map((tc) => {
+                        const active = tagFilter === tc.tag;
+                        return (
+                          <button
+                            key={tc.tag}
+                            type="button"
+                            className={`feedback-cloud-chip${active ? " is-active" : ""}`}
+                            aria-pressed={active}
+                            onClick={() =>
+                              applyFilterChange(() =>
+                                setTagFilter((prev) => (prev === tc.tag ? null : tc.tag))
+                              )
+                            }
+                          >
+                            <span>{tc.tag}</span>
+                            <span className="feedback-cloud-num">{tc.count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* 排序与筛选栏 */}
+              {overallCount > 0 && (
+                <div className="feedback-controls">
+                  <div className="feedback-sort-row" role="group" aria-label="排序方式">
+                    {SORT_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className={`feedback-ctrl-pill${sort === opt.value ? " is-active" : ""}`}
+                        aria-pressed={sort === opt.value}
+                        onClick={() =>
+                          applyFilterChange(() => setSort(opt.value))
+                        }
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="feedback-filter-row">
+                    <button
+                      type="button"
+                      className={`feedback-ctrl-toggle${verifiedOnly ? " is-active" : ""}`}
+                      aria-pressed={verifiedOnly}
+                      onClick={() =>
+                        applyFilterChange(() => setVerifiedOnly((v) => !v))
+                      }
+                    >
+                      ✓ 只看已完局
+                    </button>
+                    <button
+                      type="button"
+                      className={`feedback-ctrl-toggle${withContentOnly ? " is-active" : ""}`}
+                      aria-pressed={withContentOnly}
+                      onClick={() =>
+                        applyFilterChange(() => setWithContentOnly((v) => !v))
+                      }
+                    >
+                      只看有字评
+                    </button>
+                    {hasActiveFilters && (
+                      <button
+                        type="button"
+                        className="feedback-reset-btn"
+                        onClick={resetFilters}
+                      >
+                        重置筛选
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {loading && items.length === 0 && (
                 <div className="feedback-state" aria-live="polite">
                   <span className="feedback-spinner" aria-hidden="true" />
@@ -322,7 +720,7 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
                 </div>
               )}
 
-              {empty && (
+              {completelyEmpty && (
                 <div className="feedback-state">
                   <p>还没有评价，来写第一条</p>
                   <button
@@ -335,18 +733,17 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
                 </div>
               )}
 
+              {filteredEmpty && (
+                <div className="feedback-state">
+                  <p>没有符合当前筛选条件的评价</p>
+                  <button type="button" className="feedback-retry" onClick={resetFilters}>
+                    查看全部评价
+                  </button>
+                </div>
+              )}
+
               {items.length > 0 && (
                 <>
-                  {summary && summary.count > 0 && (
-                    <div className="feedback-summary">
-                      平均 <strong>{formatAverage(summary.average)}</strong>
-                      <span className="feedback-summary-dot" aria-hidden="true">
-                        ·
-                      </span>
-                      共 {summary.count} 条
-                    </div>
-                  )}
-
                   {loadError && (
                     <div className="feedback-inline-error" role="alert">
                       <span>{loadError}</span>
@@ -357,33 +754,123 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
                   )}
 
                   <ul className="feedback-list">
-                    {items.map((item) => (
-                      <li className="feedback-item" key={String(item.id)}>
-                        <div className="feedback-item-head">
-                          <StarsView rating={item.rating} />
-                          <span className="feedback-anon">匿名玩家</span>
-                          <time className="feedback-date">
-                            {formatDate(item.createdAt)}
-                          </time>
-                        </div>
-                        {Array.isArray(item.tags) && item.tags.length > 0 && (
-                          <div className="feedback-item-tags">
-                            {item.tags
-                              .filter((tag) =>
-                                (FEEDBACK_TAGS as readonly string[]).includes(tag)
-                              )
-                              .map((tag) => (
-                                <span className="feedback-item-tag" key={tag}>
-                                  {tag}
-                                </span>
-                              ))}
+                    {items.map((item) => {
+                      const idKey = String(item.id);
+                      const canEditOwn = Boolean(getOwnedReviewToken(item.id));
+                      const long = Boolean(item.content && isLongContent(item.content));
+                      const expanded = expandedIds.has(idKey);
+                      const helpfulCount = item.helpfulCount ?? 0;
+                      const voted = Boolean(item.viewerHasVoted);
+
+                      return (
+                        <li
+                          className={`feedback-item${item.pinned ? " is-pinned" : ""}`}
+                          key={idKey}
+                        >
+                          <div className="feedback-item-head">
+                            <StarsView rating={item.rating} />
+                            {item.pinned && (
+                              <span className="feedback-badge feedback-badge--pin">精选</span>
+                            )}
+                            {item.verifiedGameOver ? (
+                              <span className="feedback-badge feedback-badge--verified">
+                                ✓ 已完局
+                              </span>
+                            ) : (
+                              <span className="feedback-anon">匿名玩家</span>
+                            )}
+                            {item.gameContext?.modeLabel && (
+                              <span className="feedback-context-chip">
+                                {item.gameContext.modeLabel}
+                              </span>
+                            )}
+                            {item.gameContext?.personaName && (
+                              <span className="feedback-context-chip feedback-context-chip--persona">
+                                {item.gameContext.personaName}
+                              </span>
+                            )}
+                            <time className="feedback-date">
+                              {formatDate(item.createdAt)}
+                              {item.updatedAt ? " · 已修改" : ""}
+                            </time>
                           </div>
-                        )}
-                        {item.content && (
-                          <p className="feedback-item-content">{item.content}</p>
-                        )}
-                      </li>
-                    ))}
+
+                          {Array.isArray(item.tags) && item.tags.length > 0 && (
+                            <div className="feedback-item-tags">
+                              {item.tags
+                                .filter((tag) => ALL_DISPLAYABLE_TAGS.has(tag))
+                                .map((tag) => (
+                                  <span
+                                    className={`feedback-item-tag${
+                                      CONSTRUCTIVE_TAG_SET.has(tag) ? " is-constructive" : ""
+                                    }`}
+                                    key={tag}
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                            </div>
+                          )}
+
+                          {item.content && (
+                            <div className="feedback-item-content-wrap">
+                              <p
+                                className={`feedback-item-content${
+                                  long && !expanded ? " is-clamped" : ""
+                                }`}
+                              >
+                                {item.content}
+                              </p>
+                              {long && (
+                                <button
+                                  type="button"
+                                  className="feedback-expand-btn"
+                                  onClick={() => toggleExpand(idKey)}
+                                >
+                                  {expanded ? "收起" : "展开全文"}
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {item.officialReply && (
+                            <div className="feedback-official-reply">
+                              <div className="feedback-official-reply-head">
+                                <span>官方回复</span>
+                                <time>{formatDate(item.officialReply.updatedAt)}</time>
+                              </div>
+                              <p>{item.officialReply.content}</p>
+                            </div>
+                          )}
+
+                          <div className="feedback-item-foot">
+                            <button
+                              type="button"
+                              className={`feedback-helpful-btn${voted ? " is-voted" : ""}`}
+                              aria-pressed={voted}
+                              disabled={votingIds.has(idKey)}
+                              onClick={() => void handleHelpfulToggle(item)}
+                            >
+                              <span aria-hidden="true">👍</span>
+                              <span>有帮助</span>
+                              {helpfulCount > 0 && (
+                                <span className="feedback-helpful-num">{helpfulCount}</span>
+                              )}
+                            </button>
+
+                            {canEditOwn && (
+                              <button
+                                type="button"
+                                className="feedback-edit-own-btn"
+                                onClick={() => startEditItem(item)}
+                              >
+                                修改评价
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
 
                   {loadMoreError && (
@@ -415,15 +902,28 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
               aria-labelledby="feedback-tab-write"
               className="feedback-write"
             >
-              <p className="feedback-anon-note">
-                公开展示 · 不显示昵称 · 不当词句自动打码
-              </p>
+              <div className="feedback-anon-note">
+                <span>
+                  {editingId
+                    ? "正在修改你之前发布的评价（保留已有赞数）"
+                    : "公开展示 · 不显示昵称 · 不当词句自动打码"}
+                </span>
+                {editingId && (
+                  <button
+                    type="button"
+                    className="feedback-cancel-edit"
+                    onClick={cancelEdit}
+                  >
+                    取消修改
+                  </button>
+                )}
+              </div>
 
               <div className="feedback-field">
                 <span className="feedback-label">
                   评分
                   <span className="feedback-label-hint">
-                    {rating > 0 ? `${rating} 星` : "请选择 1–5 星"}
+                    {rating > 0 ? RATING_LABELS[rating] ?? `${rating} 星` : "请点击 1–5 星"}
                   </span>
                 </span>
                 <div className="feedback-rating" role="group" aria-label="评分">
@@ -431,9 +931,7 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
                     <button
                       key={value}
                       type="button"
-                      className={`feedback-rating-btn${
-                        rating >= value ? " is-active" : ""
-                      }`}
+                      className={`feedback-rating-btn${rating >= value ? " is-active" : ""}`}
                       aria-label={`${value} 星`}
                       aria-pressed={rating === value}
                       onClick={() => setRating(value)}
@@ -447,47 +945,70 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
                 </div>
               </div>
 
+              {activeContext && contextPreview && (
+                <label className="feedback-context-check">
+                  <input
+                    type="checkbox"
+                    checked={attachGameContext}
+                    onChange={(event) => setAttachGameContext(event.target.checked)}
+                  />
+                  <span>
+                    附带本局信息（匿名）：<strong>{contextPreview}</strong>
+                  </span>
+                </label>
+              )}
+
               <label className="feedback-field">
                 <span className="feedback-label">
                   评价内容
                   <span className="feedback-label-hint">
-                    {content.length}/{MAX_CONTENT}
+                    {content.length}/{FEEDBACK_CONTENT_MAX}
                   </span>
                 </span>
                 <textarea
                   className="feedback-textarea"
                   value={content}
                   onChange={(event) => setContent(event.target.value)}
-                  maxLength={MAX_CONTENT}
+                  maxLength={FEEDBACK_CONTENT_MAX}
                   rows={5}
-                  placeholder="说说这局体验（选填）"
-                  aria-label="评价内容，最多 300 字"
+                  placeholder="说说这局体验、最喜欢或觉得还能改进的地方（选填）"
+                  aria-label="评价内容，最多 500 字"
                 />
               </label>
 
               <div className="feedback-field">
                 <span className="feedback-label">
-                  标签
+                  印象标签
                   <span className="feedback-label-hint">
-                    最多选 {MAX_TAGS} 个
+                    已选 {tags.length}/{MAX_TAGS}
                   </span>
                 </span>
-                <div className="feedback-tags">
-                  {FEEDBACK_TAGS.map((tag) => {
-                    const selected = tags.includes(tag);
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        className={`feedback-tag-btn${selected ? " is-selected" : ""}`}
-                        aria-pressed={selected}
-                        disabled={!selected && tags.length >= MAX_TAGS}
-                        onClick={() => toggleTag(tag)}
-                      >
-                        {tag}
-                      </button>
-                    );
-                  })}
+                <div className="feedback-tag-groups">
+                  {tagGroups.map((group) => (
+                    <div key={group.title} className="feedback-tag-group">
+                      <span className="feedback-tag-group-title">{group.title}</span>
+                      <div className="feedback-tags">
+                        {group.list.map((tag) => {
+                          const selected = tags.includes(tag);
+                          const isConstructive = CONSTRUCTIVE_TAG_SET.has(tag);
+                          return (
+                            <button
+                              key={tag}
+                              type="button"
+                              className={`feedback-tag-btn${
+                                isConstructive ? " is-constructive" : ""
+                              }${selected ? " is-selected" : ""}`}
+                              aria-pressed={selected}
+                              disabled={!selected && tags.length >= MAX_TAGS}
+                              onClick={() => toggleTag(tag)}
+                            >
+                              {tag}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -498,7 +1019,11 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
               )}
 
               <div className="feedback-submit-row">
-                <span className="feedback-privacy-note">匿名提交 · 不收集账号信息</span>
+                <span className="feedback-privacy-note">
+                  {source === "game_over"
+                    ? "完局评价将自动标注「已完局」"
+                    : "匿名提交 · 不收集账号信息"}
+                </span>
                 <button
                   type="button"
                   className="feedback-submit"
@@ -506,7 +1031,11 @@ const FeedbackDialog: React.FC<FeedbackDialogProps> = ({
                   disabled={!canSubmit}
                   aria-busy={submitting}
                 >
-                  {submitting ? "提交中…" : "提交评价"}
+                  {submitting
+                    ? "保存中…"
+                    : editingId
+                      ? "保存修改"
+                      : "提交评价"}
                 </button>
               </div>
             </div>
@@ -525,6 +1054,10 @@ export const FeedbackWall: React.FC<FeedbackWallProps> = (props) => {
       source={props.source}
       initialMode={props.initialMode}
       initialRating={props.initialRating}
+      gameContext={props.gameContext}
+      sessionKey={props.sessionKey}
+      initialEditItem={props.initialEditItem}
+      onReviewSaved={props.onReviewSaved}
     />,
     document.body
   );

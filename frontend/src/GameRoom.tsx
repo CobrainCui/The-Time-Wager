@@ -18,6 +18,10 @@ import { PlayerGameHelp, PlayerSidebarPanel } from "./components/PlayerGameHelp"
 import { LeaveGameButton } from "./components/LeaveGameButton";
 import { BuffInvestmentSplit } from "./components/BuffInvestmentSplit";
 import { RuleAgentChat } from "./components/ruleAgent/RuleAgentChat";
+import { FeedbackWall } from "./components/feedback/FeedbackWall";
+import { InGameIssueModal } from "./components/feedback/InGameIssueModal";
+import type { IssueContext } from "./api/feedback";
+import { isAiPlayer } from "./utils/isAiPlayer";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { setPlayerDeferAppReload } from "./bootstrapAppUpdate";
 import { socket } from "./socket";
@@ -134,6 +138,9 @@ export default function GameRoom({
   const uiLocked = embed || readOnly;
   const [sidebarPanel, setSidebarPanel] = useState<PlayerSidebarPanel>(defaultSidebarPanel);
   const [investmentPrefill, setInvestmentPrefill] = useState<Record<number, number>>({});
+  const [issueFeedbackOpen, setIssueFeedbackOpen] = useState(false);
+  const [publicFeedbackOpen, setPublicFeedbackOpen] = useState(false);
+  const [issueContext, setIssueContext] = useState<IssueContext>({});
   const prefillRoundRef = useRef(game.globalRound);
   const prevInvestmentReadyRef = useRef(false);
   const blankSeat = useMemo(
@@ -264,6 +271,26 @@ export default function GameRoom({
   const showTransactionOverlay =
     !embed && !hidePlayerChat && !isIntro && !isRoomWaiting && game.phase !== "TUTORIAL";
 
+  const openIssueFeedback = () => {
+    const humanCount = game.players.filter((p) => !isAiPlayer(p)).length;
+    const aiCount = game.players.length - humanCount;
+    const w = typeof window !== "undefined" ? window.innerWidth : 0;
+    const h = typeof window !== "undefined" ? window.innerHeight : 0;
+    const deviceType: IssueContext["deviceType"] =
+      w <= 640 ? "mobile" : w <= 1024 ? "tablet" : "desktop";
+    setIssueContext({
+      roomId: game.roomId,
+      phase: game.phase,
+      era: game.currentEra,
+      round: game.globalRound,
+      humanCount,
+      aiCount,
+      deviceType,
+      ...(w > 0 && h > 0 ? { viewport: `${w}x${h}` } : {}),
+    });
+    setIssueFeedbackOpen(true);
+  };
+
   const renderSplitView = () => (
     <BuffInvestmentSplit
       game={game}
@@ -296,7 +323,7 @@ export default function GameRoom({
     if (useSplit) return renderSplitView();
 
     switch (game.phase) {
-      case "ROOM_WAITING":  return <RoomWaiting game={game} me={me} embed={uiLocked} />;
+      case "ROOM_WAITING":  return <RoomWaiting game={game} me={me} embed={uiLocked} onOpenIssueFeedback={!uiLocked ? openIssueFeedback : undefined} />;
       case "ERA_INTRO":       return <EraIntro game={game} me={me} eraImages={eraImages} embed={uiLocked} />;
       case "TUTORIAL":        return <TutorialView game={game} me={me} />;
       case "BUFF_USAGE":
@@ -363,6 +390,7 @@ export default function GameRoom({
           me={me}
           overlayWhenOpen={!contained && helpOverlayOnOpen}
           contained={contained}
+          onOpenIssueFeedback={!uiLocked ? openIssueFeedback : undefined}
         />
       )}
       <div
@@ -399,6 +427,24 @@ export default function GameRoom({
             />
             <SlackHitConfirmModal hits={me.pendingSlackHits} readOnly={readOnly} />
             <LighterBurnConfirmModal notices={me.pendingLighterBurnNotices} readOnly={readOnly} />
+          </>
+        )}
+        {!embed && !readOnly && (
+          <>
+            <InGameIssueModal
+              open={issueFeedbackOpen}
+              onClose={() => setIssueFeedbackOpen(false)}
+              context={issueContext}
+              onSwitchToPublicWall={() => {
+                setIssueFeedbackOpen(false);
+                setPublicFeedbackOpen(true);
+              }}
+            />
+            <FeedbackWall
+              open={publicFeedbackOpen}
+              onClose={() => setPublicFeedbackOpen(false)}
+              source="lobby"
+            />
           </>
         )}
       </div>

@@ -53,6 +53,8 @@ interface Props {
   embedInTutorial?: boolean;
   /** 管理端预览框内嵌：自适应父容器高度与宽度，独立滚轮不跨出外框 */
   contained?: boolean;
+  /** 局中反馈入口回调 */
+  onOpenIssueFeedback?: () => void;
 }
 
 const thStyle: React.CSSProperties = {
@@ -242,6 +244,7 @@ export const PlayerGameHelp: React.FC<Props> = ({
   overlayWhenOpen = false,
   embedInTutorial = false,
   contained = false,
+  onOpenIssueFeedback,
 }) => {
   const open = panel !== null;
   const feedLength = game.publicFeed?.length ?? 0;
@@ -859,6 +862,20 @@ export const PlayerGameHelp: React.FC<Props> = ({
               </button>
             );
           })}
+          {onOpenIssueFeedback && !embedInTutorial && !contained && (
+            <button
+              type="button"
+              className="player-help-activity-item player-help-activity-item--utility"
+              aria-label="反馈问题或建议"
+              title="局中问题与建议反馈"
+              onClick={onOpenIssueFeedback}
+            >
+              <span className="player-help-activity-icon" aria-hidden>
+                📮
+              </span>
+              <span className="player-help-activity-label">反馈</span>
+            </button>
+          )}
         </div>
 
         {open && panel && (

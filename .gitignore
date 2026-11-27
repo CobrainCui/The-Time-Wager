@@ -43,6 +43,7 @@ coverage/
 server/data/community_leaderboard.json
 server/data/session_archive.json
 server/data/feedback.json*
+server/data/issue_feedback.json*
 server/data/lab_*.json*
 server/data/lab_memory/
 

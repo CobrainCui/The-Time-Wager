@@ -40,6 +40,11 @@ import {
 } from "../components/PersonaReportSections";
 import { PersonaTypeModal } from "../components/PersonaTypeModal";
 import { FeedbackWall } from "../components/feedback/FeedbackWall";
+import {
+  getOwnedReviewForSession,
+  type FeedbackGameContext,
+  type FeedbackItem,
+} from "../api/feedback";
 
 ChartJS.register(RadialLinearScale, PointElement, LineElement, BarElement, Filler, Tooltip, Legend, CategoryScale, LinearScale, Title);
 
@@ -57,6 +62,11 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
   const [pdfFeedback, setPdfFeedback] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [personaModalName, setPersonaModalName] = useState<string | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackMode, setFeedbackMode] = useState<"list" | "write">("list");
+  const [feedbackInitialRating, setFeedbackInitialRating] = useState(0);
+  const [hoverStar, setHoverStar] = useState(0);
+  const [mySavedReview, setMySavedReview] = useState<FeedbackItem | null>(null);
+  const [editingReview, setEditingReview] = useState<FeedbackItem | null>(null);
   /** 房主不在线时，任何在线真人都可以重开一局 */
   const roomOwner = game.players.find((p) => p.id === game.roomOwnerId);
   const canRematch = Boolean(me) && (!roomOwner || roomOwner.id === me!.id || !roomOwner.connected);
@@ -65,6 +75,50 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
   // AI 与真人平权：社区总财富按全部座位统计，AI 也可以成为首富。
   const totalWealth = game.players.reduce((s, p) => s + p.wealth, 0);
   const myResult = me?.analysisResult;
+  const humanCount = game.players.filter((p) => !isAiPlayer(p)).length;
+  const aiCount = game.players.length - humanCount;
+  const modeLabel =
+    humanCount <= 1
+      ? `单人 + ${aiCount}名AI`
+      : aiCount > 0
+        ? `${humanCount}真人 + ${aiCount}AI`
+        : `${humanCount}人真人局`;
+  const feedbackGameContext: FeedbackGameContext = {
+    modeLabel,
+    humanCount,
+    aiCount,
+    ...(myResult?.primaryPersona ? { personaName: myResult.primaryPersona } : {}),
+  };
+  const sessionKey = `${game.roomId}_${game.communityName ?? ""}_${totalWealth}`;
+  const ownedSessionReview = getOwnedReviewForSession(sessionKey);
+  const hasReviewedMatch = Boolean(mySavedReview || ownedSessionReview);
+
+  const openQuickRate = (star: number) => {
+    setEditingReview(null);
+    setFeedbackInitialRating(star);
+    setFeedbackMode("write");
+    setFeedbackOpen(true);
+  };
+
+  const openFeedbackList = () => {
+    setEditingReview(null);
+    setFeedbackInitialRating(0);
+    setFeedbackMode("list");
+    setFeedbackOpen(true);
+  };
+
+  const openEditOwnReview = () => {
+    if (mySavedReview) {
+      setEditingReview(mySavedReview);
+      setFeedbackInitialRating(mySavedReview.rating);
+      setFeedbackMode("write");
+    } else {
+      setEditingReview(null);
+      setFeedbackInitialRating(0);
+      setFeedbackMode("list");
+    }
+    setFeedbackOpen(true);
+  };
   const personaColor = me ? resolveFateSketchAccent(me) : "#60a5fa";
   const normalizedScores = myResult
     ? normalizePersonaScores(myResult.scores)
@@ -374,20 +428,72 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
                 🔄 再来一局
               </button>
             )}
+          </div>
 
-            <button
-              onClick={() => setFeedbackOpen(true)}
-              className="btn"
-              type="button"
-              style={{
-                background: "rgba(201,151,58,0.1)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-text-primary)",
-                minWidth: "10rem",
-              }}
-            >
-              💬 评价这局
-            </button>
+          <div className="gameover-feedback-card">
+            {hasReviewedMatch ? (
+              <>
+                <div className="gameover-feedback-title">✓ 已提交本局评价，感谢你的反馈</div>
+                <div className="gameover-feedback-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{
+                      background: "rgba(255,255,255,0.06)",
+                      border: "1px solid var(--color-border)",
+                      color: "var(--color-text-primary)",
+                    }}
+                    onClick={openFeedbackList}
+                  >
+                    查看玩家口碑
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{
+                      background: "rgba(201,151,58,0.14)",
+                      border: "1px solid rgba(201,151,58,0.45)",
+                      color: "var(--color-gold)",
+                    }}
+                    onClick={openEditOwnReview}
+                  >
+                    {mySavedReview ? "修改我的评价" : "查看 / 修改"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="gameover-feedback-title">这局玩得怎么样？点星星留下真实评价</div>
+                <div
+                  className="gameover-feedback-stars"
+                  role="group"
+                  aria-label="为本局打 1 到 5 星"
+                  onMouseLeave={() => setHoverStar(0)}
+                >
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      className={`gameover-feedback-star${hoverStar >= star ? " is-lit" : ""}`}
+                      aria-label={`打 ${star} 星并写评价`}
+                      onMouseEnter={() => setHoverStar(star)}
+                      onFocus={() => setHoverStar(star)}
+                      onBlur={() => setHoverStar(0)}
+                      onClick={() => openQuickRate(star)}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="gameover-feedback-wall-link"
+                  onClick={openFeedbackList}
+                >
+                  看看其他玩家怎么评 →
+                </button>
+              </>
+            )}
           </div>
 
           {pdfFeedback && (
@@ -483,8 +589,12 @@ export const GameOver: React.FC<Props> = ({ game, me, personaImages = {}, embed 
           open={feedbackOpen}
           onClose={() => setFeedbackOpen(false)}
           source="game_over"
-          initialMode="write"
-          initialRating={5}
+          initialMode={feedbackMode}
+          initialRating={feedbackInitialRating}
+          gameContext={feedbackGameContext}
+          sessionKey={sessionKey}
+          initialEditItem={editingReview}
+          onReviewSaved={(item) => setMySavedReview(item)}
         />
       )}
     </div>

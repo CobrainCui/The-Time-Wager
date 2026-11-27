@@ -19,6 +19,7 @@ import {
   safeExportBasename,
   contentDispositionAttachment,
 } from "./export/sessionExport.js";
+import { buildProductSessionReplay } from "./export/sessionReplay.js";
 import { buildLabSessionExport, buildLabSessionWorkbook } from "./lab/labExport.js";
 import { initLabStore } from "./lab/labStore.js";
 import { registerLabAdminRoutes } from "./lab/labRoutes.js";
@@ -56,13 +57,29 @@ import {
 import {
   addFeedback,
   deleteFeedback,
+  getAdminFeedbackForExport,
   initFeedbackPersistence,
   listAdminFeedback,
   listPublicFeedback,
+  setFeedbackPinned,
+  setFeedbackReply,
   setFeedbackStatus,
+  toggleFeedbackHelpful,
   toPublicFeedbackEntry,
+  updateOwnFeedback,
 } from "./state/feedbackStore.js";
 import type { FeedbackStatus } from "./state/feedbackStore.js";
+import {
+  addIssueFeedback,
+  deleteIssueFeedback,
+  getAdminIssuesForExport,
+  getIssueCounts,
+  initIssueFeedbackPersistence,
+  listAdminIssues,
+  setIssueStatus,
+} from "./state/issueFeedbackStore.js";
+import type { IssueStatus } from "./state/issueFeedbackStore.js";
+import { buildFeedbackWorkbook, buildIssuesWorkbook } from "./export/feedbackExport.js";
 
 assertAdminTokenConfigured();
 
@@ -74,6 +91,7 @@ initCommunityLeaderboardPersistence(
 );
 initSessionArchivePersistence(path.join(__dirname, "../data/session_archive.json"));
 initFeedbackPersistence(path.join(__dirname, "../data/feedback.json"));
+initIssueFeedbackPersistence(path.join(__dirname, "../data/issue_feedback.json"));
 initLabStore({
   runsPath: path.join(__dirname, "../data/lab_runs.json"),
   sessionsPath: path.join(__dirname, "../data/lab_archive.json"),
@@ -140,7 +158,10 @@ app.use("/api", ipLimit(120, 60_000, "api"));
 const uploadLimit = ipLimit(20, 60_000, "upload");
 const exportLimit = ipLimit(10, 60_000, "export");
 const feedbackGetLimit = ipLimit(60, 60_000, "feedback-get");
-const feedbackPostLimit = ipLimit(3, 10 * 60_000, "feedback-post");
+const feedbackPostLimit = ipLimit(5, 10 * 60_000, "feedback-post");
+const feedbackEditLimit = ipLimit(15, 10 * 60_000, "feedback-edit");
+const feedbackVoteLimit = ipLimit(60, 60_000, "feedback-vote");
+const issuePostLimit = ipLimit(6, 10 * 60_000, "issue-post");
 
 // --- File Upload Setup ---
 const uploadDir = path.join(__dirname, "../data/uploads");
@@ -314,15 +335,23 @@ app.get("/api/community-leaderboard", (_req, res) => {
   res.json({ entries: getPublicCommunityLeaderboard() });
 });
 
-// --- 玩家评价（公开、匿名） ---
+// --- 玩家评价（公开、匿名）与局中问题反馈（私密直达后台） ---
 const FEEDBACK_DUPLICATE_WINDOW_MS = 5 * 60_000;
 const recentFeedbackPosts = new Map<string, number>();
+const ISSUE_DUPLICATE_WINDOW_MS = 2 * 60_000;
+const recentIssuePosts = new Map<string, number>();
 
 app.get("/api/feedback", feedbackGetLimit, (req, res) => {
   res.json(
     listPublicFeedback({
       offset: parseInt(String(req.query.offset ?? "0"), 10),
       limit: parseInt(String(req.query.limit ?? "20"), 10),
+      sort: req.query.sort,
+      rating: req.query.rating,
+      tag: req.query.tag,
+      withContent: req.query.withContent,
+      verifiedOnly: req.query.verifiedOnly,
+      voterId: req.query.voterId,
     })
   );
 });
@@ -348,7 +377,72 @@ app.post("/api/feedback", express.json({ limit: "8kb" }), feedbackPostLimit, (re
     return;
   }
   recentFeedbackPosts.set(dedupeKey, now);
-  res.status(201).json({ item: toPublicFeedbackEntry(result.entry), summary: result.summary });
+  res.status(201).json({
+    item: toPublicFeedbackEntry(result.entry),
+    summary: result.summary,
+    stats: result.stats,
+    editToken: result.editToken,
+  });
+});
+
+app.patch("/api/feedback/:id", express.json({ limit: "8kb" }), feedbackEditLimit, (req, res) => {
+  const id = String(req.params.id ?? "").trim();
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const result = updateOwnFeedback(id, body.editToken, body);
+  if (!result.ok) {
+    res.status(result.statusCode).json({ error: result.error });
+    return;
+  }
+  res.json({
+    item: toPublicFeedbackEntry(result.entry),
+    summary: result.summary,
+    stats: result.stats,
+  });
+});
+
+app.post("/api/feedback/:id/helpful", express.json({ limit: "2kb" }), feedbackVoteLimit, (req, res) => {
+  const id = String(req.params.id ?? "").trim();
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const rawVoter = typeof body.voterId === "string" && body.voterId.trim() ? body.voterId : `ip_${req.ip ?? "unknown"}`;
+  const result = toggleFeedbackHelpful(id, rawVoter);
+  if (!result.ok) {
+    res.status(result.statusCode).json({ error: result.error });
+    return;
+  }
+  res.json({ ok: true, helpfulCount: result.helpfulCount, voted: result.voted });
+});
+
+app.post("/api/issue-feedback", express.json({ limit: "8kb" }), issuePostLimit, (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const rawCategory = typeof body.category === "string" ? body.category.trim() : "";
+  const rawContent = typeof body.content === "string" ? body.content.trim() : "";
+  const ip = req.ip ?? "unknown";
+  const now = Date.now();
+  for (const [key, at] of recentIssuePosts) {
+    if (now - at >= ISSUE_DUPLICATE_WINDOW_MS) recentIssuePosts.delete(key);
+  }
+  const dedupeKey = `${ip}\u0000${rawCategory}\u0000${rawContent}`;
+  const lastAt = recentIssuePosts.get(dedupeKey);
+  if (lastAt != null && now - lastAt < ISSUE_DUPLICATE_WINDOW_MS) {
+    res.status(409).json({ error: "这条反馈刚刚已收到，无需重复发送" });
+    return;
+  }
+
+  const result = addIssueFeedback(body);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  recentIssuePosts.set(dedupeKey, now);
+  res.status(201).json({ ok: true, id: result.entry.id });
 });
 
 app.get("/api/admin/feedback", requireAdminToken, (req, res) => {
@@ -357,13 +451,43 @@ app.get("/api/admin/feedback", requireAdminToken, (req, res) => {
     res.status(400).json({ error: "Invalid status" });
     return;
   }
-  res.json(
-    listAdminFeedback({
-      status: status as FeedbackStatus | "all",
-      offset: parseInt(String(req.query.offset ?? "0"), 10),
-      limit: parseInt(String(req.query.limit ?? "50"), 10),
-    })
+  const result = listAdminFeedback({
+    status: status as FeedbackStatus | "all",
+    rating: req.query.rating,
+    source: req.query.source,
+    tag: req.query.tag,
+    q: req.query.q,
+    pinnedOnly: req.query.pinnedOnly,
+    offset: parseInt(String(req.query.offset ?? "0"), 10),
+    limit: parseInt(String(req.query.limit ?? "50"), 10),
+  });
+  res.json({
+    ...result,
+    openIssueCount: getIssueCounts().open,
+  });
+});
+
+app.get("/api/admin/feedback/export", exportLimit, requireAdminToken, async (req, res) => {
+  const status = String(req.query.status ?? "all");
+  if (status !== "visible" && status !== "hidden" && status !== "all") {
+    res.status(400).json({ error: "Invalid status" });
+    return;
+  }
+  const items = getAdminFeedbackForExport({
+    status: status as FeedbackStatus | "all",
+    rating: req.query.rating,
+    source: req.query.source,
+    tag: req.query.tag,
+    q: req.query.q,
+    pinnedOnly: req.query.pinnedOnly,
+  });
+  const buf = await buildFeedbackWorkbook(items);
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   );
+  res.setHeader("Content-Disposition", contentDispositionAttachment("player_reviews.xlsx"));
+  res.send(buf);
 });
 
 app.post(
@@ -385,10 +509,114 @@ app.post(
   }
 );
 
+app.post(
+  "/api/admin/feedback/:id/pin",
+  express.json(),
+  requireAdminToken,
+  (req, res) => {
+    const id = String(req.params.id ?? "").trim();
+    const pinned = req.body?.pinned;
+    if (typeof pinned !== "boolean") {
+      res.status(400).json({ error: "Invalid pinned value" });
+      return;
+    }
+    if (!id || !setFeedbackPinned(id, pinned)) {
+      res.status(404).json({ error: "Feedback not found" });
+      return;
+    }
+    res.json({ ok: true, pinned });
+  }
+);
+
+app.post(
+  "/api/admin/feedback/:id/reply",
+  express.json({ limit: "8kb" }),
+  requireAdminToken,
+  (req, res) => {
+    const id = String(req.params.id ?? "").trim();
+    if (!id) {
+      res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+    const result = setFeedbackReply(id, req.body?.content);
+    if (!result.ok) {
+      res.status(404).json({ error: "Feedback not found" });
+      return;
+    }
+    res.json({ ok: true, officialReply: result.officialReply ?? null });
+  }
+);
+
 app.delete("/api/admin/feedback/:id", requireAdminToken, (req, res) => {
   const id = String(req.params.id ?? "").trim();
   if (!id || !deleteFeedback(id)) {
     res.status(404).json({ error: "Feedback not found" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/issues", requireAdminToken, (req, res) => {
+  const status = String(req.query.status ?? "all");
+  if (status !== "open" && status !== "resolved" && status !== "all") {
+    res.status(400).json({ error: "Invalid status" });
+    return;
+  }
+  res.json(
+    listAdminIssues({
+      status: status as IssueStatus | "all",
+      category: req.query.category,
+      q: req.query.q,
+      offset: parseInt(String(req.query.offset ?? "0"), 10),
+      limit: parseInt(String(req.query.limit ?? "50"), 10),
+    })
+  );
+});
+
+app.get("/api/admin/issues/export", exportLimit, requireAdminToken, async (req, res) => {
+  const status = String(req.query.status ?? "all");
+  if (status !== "open" && status !== "resolved" && status !== "all") {
+    res.status(400).json({ error: "Invalid status" });
+    return;
+  }
+  const items = getAdminIssuesForExport({
+    status: status as IssueStatus | "all",
+    category: req.query.category,
+    q: req.query.q,
+  });
+  const buf = await buildIssuesWorkbook(items);
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.setHeader("Content-Disposition", contentDispositionAttachment("issue_feedback.xlsx"));
+  res.send(buf);
+});
+
+app.post(
+  "/api/admin/issues/:id/status",
+  express.json({ limit: "4kb" }),
+  requireAdminToken,
+  (req, res) => {
+    const id = String(req.params.id ?? "").trim();
+    const status = req.body?.status;
+    if (status !== "open" && status !== "resolved") {
+      res.status(400).json({ error: "Invalid status" });
+      return;
+    }
+    const result = setIssueStatus(id, status, req.body?.adminNote);
+    if (!result.ok) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    res.json({ ok: true, entry: result.entry });
+  }
+);
+
+app.delete("/api/admin/issues/:id", requireAdminToken, (req, res) => {
+  const id = String(req.params.id ?? "").trim();
+  if (!id || !deleteIssueFeedback(id)) {
+    res.status(404).json({ error: "Issue not found" });
     return;
   }
   res.json({ ok: true });
@@ -477,6 +705,29 @@ app.get("/api/admin/sessions/:sessionId", requireAdminToken, (req, res) => {
     return;
   }
   res.json(detail);
+});
+
+app.get("/api/admin/sessions/:sessionId/replay", requireAdminToken, (req, res) => {
+  const sessionId = String(req.params.sessionId ?? "").trim();
+  if (!sessionId) {
+    res.status(400).json({ error: "Missing sessionId" });
+    return;
+  }
+  const detail = getSessionById(sessionId);
+  const snapshot = getSessionSnapshot(sessionId);
+  if (!detail || !snapshot) {
+    res.status(404).json({ error: "Replay snapshot not found for this session" });
+    return;
+  }
+  res.json(
+    buildProductSessionReplay(snapshot, {
+      sessionId: detail.sessionId,
+      communityName: detail.communityName,
+      communityWealth: detail.communityWealth,
+      completedAt: detail.completedAt,
+      eraTheme: detail.eraTheme,
+    })
+  );
 });
 
 app.post("/api/admin/sessions/:sessionId/void", express.json(), requireAdminToken, (req, res) => {
