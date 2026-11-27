@@ -24,6 +24,7 @@ import {
 } from "../logic/lotteryDraw.js";
 import {
   findPendingLotteryOffer,
+  isCurrentLotteryAlreadySettled,
   playerHasLotteryBuff,
 } from "../logic/lotterySettle.js";
 import { finalizeCommunityName } from "../state/communityNaming.js";
@@ -177,7 +178,7 @@ function autoLottery(game: GameState, io: Server | null, now: number): boolean {
   let changed = false;
   for (const player of game.players) {
     if (!playerHasLotteryBuff(player)) continue;
-    if ((game.lotteryCompletedDeals ?? []).some((d) => d.playerId === player.id)) continue;
+    if (isCurrentLotteryAlreadySettled(game, player)) continue;
 
     const pending = findPendingLotteryOffer(game, player.id);
     if (pending) {
@@ -252,7 +253,14 @@ export function syncAutoAuctionDeadline(game: GameState, now = Date.now()): bool
     .reduce((max, b) => Math.max(max, b.timestamp), 0);
   const idleDeadline = Math.max(focusAt, lastBidAt) + AUTO_HOST_CONFIG.auctionIdleMs;
   const hardDeadline = focusAt + AUTO_HOST_CONFIG.auctionLotMaxMs;
-  const deadline = Math.min(idleDeadline, hardDeadline);
+  const baseDeadline = Math.min(idleDeadline, hardDeadline);
+  const deadline =
+    typeof game.autoHostNextActionAt === "number" &&
+    game.autoHostNextActionAt > baseDeadline &&
+    game.autoHostNextActionAt <= hardDeadline &&
+    hasAiTurnInFlight(game.roomId)
+      ? game.autoHostNextActionAt
+      : baseDeadline;
   if (game.autoHostNextActionAt === deadline) return false;
   game.autoHostNextActionAt = deadline;
   return true;
@@ -291,6 +299,16 @@ function autoAuction(game: GameState, io: Server | null, now: number): boolean {
   const deadlineChanged = syncAutoAuctionDeadline(game, now);
   const deadline = game.autoHostNextActionAt ?? now;
   if (now < deadline) return deadlineChanged;
+
+  const hardDeadline = (game.auctionFocusSetAt ?? now) + AUTO_HOST_CONFIG.auctionLotMaxMs;
+  if (now < hardDeadline && hasAiTurnInFlight(game.roomId)) {
+    const extended = Math.min(hardDeadline, now + 4_000);
+    if (game.autoHostNextActionAt !== extended) {
+      game.autoHostNextActionAt = extended;
+      return true;
+    }
+    return false;
+  }
 
   const leading = getLeadingBidOnFocus(game);
   let action: "sold" | "passed" = "passed";

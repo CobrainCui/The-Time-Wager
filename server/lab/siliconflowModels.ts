@@ -51,7 +51,7 @@ export const SILICONFLOW_MODEL_GROUPS: SiliconFlowModelGroup[] = [
     models: [
       {
         id: "zai-org/GLM-5.3",
-        label: "GLM-5.3（智谱最新旗舰 · 实测极速可用）",
+        label: "GLM-5.3（智谱深思考旗舰 · 较慢）",
         vendor: "智谱清言 GLM",
       },
       {
@@ -125,9 +125,9 @@ export const SILICONFLOW_ALL_MODEL_IDS: string[] = SILICONFLOW_MODEL_GROUPS.flat
 /** 6AI 实验室 1～6 号座位默认 6 家不同国产厂商已实测通过模型（共用同一把硅基流动 API Key） */
 export const DEFAULT_LAB_SIX_SEAT_MODELS: string[] = [
   "deepseek-ai/DeepSeek-V4.1-Flash",
-  "Qwen/Qwen3.8-27B",
-  "zai-org/GLM-5.3",
-  "moonshotai/Kimi-K2.7-Code",
+  "Qwen/Qwen3.6-35B-A3B",
+  "zai-org/GLM-5.2",
+  "Pro/moonshotai/Kimi-K2.6",
   "tencent/Hy4-preview",
-  "meituan-longcat/LongCat-2.0",
+  "inclusionAI/Ling-flash-2.0",
 ];

@@ -187,7 +187,10 @@ export function findNextAvailableAuctionCard(
 }
 
 export function advanceAuctionFocus(game: GameState, fromCardId?: string | null): string | undefined {
-  const next = findNextAvailableAuctionCard(game, fromCardId ?? game.auctionFocusCardId);
+  const from = fromCardId ?? game.auctionFocusCardId;
+  const next = game.autoHostEnabled
+    ? findNextAutoAuctionCard(game, from)
+    : findNextAvailableAuctionCard(game, from);
   game.auctionFocusCardId = next;
   game.auctionFocusSetAt = next ? Date.now() : undefined;
   return next;

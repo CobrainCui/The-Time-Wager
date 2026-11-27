@@ -186,9 +186,9 @@ test("硅基流动过滤未验证旧模型并返回实测 5 家高速默认阵�
       assert.equal(resolveAiModelConfigForSlot(3)?.model, "deepseek-ai/DeepSeek-V4.1-Flash");
       assert.deepEqual(resolveProductDefaultSeatModels(), [
         "deepseek-ai/DeepSeek-V4.1-Flash",
-        "Qwen/Qwen3.8-27B",
-        "zai-org/GLM-5.3",
-        "moonshotai/Kimi-K2.7-Code",
+        "Qwen/Qwen3.6-35B-A3B",
+        "zai-org/GLM-5.2",
+        "Pro/moonshotai/Kimi-K2.6",
         "tencent/Hy4-preview",
       ]);
     }
@@ -196,11 +196,11 @@ test("硅基流动过滤未验证旧模型并返回实测 5 家高速默认阵�
   withEnv(
     {
       SILICONFLOW_API_KEY: "sk-secret-sf",
-      AI_PLAYER_3_MODEL: "zai-org/GLM-5.2",
+      AI_PLAYER_3_MODEL: "zai-org/GLM-5.3",
     },
     () => {
-      assert.equal(resolveAiModelConfigForSlot(3)?.model, "zai-org/GLM-5.2");
-      assert.equal(resolveProductDefaultSeatModels()[2], "zai-org/GLM-5.2");
+      assert.equal(resolveAiModelConfigForSlot(3)?.model, "zai-org/GLM-5.3");
+      assert.equal(resolveProductDefaultSeatModels()[2], "zai-org/GLM-5.3");
     }
   );
 });

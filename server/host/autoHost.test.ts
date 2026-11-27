@@ -11,6 +11,7 @@ import { AUTO_HOST_CONFIG } from "./autoHostConfig.js";
 import { placeAuctionBid } from "../logic/auctionCards.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
 import { handleActionTimeExpired } from "../state/actionTimeExpiry.js";
+import { handleAIPhase, hasAiTurnInFlight } from "../ai/aiOrchestrator.js";
 
 function player(id: string, overrides: Partial<Player> = {}): Player {
   return {
@@ -401,4 +402,81 @@ test("autoAuction updates and signals new deadline immediately when a bid arrive
   assert.equal(h1.wealth, 95);
   assert.ok(h1.inventory.includes("buff_gold"));
   resetAutoHostState(game.roomId);
+});
+
+test("autoAuction waits within hardDeadline if AI turn is in flight, then settles at hardDeadline", () => {
+  const game = createInitialGame(roomId("auction-inflight"), []);
+  game.autoHostEnabled = true;
+  const h1 = player("h1");
+  const ai1 = player("ai-1", { isAI: true });
+  game.players = [h1, ai1];
+  game.phase = "AUCTION";
+  game.currentEra = 2;
+  game.roundInEra = 1;
+  const t0 = Date.now();
+  game.auctionFocusCardId = "buff_gold";
+  game.auctionFocusSetAt = t0;
+  game.auctionDistributedCardIds = [];
+  game.auctionCompletedDeals = [];
+  game.auctionBids = [];
+  game.auctionPassedCardIds = [];
+
+  // 即使没有 AI inFlight，到达 hardDeadline 时仍正常跳过或落槌
+  const hardDeadline = t0 + AUTO_HOST_CONFIG.auctionLotMaxMs;
+  assert.equal(ensureAutoHost(game, null, hardDeadline + 1), true);
+  assert.notEqual(game.auctionFocusCardId, "buff_gold");
+  resetAutoHostState(game.roomId);
+});
+
+test("autoAuction preserves extended deadline across ticks while AI turn is in flight", async () => {
+  const saved = {
+    AI_API_KEY: process.env.AI_API_KEY,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+    SILICONFLOW_API_KEY: process.env.SILICONFLOW_API_KEY,
+  };
+  delete process.env.AI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.SILICONFLOW_API_KEY;
+  const game = createInitialGame(roomId("auction-inflight-preserve"), []);
+  game.autoHostEnabled = true;
+  const h1 = player("h1");
+  const ai1 = player("ai-1", { isAI: true, aiPersona: "瞬刻炼金士", aiDifficulty: "easy" });
+  game.players = [h1, ai1];
+  game.phase = "AUCTION";
+  game.currentEra = 2;
+  game.roundInEra = 1;
+  const t0 = Date.now();
+  game.auctionFocusCardId = "buff_gold";
+  game.auctionFocusSetAt = t0;
+  game.auctionDistributedCardIds = [];
+  game.auctionCompletedDeals = [];
+  game.auctionBids = [];
+  game.auctionPassedCardIds = [];
+  game.forceBuyUsedPlayerIds = [];
+
+  const turnPromise = handleAIPhase(game, null);
+  try {
+    assert.equal(hasAiTurnInFlight(game.roomId), true);
+    const baseIdleDeadline = t0 + AUTO_HOST_CONFIG.auctionIdleMs;
+    const checkNow = baseIdleDeadline + 100;
+    assert.equal(ensureAutoHost(game, null, checkNow), true);
+    const extendedDeadline = game.autoHostNextActionAt!;
+    assert.ok(extendedDeadline > baseIdleDeadline);
+    assert.ok(extendedDeadline <= t0 + AUTO_HOST_CONFIG.auctionLotMaxMs);
+
+    // 后续 tick 仍在扩展窗口内，syncAutoAuctionDeadline 不应把倒计时拉回 baseIdleDeadline
+    assert.equal(syncAutoAuctionDeadline(game, checkNow + 50), false);
+    assert.equal(game.autoHostNextActionAt, extendedDeadline);
+    assert.equal(ensureAutoHost(game, null, checkNow + 50), false);
+    assert.equal(game.autoHostNextActionAt, extendedDeadline);
+  } finally {
+    await turnPromise;
+    resetAutoHostState(game.roomId);
+    for (const [k, v] of Object.entries(saved)) {
+      if (v == null) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 });

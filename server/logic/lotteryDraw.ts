@@ -6,9 +6,10 @@ import {
   claimLotteryResponse,
   createLotteryOffer,
   findPendingLotteryOffer,
+  isCurrentLotteryAlreadySettled,
   playerHasLotteryBuff,
 } from "./lotterySettle.js";
-import { drawLotteryRoll, type LotteryDraw } from "./lotteryRandom.js";
+import { drawLotteryRoll, type DrawLotteryOptions, type LotteryDraw } from "./lotteryRandom.js";
 
 /** 防止同一玩家在一次网络往返里被重复抽奖（例如 socket 与自动主持同时触发） */
 const DRAWING = new Set<string>();
@@ -43,7 +44,8 @@ export type RandomLotteryOfferResult =
  */
 export async function createRandomLotteryOffer(
   game: GameState,
-  playerId: string
+  playerId: string,
+  options: DrawLotteryOptions = {}
 ): Promise<RandomLotteryOfferResult> {
   const key = drawKey(game, playerId);
   if (DRAWING.has(key)) return { ok: false, message: "开奖进行中，请稍候" };
@@ -51,7 +53,7 @@ export async function createRandomLotteryOffer(
   if (!before || !playerHasLotteryBuff(before)) {
     return { ok: false, message: "该玩家没有待开奖的彩票" };
   }
-  if ((game.lotteryCompletedDeals ?? []).some((d) => d.playerId === playerId)) {
+  if (isCurrentLotteryAlreadySettled(game, before)) {
     return { ok: false, message: "该玩家彩票已开奖" };
   }
   if (findPendingLotteryOffer(game, playerId)) {
@@ -60,7 +62,7 @@ export async function createRandomLotteryOffer(
 
   DRAWING.add(key);
   try {
-    const draw = await drawLotteryRoll();
+    const draw = await drawLotteryRoll(options);
     const player = game.players.find((p) => p.id === playerId);
     if (!player) return { ok: false, message: "玩家已离开" };
     if (!playerHasLotteryBuff(player)) {

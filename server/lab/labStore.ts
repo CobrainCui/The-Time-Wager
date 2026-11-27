@@ -58,8 +58,21 @@ function loadRunsFromDisk(): void {
       persistDisabled = true;
       return;
     }
+    let recoveredStale = false;
+    const now = Date.now();
     for (const r of parsed.runs) {
-      if (r?.runId) runsById.set(r.runId, r);
+      if (!r?.runId) continue;
+      if (r.status === "running") {
+        r.status = "failed";
+        r.finishedAt = r.finishedAt ?? now;
+        r.durationMs = Math.max(0, (r.finishedAt ?? now) - (r.startedAt || now));
+        r.failureReason = r.failureReason || "服务重启导致实验中断";
+        recoveredStale = true;
+      }
+      runsById.set(r.runId, r);
+    }
+    if (recoveredStale) {
+      persistRuns();
     }
   } catch (err) {
     persistDisabled = true;

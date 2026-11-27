@@ -127,6 +127,8 @@ interface AiRoomState {
   contextRefreshCount: Map<string, number>;
   /** 正在解锁重投的 AI 数量（防止看门狗或自动主持误以为已全部完成） */
   reinvestingIds: Set<string>;
+  /** 当前拍卖拍品取消信号：焦点卡切换或阶段变更时立即中止旧 HTTP 请求 */
+  auctionLotAbort: { lotKey: string; controller: AbortController } | null;
   memories: Map<string, ProductAiMemory>;
   recordedOutcomeRounds: Map<string, Set<number>>;
   openingPhaseKey: string;
@@ -166,7 +168,25 @@ function auctionSignature(game: GameState): string {
   return `${game.auctionFocusCardId ?? "-"}:${leading?.amount ?? 0}:${leading?.playerId ?? "-"}`;
 }
 
+function clearAuctionLotAbort(state: AiRoomState): void {
+  if (state.auctionLotAbort) {
+    state.auctionLotAbort.controller.abort();
+    state.auctionLotAbort = null;
+  }
+}
+
+function getAuctionLotSignal(state: AiRoomState, lotKey: string): AbortSignal {
+  if (state.auctionLotAbort && state.auctionLotAbort.lotKey === lotKey) {
+    return state.auctionLotAbort.controller.signal;
+  }
+  clearAuctionLotAbort(state);
+  const controller = new AbortController();
+  state.auctionLotAbort = { lotKey, controller };
+  return controller.signal;
+}
+
 function clearTimersInState(state: AiRoomState): void {
+  clearAuctionLotAbort(state);
   for (const b of state.dmBatches.values()) {
     if (b.timer) clearTimeout(b.timer);
   }
@@ -208,6 +228,7 @@ function getRoomState(game: GameState): AiRoomState {
       transferTimers: new Map(),
       contextRefreshCount: new Map(),
       reinvestingIds: new Set(),
+      auctionLotAbort: null,
       memories: new Map(),
       recordedOutcomeRounds: new Map(),
       openingPhaseKey: "",
@@ -253,6 +274,7 @@ function getRoomState(game: GameState): AiRoomState {
     state.forced.clear();
     state.contextRefreshCount.clear();
     state.reinvestingIds.clear();
+    clearAuctionLotAbort(state);
     state.openingPhaseKey = "";
     state.openingUntil = 0;
     state.openingChatDoneKey = "";
@@ -478,6 +500,7 @@ export async function askProductAiWithFallback(
   options: {
     config: AiModelConfig;
     label: string;
+    signal?: AbortSignal;
     thinking?: {
       thinkingBudget: number;
       reasoningEffort?: "minimal" | "low" | "medium" | "high";
@@ -500,6 +523,7 @@ export async function askProductAiWithFallback(
       timeoutMs: options.fast.timeoutMs,
       maxRetries: options.fast.maxRetries ?? 1,
       maxOutputTokens: options.fast.maxOutputTokens,
+      signal: options.signal,
     });
   }
 
@@ -512,8 +536,10 @@ export async function askProductAiWithFallback(
     timeoutMs: options.thinking.timeoutMs,
     maxRetries: 0,
     maxOutputTokens: options.thinking.maxOutputTokens,
+    signal: options.signal,
   });
   if (first.ok && first.data) return first;
+  if (options.signal?.aborted) return first;
   if (!isFastFallbackRetryable(first.error)) return first;
 
   const fallbackUser = /JSON\s*解析失败/i.test(first.error ?? "")
@@ -527,6 +553,7 @@ export async function askProductAiWithFallback(
     timeoutMs: options.fast.timeoutMs,
     maxRetries: options.fast.maxRetries ?? 1,
     maxOutputTokens: options.fast.maxOutputTokens,
+    signal: options.signal,
   });
   const totalUsage =
     first.usage || fallback.usage
@@ -1942,6 +1969,8 @@ function applyInvestmentPlan(
             });
           }
           if (result.investmentAutoUnlocked && target && isAiPlayer(target) && target.id !== ai.id) {
+            state.forced.delete(target.id);
+            clearAiFailure(game, target.id, io);
             setTimeout(() => void handleAIPhase(game, io), 150);
           }
         }
@@ -2118,12 +2147,12 @@ async function decideInvestmentPlan(
         ? {
             thinkingBudget: profile.difficulty === "hard" ? 896 : 384,
             reasoningEffort: "low",
-            timeoutMs: Math.min(20_000, Math.max(15_000, AI_CONFIG.decisionTimeoutMs)),
+            timeoutMs: Math.min(22_000, Math.max(15_000, AI_CONFIG.decisionTimeoutMs)),
             maxOutputTokens: 4_096,
           }
         : undefined,
       fast: {
-        timeoutMs: Math.max(20_000, Math.min(25_000, AI_CONFIG.decisionTimeoutMs)),
+        timeoutMs: Math.min(26_000, Math.max(20_000, AI_CONFIG.decisionTimeoutMs)),
         maxRetries: 1,
         maxOutputTokens: 3_000,
       },
@@ -2233,6 +2262,8 @@ async function runInvestmentTurn(
     if (
       hasModel &&
       decision.plan &&
+      decision.usedLlm &&
+      hasUnreadyConnectedHuman(game) &&
       refreshes < 1 &&
       INVEST_PHASES.has(game.phase) &&
       !ai.ready &&
@@ -2326,7 +2357,8 @@ async function decideAuctionPlan(
   game: GameState,
   ai: Player,
   profile: AiProfile,
-  state: AiRoomState
+  state: AiRoomState,
+  signal?: AbortSignal
 ): Promise<{
   plan: AiAuctionPlan | null;
   usedLlm: boolean;
@@ -2347,18 +2379,19 @@ async function decideAuctionPlan(
       {
         config: modelConfig,
         label: `auction-e${game.currentEra}`,
+        signal,
         thinking: useHardThinking
           ? {
               thinkingBudget: 384,
               reasoningEffort: "low",
-              timeoutMs: 12_000,
-              maxOutputTokens: 1_800,
+              timeoutMs: 14_000,
+              maxOutputTokens: 2_400,
             }
           : undefined,
         fast: {
-          timeoutMs: 10_000,
-          maxRetries: 0,
-          maxOutputTokens: 1_500,
+          timeoutMs: 18_000,
+          maxRetries: 1,
+          maxOutputTokens: 2_048,
         },
       }
     );
@@ -2449,24 +2482,27 @@ async function runAuctionTurn(
       await politeDelay(0.4);
     }
 
-    const isNearAuctionDeadline = () =>
-      Boolean(game.autoHostNextActionAt && now() >= game.autoHostNextActionAt - 500);
+    const lotSignal = getAuctionLotSignal(state, lotKey);
 
     try {
-      if (game.phase !== "AUCTION" || game.auctionFocusCardId !== focus) return false;
-      if (isNearAuctionDeadline()) return false;
+      if (lotSignal.aborted || game.phase !== "AUCTION" || game.auctionFocusCardId !== focus) return false;
       const leadingNow = getLeadingBidOnFocus(game);
       if (leadingNow?.playerId === ai.id) {
         lot.doneSignature = auctionSignature(game);
         return false;
       }
 
-      const decided = await decideAuctionPlan(game, ai, profile, state);
-      if (!game.players.some((p) => p.id === ai.id)) return false;
+      const decided = await decideAuctionPlan(game, ai, profile, state, lotSignal);
+      if (lotSignal.aborted || !game.players.some((p) => p.id === ai.id)) return false;
       if (game.phase !== "AUCTION" || game.auctionFocusCardId !== focus) return false;
-      if (isNearAuctionDeadline()) return false;
 
       if (!decided.plan) {
+        if (game.autoHostEnabled) {
+          lot.passed = true;
+          lot.doneSignature = auctionSignature(game);
+          logWarn(state, `${ai.name} 拍卖响应异常（${decided.failure ?? "未知"}），自动跳过本张拍品`);
+          return false;
+        }
         state.forced.add(ai.id);
         recordAiFailure(
           game,
@@ -2484,7 +2520,7 @@ async function runAuctionTurn(
       );
       let acted = false;
 
-      if (game.phase !== "AUCTION" || game.auctionFocusCardId !== focus || isNearAuctionDeadline()) {
+      if (game.phase !== "AUCTION" || game.auctionFocusCardId !== focus) {
         return false;
       }
 
@@ -2497,6 +2533,9 @@ async function runAuctionTurn(
             type: "auction_sold",
             message: formatAuctionSoldMessage(game, result.auctionSold),
           });
+        }
+        if (result.success && (game.phase as string) === "AUCTION" && game.auctionFocusCardId) {
+          setTimeout(() => void handleAIPhase(game, io), 150);
         }
       } else if (plan.action === "bid" && typeof plan.amount === "number" && Number.isFinite(plan.amount)) {
         const latestMin = getMinimumNextBid(game);

@@ -70,37 +70,75 @@ function isFresh(entry: CacheEntry, now: number): boolean {
   return now - entry.at < ttl;
 }
 
+function isSiliconFlowCfg(cfg: AiModelConfig): boolean {
+  return /siliconflow/i.test(cfg.provider) || /siliconflow\./i.test(cfg.baseURL ?? "");
+}
+
+function isTransientPreflightError(error: unknown): boolean {
+  const status = (error as { status?: number } | undefined)?.status;
+  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /timeout|timed out|terminated|connection error|hang up|socket|ECONNRESET|ETIMEDOUT|fetch failed|429|500|502|503|504/i.test(
+    message
+  );
+}
+
+function isParamBadRequest(error: unknown): boolean {
+  const status = (error as { status?: number } | undefined)?.status;
+  if (status === 400) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b400\b|invalid.*param|unknown.*field|extra_forbidden|unrecognized|enable_thinking/i.test(
+    message
+  );
+}
+
 async function pingConfig(
   cfg: AiModelConfig
 ): Promise<{ ok: boolean; latencyMs: number; message?: string }> {
   const started = Date.now();
-  try {
-    const client = new OpenAI({
-      apiKey: cfg.apiKey,
-      ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
-      maxRetries: 0,
-    });
-    await client.chat.completions.create(
-      {
+  const client = new OpenAI({
+    apiKey: cfg.apiKey,
+    ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
+    maxRetries: 0,
+  });
+  let includeDisableThinking = isSiliconFlowCfg(cfg);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const body = {
         model: cfg.model,
         temperature: 0,
-        max_tokens: 4,
+        max_tokens: 16,
         messages: [
-          { role: "system", content: "只回复 ok" },
-          { role: "user", content: "ping" },
+          { role: "system" as const, content: "只回复 ok" },
+          { role: "user" as const, content: "ping" },
         ],
-      },
-      { timeout: AI_CONFIG.preflightTimeoutMs }
-    );
-    return { ok: true, latencyMs: Date.now() - started };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      ok: false,
-      latencyMs: Date.now() - started,
-      message: message.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***").slice(0, 200),
-    };
+        ...(includeDisableThinking ? { enable_thinking: false } : {}),
+      } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
+      await client.chat.completions.create(body, { timeout: AI_CONFIG.preflightTimeoutMs });
+      return { ok: true, latencyMs: Date.now() - started };
+    } catch (error) {
+      if (attempt === 0) {
+        if (includeDisableThinking && isParamBadRequest(error)) {
+          includeDisableThinking = false;
+          continue;
+        }
+        if (isTransientPreflightError(error)) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        message: message.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***").slice(0, 200),
+      };
+    }
   }
+  return { ok: false, latencyMs: Date.now() - started, message: "preflight failed" };
 }
 
 function failureFor(ai: Player, message: string, kind: AiPreflightFailure["kind"]): AiPreflightFailure {

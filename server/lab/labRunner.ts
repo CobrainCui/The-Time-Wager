@@ -62,19 +62,9 @@ import { clearActionDeadline } from "../state/actionDeadline.js";
 import { sanitizeCommunityName } from "../state/communityLeaderboard.js";
 import { finalizeCommunityName } from "../state/communityNaming.js";
 import { togglePlayerReady } from "../state/gameActions.js";
-import {
-  createInitialGame,
-  getCommunityNamer,
-  type ActiveProject,
-  type GameState,
-  type LabAgentDecision,
-  type LabDirectMessage,
-  type LabInteractionMode,
-  type LabThinkingMode,
-  type LotteryVisibility,
-  type Player,
-  type Transaction,
-} from "../state/gameState.js";
+import { createInitialGame, getCommunityNamer, type ActiveProject, type GameState, type LabAgentDecision, type LabDirectMessage, type LabInteractionMode, type LabThinkingMode, type LotteryVisibility, type Player, type Transaction } from "../state/gameState.js";
+import { ensureProjectsDrawnForEra } from "../state/gameEra.js";
+import { syncActiveLongTermRecords } from "../logic/longTermLogic.js";
 import { tryAdvancePhase } from "../state/phaseController.js";
 import { appendSessionEvent, ensureSessionStarted } from "../state/sessionTelemetry.js";
 import { rooms } from "../state/store.js";
@@ -123,6 +113,20 @@ export class LabFatalError extends Error {
     super(message);
     this.name = "LabFatalError";
   }
+}
+
+export class LabBudgetExceededError extends LabFatalError {
+  constructor(message: string) {
+    super(message);
+    this.name = "LabBudgetExceededError";
+  }
+}
+
+function isNonRecoverableLabError(error: unknown): boolean {
+  if (error instanceof LabStoppedError || error instanceof LabBudgetExceededError) {
+    return true;
+  }
+  return error instanceof LabFatalError && /共享模型密钥/.test(error.message);
 }
 
 export class LabStoppedError extends Error {
@@ -264,19 +268,23 @@ export function applyLabAuctionWave(options: {
       rawThinking
     );
     const mem = memories?.get(player.id);
-    if (decision.action === "force_buy" && player.inventory.includes("buff_force_buy")) {
-      const fb = useForceBuyCard(game, player.id);
-      if (fb.success) {
-        forcedSold = true;
-        anyAction = true;
-        game.autoHostNextActionAt = undefined;
-        mem?.record("action", `拍卖 ${focus}：使用强买强卖`, {
-          globalRound: game.globalRound,
-          era: game.currentEra,
-          roundInEra: game.roundInEra,
-        });
-        break;
+    if (decision.action === "force_buy") {
+      if (player.inventory.includes("buff_force_buy") && focus !== "buff_force_buy") {
+        const fb = useForceBuyCard(game, player.id);
+        if (fb.success) {
+          forcedSold = true;
+          anyAction = true;
+          game.autoHostNextActionAt = undefined;
+          mem?.record("action", `拍卖 ${focus}：使用强买强卖`, {
+            globalRound: game.globalRound,
+            era: game.currentEra,
+            roundInEra: game.roundInEra,
+          });
+          break;
+        }
       }
+      passedOnCard.add(player.id);
+      continue;
     }
     if (decision.action === "bid") {
       const currentLeading = getLeadingBidOnFocus(game)?.playerId;
@@ -942,6 +950,28 @@ const LAB_BUFF_EXEC_ORDER: Record<string, number> = {
   buff_lighter: 6,
 };
 
+const LAB_RETIRED_CARD_IDS = new Set(["buff_spirit", "buff_rebound"]);
+
+export function resolveLabPlayerId(game: GameState, raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const byId = game.players.find((p) => p.id === trimmed);
+  if (byId) return byId.id;
+  const byName = game.players.find((p) => p.name.trim() === trimmed);
+  return byName?.id;
+}
+
+export function resolveLabCardId(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const byId = buffCards.find((c) => c.id === trimmed);
+  if (byId) return byId.id;
+  const byName = buffCards.find((c) => c.name.trim() === trimmed);
+  return byName?.id;
+}
+
 function createLabTransfer(
   game: GameState,
   sender: Player,
@@ -950,9 +980,10 @@ function createLabTransfer(
 ): { toPlayerId: string; amount: number; note: string } | null {
   if (!allowTransfer || !rawTransfer || !rawTransfer.toPlayerId) return null;
   const amount = int(rawTransfer.amount) ?? 0;
-  const toPlayer = game.players.find(
-    (x) => x.id === rawTransfer.toPlayerId && x.id !== sender.id
-  );
+  const resolvedToId = resolveLabPlayerId(game, rawTransfer.toPlayerId);
+  const toPlayer = resolvedToId
+    ? game.players.find((x) => x.id === resolvedToId && x.id !== sender.id)
+    : undefined;
   const txAvail = playerAvailableWealth(game, sender);
   if (!toPlayer || amount <= 0 || amount > txAvail) return null;
   const note = maskForbiddenText(
@@ -991,8 +1022,10 @@ export async function executeLabUseCards(options: {
   rawCards: LabUseCardInput[];
   allowBuffCards: boolean;
   mem?: LabAgentMemory;
+  onlineLottery?: boolean;
+  disallowCardIds?: Set<string>;
 }): Promise<LabUseCardInput[]> {
-  const { game, player, rawCards, allowBuffCards, mem } = options;
+  const { game, player, rawCards, allowBuffCards, mem, onlineLottery, disallowCardIds } = options;
   if (!allowBuffCards || rawCards.length === 0) return [];
 
   const stock = new Map<string, number>();
@@ -1000,19 +1033,26 @@ export async function executeLabUseCards(options: {
     stock.set(id, (stock.get(id) ?? 0) + 1);
   }
 
+  const alreadyHasWorkRest = (player.activeBuffs ?? []).some((b) => b.cardId === "buff_work_rest");
+  const batchWorkRestForSelf =
+    (stock.get("buff_work_rest") ?? 0) > 0 &&
+    rawCards.some((r) => {
+      const cid = resolveLabCardId(r?.cardId);
+      if (cid !== "buff_work_rest") return false;
+      const tid = resolveLabPlayerId(game, r?.targetPlayerId) ?? player.id;
+      return tid === player.id;
+    });
+
   const normalized: LabUseCardInput[] = [];
   for (const raw of rawCards) {
     if (!raw || typeof raw.cardId !== "string") continue;
-    const cardId = raw.cardId;
-    if (cardId === "buff_force_buy") continue;
+    const cardId = resolveLabCardId(raw.cardId);
+    if (!cardId || cardId === "buff_force_buy" || LAB_RETIRED_CARD_IDS.has(cardId)) continue;
+    if (disallowCardIds?.has(cardId)) continue;
     const left = stock.get(cardId) ?? 0;
     if (left <= 0) continue;
 
-    let targetPlayerId =
-      typeof raw.targetPlayerId === "string" &&
-      game.players.some((p) => p.id === raw.targetPlayerId)
-        ? raw.targetPlayerId
-        : undefined;
+    let targetPlayerId = resolveLabPlayerId(game, raw.targetPlayerId);
     if (cardId === "buff_work_rest" && !targetPlayerId) {
       targetPlayerId = player.id;
     }
@@ -1024,9 +1064,10 @@ export async function executeLabUseCards(options: {
         ? parsedProjectId
         : undefined;
 
+    const resolvedBurnId = resolveLabCardId(raw.burnCardId);
     const burnCardId =
-      typeof raw.burnCardId === "string" && raw.burnCardId !== "buff_lighter"
-        ? raw.burnCardId
+      resolvedBurnId && resolvedBurnId !== "buff_lighter" && !LAB_RETIRED_CARD_IDS.has(resolvedBurnId)
+        ? resolvedBurnId
         : undefined;
 
     const visibility: LotteryVisibility | undefined =
@@ -1036,7 +1077,13 @@ export async function executeLabUseCards(options: {
           : "public"
         : undefined;
 
-    if (cardId === "buff_slack" && !targetPlayerId) continue;
+    if (cardId === "buff_slack") {
+      if (!targetPlayerId) continue;
+      // 严禁在没有劳逸结合护体时对自己打出摸鱼传染白白扣减自己精力
+      if (targetPlayerId === player.id && !alreadyHasWorkRest && !batchWorkRestForSelf) {
+        continue;
+      }
+    }
     if (cardId === "buff_work_rest" && !targetPlayerId) continue;
     if (cardId === "buff_short" && targetProjectId == null) continue;
     if (
@@ -1082,7 +1129,11 @@ export async function executeLabUseCards(options: {
     executed.push(c);
 
     if (cardId === "buff_lottery") {
-      const drawn = await createRandomLotteryOffer(game, player.id);
+      const drawn = await createRandomLotteryOffer(
+        game,
+        player.id,
+        onlineLottery !== undefined ? { online: onlineLottery } : {}
+      );
       if (drawn.ok) {
         const settled = acceptLotteryOffer(game, player.id, drawn.offer.offerId);
         if (settled.ok) {
@@ -1132,8 +1183,12 @@ function applyLabChatPlan(options: {
   } = options;
 
   if (allowCreateGroup && plan.createGroup && Array.isArray(plan.createGroup.memberIds)) {
-    const memberIds = plan.createGroup.memberIds.filter(
-      (id) => id !== player.id && game.players.some((x) => x.id === id)
+    const memberIds = Array.from(
+      new Set(
+        plan.createGroup.memberIds
+          .map((id) => resolveLabPlayerId(game, id))
+          .filter((id): id is string => Boolean(id && id !== player.id))
+      )
     );
     if (memberIds.length >= 2) {
       const cg = createCustomChatGroup(game, player.id, memberIds, plan.createGroup.name);
@@ -1163,10 +1218,11 @@ function applyLabChatPlan(options: {
         });
       }
     } else if (m.channel === "private" && allowPrivate && m.toPlayerId) {
-      if (sendLabDirectMessage(game, player, m.toPlayerId, m.text, counters.privUsed)) {
+      const resolvedTargetId = resolveLabPlayerId(game, m.toPlayerId);
+      if (resolvedTargetId && sendLabDirectMessage(game, player, resolvedTargetId, m.text, counters.privUsed)) {
         counters.privUsed += 1;
-        const target = game.players.find((x) => x.id === m.toPlayerId);
-        mem.record("chat", `[我·私聊→${target?.name ?? m.toPlayerId}] ${oneLine(m.text, 220)}`, {
+        const target = game.players.find((x) => x.id === resolvedTargetId);
+        mem.record("chat", `[我·私聊→${target?.name ?? resolvedTargetId}] ${oneLine(m.text, 220)}`, {
           globalRound: game.globalRound,
           era: game.currentEra,
           roundInEra: game.roundInEra,
@@ -1288,14 +1344,14 @@ export async function askAgentWithValidation<T>(options: {
   const budget = manifest.tokenBudgetPerAgent;
   const usedBefore = game.labTokenUsage[player.id] ?? 0;
   if (budget > 0 && usedBefore >= budget) {
-    throw new LabFatalError(
+    throw new LabBudgetExceededError(
       `${player.name}（${player.agentModel}）单局消耗 ${usedBefore} 已达到上限 ${budget}`
     );
   }
 
   const thinkingMode = manifest.thinkingMode ?? "moderate";
   const actionBudget = getLabActionBudget(budgetKind, thinkingMode);
-  // 非拍卖阶段给足真实推理与首字等待窗口（拍卖保持 15s 紧限，避免拖慢拍品节奏）
+  // 非拍卖阶段给足真实推理与首字等待窗口（拍卖保持 15s 紧限，同时放宽输出 token 上限防止思考链截断 JSON）
   const effectiveTimeoutMs =
     budgetKind === "auction"
       ? actionBudget.timeoutMs
@@ -1304,11 +1360,11 @@ export async function askAgentWithValidation<T>(options: {
         : Math.max(actionBudget.timeoutMs, 60_000);
   const effectiveMaxOutputTokens =
     budgetKind === "auction"
-      ? actionBudget.maxOutputTokens
+      ? Math.max(actionBudget.maxOutputTokens, thinkingMode === "fast" ? 1200 : 2048)
       : budgetKind === "investment"
         ? Math.max(actionBudget.maxOutputTokens, 4096)
         : Math.max(actionBudget.maxOutputTokens, 2400);
-  const fastRetryTimeoutMs = budgetKind === "auction" ? 15_000 : 55_000;
+  const fastRetryTimeoutMs = budgetKind === "auction" ? 15_000 : 75_000;
   const combinedController = new AbortController();
   const onRunAbort = () => combinedController.abort();
   const onCallAbort = () => combinedController.abort();
@@ -1333,9 +1389,10 @@ export async function askAgentWithValidation<T>(options: {
 
   setTurnStatus(game, player, "thinking", io);
   try {
-    // 6 名真实 AI 同毫秒并发建连硅基流动易触发瞬时 Connection error，轻微错峰 150ms/席（拍卖除外）
-    if (!manifest.mock && llmCaller === askAiJson && budgetKind !== "auction") {
-      const seatOffsetMs = (Math.max(1, player.agentIndex ?? 1) - 1) * 150;
+    // 6 名真实 AI 同毫秒并发建连硅基流动易触发瞬时 Connection error，轻微错峰避免握手拥堵
+    if (!manifest.mock && llmCaller === askAiJson) {
+      const stepMs = budgetKind === "auction" ? 120 : 150;
+      const seatOffsetMs = (Math.max(1, player.agentIndex ?? 1) - 1) * stepMs;
       if (seatOffsetMs > 0) {
         await sleepAbortable(seatOffsetMs, combinedController.signal).catch(() => {
           if (signal.aborted) throw new LabStoppedError();
@@ -1402,7 +1459,7 @@ export async function askAgentWithValidation<T>(options: {
         const nextUsed = (game.labTokenUsage[player.id] ?? 0) + res.usage.totalTokens;
         game.labTokenUsage[player.id] = nextUsed;
         if (budget > 0 && nextUsed > budget) {
-          throw new LabFatalError(
+          throw new LabBudgetExceededError(
             `${player.name}（${player.agentModel}）单局消耗 ${nextUsed} 超出上限 ${budget}`
           );
         }
@@ -1429,13 +1486,29 @@ export async function askAgentWithValidation<T>(options: {
           maxAttempts = Math.max(maxAttempts, attempt + 2);
           if (!manifest.mock && llmCaller === askAiJson && isTransientNet) {
             await sleepAbortable(400, combinedController.signal).catch(() => {});
+            ensureNotAborted(signal);
+            if (callSignal?.aborted) {
+              throw new LabCallExpiredError(`${player.name} 在 ${label} 超出本拍时限`);
+            }
           }
           continue;
         }
-        if (!manifest.mock && llmCaller === askAiJson && transportRetries < 2 && isTransientNet) {
+        if (!manifest.mock && transportRetries < 2 && (isTransientNet || isTimeoutLike)) {
+          if (isTimeoutLike) fastRetryNoThinking = true;
           transportRetries += 1;
-          maxAttempts = Math.min(4, maxAttempts + 1);
-          await sleepAbortable(600, combinedController.signal).catch(() => {});
+          maxAttempts = Math.min(4, Math.max(maxAttempts, attempt + 1));
+          if (llmCaller === askAiJson) {
+            await sleepAbortable(600, combinedController.signal).catch(() => {});
+            ensureNotAborted(signal);
+            if (callSignal?.aborted) {
+              throw new LabCallExpiredError(`${player.name} 在 ${label} 超出本拍时限`);
+            }
+          }
+          continue;
+        }
+        if (!manifest.mock && !fastRetryNoThinking && (isTimeoutLike || isTransientNet)) {
+          fastRetryNoThinking = true;
+          maxAttempts = Math.max(maxAttempts, attempt + 1);
           continue;
         }
         throw new LabFatalError(
@@ -1457,6 +1530,8 @@ export async function askAgentWithValidation<T>(options: {
           latencyMs: totalLatencyMs,
         };
       }
+      if (attempt >= 2) fastRetryNoThinking = true;
+      maxAttempts = Math.max(maxAttempts, 3);
       prompt = `${userPrompt}\n\n注意：上一次输出缺少必要字段或取值不合法，请严格按照要求输出单个合法 JSON 对象。`;
     }
     throw new LabFatalError(
@@ -1516,42 +1591,50 @@ async function resolveIncomingTransfers(options: {
       if (!receiver) return;
       const obs = buildLabObservation(game, receiver.id);
       const mem = memories.get(receiver.id)!;
-      const res = await askAgentWithValidation<{ decision: "accept" | "reject"; reasoning: string }>({
-        game,
-        player: receiver,
-        manifest,
-        sharedConfig,
-        label: `tx-${tx.id.slice(0, 6)}`,
-        userPrompt: buildLabTransactionPrompt(obs, tx, mem.digest()),
-        validate: (data) => {
-          if (!data || typeof data !== "object") return null;
-          const d = (data as { decision?: unknown }).decision;
-          if (d !== "accept" && d !== "reject") return null;
-          return {
-            decision: d,
-            reasoning: String((data as { reasoning?: unknown }).reasoning ?? ""),
-          };
-        },
-        signal,
-        io,
-        budgetKind: "transaction",
-      });
-      resolvePendingTransfer(game, tx.id, receiver.id, res.value.decision === "accept");
-      recordLabDecision(
-        game,
-        receiver,
-        "transaction",
-        res.value.reasoning,
-        { txId: tx.id, fromName: tx.fromName, amount: tx.amount, decision: res.value.decision },
-        res.usage,
-        res.latencyMs,
-        res.rawThinking
-      );
-      mem.record(
-        "transfer",
-        `收到 ${tx.fromName} 转账 ${tx.amount}（备注：${oneLine(tx.note, 80) || "无"}），我${res.value.decision === "accept" ? "接受" : "拒绝"}了`,
-        { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
-      );
+      try {
+        const res = await askAgentWithValidation<{ decision: "accept" | "reject"; reasoning: string }>({
+          game,
+          player: receiver,
+          manifest,
+          sharedConfig,
+          label: `tx-${tx.id.slice(0, 6)}`,
+          userPrompt: buildLabTransactionPrompt(obs, tx, mem.digest()),
+          validate: (data) => {
+            if (!data || typeof data !== "object") return null;
+            const d = (data as { decision?: unknown }).decision;
+            if (d !== "accept" && d !== "reject") return null;
+            return {
+              decision: d,
+              reasoning: String((data as { reasoning?: unknown }).reasoning ?? ""),
+            };
+          },
+          signal,
+          io,
+          budgetKind: "transaction",
+        });
+        resolvePendingTransfer(game, tx.id, receiver.id, res.value.decision === "accept");
+        recordLabDecision(
+          game,
+          receiver,
+          "transaction",
+          res.value.reasoning,
+          { txId: tx.id, fromName: tx.fromName, amount: tx.amount, decision: res.value.decision },
+          res.usage,
+          res.latencyMs,
+          res.rawThinking
+        );
+        mem.record(
+          "transfer",
+          `收到 ${tx.fromName} 转账 ${tx.amount}（备注：${oneLine(tx.note, 80) || "无"}），我${res.value.decision === "accept" ? "接受" : "拒绝"}了`,
+          { globalRound: game.globalRound, era: game.currentEra, roundInEra: game.roundInEra }
+        );
+      } catch (err) {
+        if (isNonRecoverableLabError(err)) throw err;
+        game.logs.push(
+          `⚠️ ${receiver.name} 确认转账响应异常，暂保持拒绝：${err instanceof Error ? err.message.slice(0, 120) : String(err)}`
+        );
+        resolvePendingTransfer(game, tx.id, receiver.id, false);
+      }
     })
   );
   if (io) broadcastUpdate(io, game);
@@ -1641,10 +1724,22 @@ async function runSingleLabGame(options: {
 
   let failureReason: string | undefined;
   let finalStatus: LabSessionRecord["status"] = "completed";
+  let lastStateKey = "";
+  let sameStateCount = 0;
 
   try {
     while ((game.phase as string) !== "GAME_OVER") {
       ensureNotAborted(signal);
+      const stateKey = `${game.phase}:${game.globalRound}:${game.currentEra}:${game.roundInEra}`;
+      if (stateKey === lastStateKey) {
+        sameStateCount += 1;
+        if (sameStateCount >= 3) {
+          throw new LabFatalError(`实验阶段推进停滞（${stateKey}），已安全终止`);
+        }
+      } else {
+        lastStateKey = stateKey;
+        sameStateCount = 0;
+      }
 
       if (game.phase === "ERA_INTRO") {
         if (manifest.predictionEnabled && !predictionSentForEra.has(game.currentEra)) {
@@ -1654,67 +1749,74 @@ async function runSingleLabGame(options: {
             game.players.map(async (p) => {
               const obs = buildLabObservation(game, p.id);
               const mem = memories.get(p.id)!;
-              const res = await askAgentWithValidation<{ ranking: string[]; reasoning: string }>({
-                game,
-                player: p,
-                manifest,
-                sharedConfig,
-                label: `era${game.currentEra}-prediction`,
-                userPrompt: buildLabPredictionPrompt(obs, mem.digest()),
-                validate: (data) => {
-                  if (!data || typeof data !== "object") return null;
-                  const raw = (data as { ranking?: unknown }).ranking;
-                  if (!Array.isArray(raw)) return null;
-                  const byName = new Map(game.players.map((x) => [x.name, x.id]));
-                  const ranking = raw
-                    .map((v) => (typeof v === "string" ? byName.get(v) ?? v : ""))
-                    .filter((v): v is string => !!v);
-                  if (
-                    ranking.length !== allIds.length ||
-                    new Set(ranking).size !== ranking.length ||
-                    ranking.some((id) => !allIds.includes(id))
-                  ) {
-                    return null;
-                  }
-                  return {
-                    ranking,
-                    reasoning: String((data as { reasoning?: unknown }).reasoning ?? ""),
-                  };
-                },
-                signal,
-                io,
-                budgetKind: "prediction",
-              });
-              if (!game.labPredictions) game.labPredictions = [];
-              game.labPredictions.push({
-                id: `pred-${Date.now().toString(36)}-${p.agentIndex ?? 0}`,
-                playerId: p.id,
-                playerName: p.name,
-                era: game.currentEra,
-                globalRound: game.globalRound,
-                ranking: res.value.ranking,
-                reasoning: oneLine(res.value.reasoning, 400),
-                model: p.agentModel,
-                timestamp: Date.now(),
-              });
-              recordLabDecision(
-                game,
-                p,
-                "prediction",
-                res.value.reasoning,
-                { ranking: res.value.ranking },
-                res.usage,
-                res.latencyMs,
-                res.rawThinking
-              );
-              const names = res.value.ranking
-                .map((id) => game.players.find((x) => x.id === id)?.name ?? id)
-                .join(" > ");
-              mem.record("prediction", `时代 ${game.currentEra} 预测最终排名：${names}`, {
-                globalRound: game.globalRound,
-                era: game.currentEra,
-                roundInEra: game.roundInEra,
-              });
+              try {
+                const res = await askAgentWithValidation<{ ranking: string[]; reasoning: string }>({
+                  game,
+                  player: p,
+                  manifest,
+                  sharedConfig,
+                  label: `era${game.currentEra}-prediction`,
+                  userPrompt: buildLabPredictionPrompt(obs, mem.digest()),
+                  validate: (data) => {
+                    if (!data || typeof data !== "object") return null;
+                    const raw = (data as { ranking?: unknown }).ranking;
+                    if (!Array.isArray(raw)) return null;
+                    const byName = new Map(game.players.map((x) => [x.name, x.id]));
+                    const ranking = raw
+                      .map((v) => (typeof v === "string" ? byName.get(v) ?? v : ""))
+                      .filter((v): v is string => !!v);
+                    if (
+                      ranking.length !== allIds.length ||
+                      new Set(ranking).size !== ranking.length ||
+                      ranking.some((id) => !allIds.includes(id))
+                    ) {
+                      return null;
+                    }
+                    return {
+                      ranking,
+                      reasoning: String((data as { reasoning?: unknown }).reasoning ?? ""),
+                    };
+                  },
+                  signal,
+                  io,
+                  budgetKind: "prediction",
+                });
+                if (!game.labPredictions) game.labPredictions = [];
+                game.labPredictions.push({
+                  id: `pred-${Date.now().toString(36)}-${p.agentIndex ?? 0}`,
+                  playerId: p.id,
+                  playerName: p.name,
+                  era: game.currentEra,
+                  globalRound: game.globalRound,
+                  ranking: res.value.ranking,
+                  reasoning: oneLine(res.value.reasoning, 400),
+                  model: p.agentModel,
+                  timestamp: Date.now(),
+                });
+                recordLabDecision(
+                  game,
+                  p,
+                  "prediction",
+                  res.value.reasoning,
+                  { ranking: res.value.ranking },
+                  res.usage,
+                  res.latencyMs,
+                  res.rawThinking
+                );
+                const names = res.value.ranking
+                  .map((id) => game.players.find((x) => x.id === id)?.name ?? id)
+                  .join(" > ");
+                mem.record("prediction", `时代 ${game.currentEra} 预测最终排名：${names}`, {
+                  globalRound: game.globalRound,
+                  era: game.currentEra,
+                  roundInEra: game.roundInEra,
+                });
+              } catch (err) {
+                if (isNonRecoverableLabError(err)) throw err;
+                game.logs.push(
+                  `⚠️ ${p.name} 时代 ${game.currentEra} 排名预测响应异常，本轮跳过预测`
+                );
+              }
             })
           );
         }
@@ -1726,6 +1828,13 @@ async function runSingleLabGame(options: {
       }
 
       if (game.phase === "INVESTMENT" || game.phase === "BUFF_USAGE") {
+        if ((game.phase as string) === "BUFF_USAGE") {
+          ensureProjectsDrawnForEra(game);
+          syncActiveLongTermRecords(game);
+          game.phase = "INVESTMENT";
+          for (const p of game.players) p.ready = false;
+          game.readyPlayers.clear();
+        }
         const allowTransfer = manifest.transferEnabled !== false;
         const allowBuffCards = manifest.buffCardsEnabled !== false;
         const allowCoffee = manifest.coffeeEnabled !== false;
@@ -1760,43 +1869,55 @@ async function runSingleLabGame(options: {
             game.players.map(async (p) => {
               const obs = buildLabObservation(game, p.id);
               const mem = memories.get(p.id)!;
-              const res = await askAgentWithValidation<ChatPlanFields>({
-                game,
-                player: p,
-                manifest,
-                sharedConfig,
-                label: `r${game.globalRound}-chat`,
-                userPrompt: buildLabChatPrompt(obs, mem.digest(), promptFlags),
-                validate: (data) => {
-                  if (!data || typeof data !== "object") return null;
-                  const raw = data as Partial<ChatPlanFields>;
-                  if (
-                    raw.messages !== undefined &&
-                    !Array.isArray(raw.messages) &&
-                    raw.groupMessages !== undefined &&
-                    !Array.isArray(raw.groupMessages)
-                  ) {
-                    return null;
-                  }
-                  return {
-                    reasoning: typeof raw.reasoning === "string" ? raw.reasoning : "",
-                    messages: Array.isArray(raw.messages) ? raw.messages : [],
-                    groupMessages: Array.isArray(raw.groupMessages) ? raw.groupMessages : [],
-                    createGroup: raw.createGroup ?? null,
-                    transfer: raw.transfer ?? null,
-                  };
-                },
-                signal,
-                io,
-                budgetKind: "chat",
-              });
-              return {
-                player: p,
-                plan: res.value,
-                rawThinking: res.rawThinking,
-                usage: res.usage,
-                latencyMs: res.latencyMs,
-              };
+              try {
+                const res = await askAgentWithValidation<ChatPlanFields>({
+                  game,
+                  player: p,
+                  manifest,
+                  sharedConfig,
+                  label: `r${game.globalRound}-chat`,
+                  userPrompt: buildLabChatPrompt(obs, mem.digest(), promptFlags),
+                  validate: (data) => {
+                    if (!data || typeof data !== "object") return null;
+                    const raw = data as Partial<ChatPlanFields>;
+                    if (
+                      raw.messages !== undefined &&
+                      !Array.isArray(raw.messages) &&
+                      raw.groupMessages !== undefined &&
+                      !Array.isArray(raw.groupMessages)
+                    ) {
+                      return null;
+                    }
+                    return {
+                      reasoning: typeof raw.reasoning === "string" ? raw.reasoning : "",
+                      messages: Array.isArray(raw.messages) ? raw.messages : [],
+                      groupMessages: Array.isArray(raw.groupMessages) ? raw.groupMessages : [],
+                      createGroup: raw.createGroup ?? null,
+                      transfer: raw.transfer ?? null,
+                    };
+                  },
+                  signal,
+                  io,
+                  budgetKind: "chat",
+                });
+                return {
+                  player: p,
+                  plan: res.value,
+                  rawThinking: res.rawThinking,
+                  usage: res.usage,
+                  latencyMs: res.latencyMs,
+                };
+              } catch (err) {
+                if (isNonRecoverableLabError(err)) throw err;
+                game.logs.push(`⚠️ ${p.name} 本轮发言响应异常，自动保持沉默`);
+                return {
+                  player: p,
+                  plan: { reasoning: "", messages: [], groupMessages: [], createGroup: null, transfer: null },
+                  rawThinking: undefined,
+                  usage: undefined,
+                  latencyMs: 0,
+                };
+              }
             })
           );
 
@@ -1926,6 +2047,7 @@ async function runSingleLabGame(options: {
             rawCards,
             allowBuffCards,
             mem,
+            onlineLottery: !manifest.mock,
           });
 
           // 转账（amount > 0 且不超过可用财富）
@@ -1968,12 +2090,19 @@ async function runSingleLabGame(options: {
           );
         }
 
-        // 若本轮有玩家被他人用【摸鱼传染】命中，仅在命中时触发一次反制与重投窗口（未命中则零耗时）
-        const slackVictims = game.players.filter((p) =>
-          (p.slackedBy ?? []).some((attackerId) => attackerId !== p.id)
-        );
-        if (slackVictims.length > 0) {
+        // 若本轮有玩家被他人用【摸鱼传染】命中，触发受限反制与重投窗口（最多 2 波，第 2 波禁止再连环打摸鱼，保证必定收敛）
+        const reactedSlackIds = new Set<string>();
+        for (let wave = 0; wave < 2; wave++) {
+          const slackVictims = game.players.filter((p) => {
+            if (reactedSlackIds.has(p.id)) return false;
+            const hitByOther = (p.slackedBy ?? []).some((attackerId) => attackerId !== p.id);
+            if (!hitByOther) return false;
+            return wave === 0 || !p.ready;
+          });
+          if (slackVictims.length === 0) break;
+
           for (const v of slackVictims) {
+            reactedSlackIds.add(v.id);
             if (v.ready || Object.values(v.investment ?? {}).some((n) => Number(n) > 0)) {
               reopenSubmittedInvestment(game, v.id, "slack_negative");
               v.ready = false;
@@ -1987,39 +2116,69 @@ async function runSingleLabGame(options: {
               const obs = buildLabObservation(game, v.id);
               const mem = memories.get(v.id)!;
               const prevInv = plannedInvestByPlayer.get(v.id) ?? {};
-              const res = await askAgentWithValidation<LabSlackReactionPlan>({
-                game,
-                player: v,
-                manifest,
-                sharedConfig,
-                label: `r${game.globalRound}-slack-reaction`,
-                userPrompt: buildLabSlackReactionPrompt(obs, mem.digest(), prevInv, promptFlags),
-                validate: (data) => {
-                  if (!data || typeof data !== "object") return null;
-                  const raw = data as Partial<LabSlackReactionPlan>;
-                  if (!raw.investment || typeof raw.investment !== "object") return null;
-                  return {
-                    reasoning: typeof raw.reasoning === "string" ? raw.reasoning : "",
-                    coffee: int(raw.coffee) ?? 0,
-                    useCards: Array.isArray(raw.useCards) ? raw.useCards : undefined,
-                    useCard: raw.useCard ?? null,
-                    investment: raw.investment,
-                  };
-                },
-                signal,
-                io,
-                budgetKind: "investment",
-              });
-              return {
-                player: v,
-                plan: res.value,
-                rawThinking: res.rawThinking,
-                usage: res.usage,
-                latencyMs: res.latencyMs,
-              };
+              try {
+                const res = await askAgentWithValidation<LabSlackReactionPlan>({
+                  game,
+                  player: v,
+                  manifest,
+                  sharedConfig,
+                  label: `r${game.globalRound}-slack-reaction`,
+                  userPrompt: buildLabSlackReactionPrompt(obs, mem.digest(), prevInv, promptFlags),
+                  validate: (data) => {
+                    if (!data || typeof data !== "object") return null;
+                    const raw = data as Partial<LabSlackReactionPlan>;
+                    if (!raw.investment || typeof raw.investment !== "object") return null;
+                    return {
+                      reasoning: typeof raw.reasoning === "string" ? raw.reasoning : "",
+                      coffee: int(raw.coffee) ?? 0,
+                      useCards: Array.isArray(raw.useCards) ? raw.useCards : undefined,
+                      useCard: raw.useCard ?? null,
+                      investment: raw.investment,
+                    };
+                  },
+                  signal,
+                  io,
+                  budgetKind: "investment",
+                });
+                return {
+                  player: v,
+                  plan: res.value,
+                  rawThinking: res.rawThinking,
+                  usage: res.usage,
+                  latencyMs: res.latencyMs,
+                  degraded: false,
+                };
+              } catch (err) {
+                if (err instanceof LabStoppedError || err instanceof LabBudgetExceededError) {
+                  throw err;
+                }
+                const errMsg = err instanceof Error ? err.message : String(err);
+                game.logs.push(
+                  `⚠️ ${v.name} 摸鱼反制决策异常（${oneLine(errMsg, 100)}），按保底规则重投`
+                );
+                return {
+                  player: v,
+                  plan: {
+                    reasoning: `模型异常保底重投：${oneLine(errMsg, 120)}`,
+                    coffee: 0,
+                    useCards:
+                      allowBuffCards && (v.inventory ?? []).includes("buff_work_rest")
+                        ? [{ cardId: "buff_work_rest", targetPlayerId: v.id }]
+                        : [],
+                    investment: Object.fromEntries(
+                      Object.entries(prevInv).map(([k, val]) => [k, val])
+                    ),
+                  } as LabSlackReactionPlan,
+                  rawThinking: undefined,
+                  usage: undefined,
+                  latencyMs: undefined,
+                  degraded: true,
+                };
+              }
             })
           );
 
+          const disallowSlackInWave = wave >= 1 ? new Set<string>(["buff_slack"]) : undefined;
           for (const { player, plan, rawThinking, usage, latencyMs } of reactions) {
             ensureNotAborted(signal);
             const mem = memories.get(player.id)!;
@@ -2042,6 +2201,8 @@ async function runSingleLabGame(options: {
               rawCards,
               allowBuffCards,
               mem,
+              onlineLottery: !manifest.mock,
+              disallowCardIds: disallowSlackInWave,
             });
 
             const sanitizedReinvest = sanitizeInvestments(
@@ -2049,6 +2210,7 @@ async function runSingleLabGame(options: {
               player,
               (plan.investment ?? {}) as Record<number, number>
             );
+            plannedInvestByPlayer.set(player.id, sanitizedReinvest);
             applyInvestments(game, player.id, sanitizedReinvest, "player");
             if (!player.ready) togglePlayerReady(game, player.id);
 
@@ -2076,6 +2238,15 @@ async function runSingleLabGame(options: {
             );
           }
           if (io) broadcastUpdate(io, game);
+        }
+
+        // 若因连环摸鱼等边界导致个别玩家未 ready，结算前兜底重提交并锁定，避免同轮重复进入
+        for (const p of game.players) {
+          if (p.ready) continue;
+          const fallbackRaw = p.investmentDraft ?? plannedInvestByPlayer.get(p.id) ?? {};
+          const fallbackInv = sanitizeInvestments(game, p, fallbackRaw);
+          applyInvestments(game, p.id, fallbackInv, "player");
+          togglePlayerReady(game, p.id);
         }
 
         // 结算前处理本轮刚发出的待收转账 + 彩票
@@ -2165,7 +2336,8 @@ async function runSingleLabGame(options: {
           try {
             for (let pass = 0; pass < AUCTION_MAX_DECISIONS_PER_LOT; pass++) {
               ensureNotAborted(signal);
-              if (Date.now() >= lotHardDeadline) break;
+              const remainingLotMs = lotHardDeadline - Date.now();
+              if (remainingLotMs < 2_500) break;
               const leadingId = getLeadingBidOnFocus(game)?.playerId ?? null;
               const candidates = game.players.filter(
                 (p) =>
@@ -2175,55 +2347,92 @@ async function runSingleLabGame(options: {
               );
               if (candidates.length === 0) break;
 
-              const rawResults = await Promise.all(
-                candidates.map(async (p): Promise<LabAuctionBidResult | null> => {
-                  const obs = buildLabObservation(game, p.id);
-                  const avail = playerAvailableWealth(game, p);
-                  const maxBid = Math.max(0, Math.floor(avail * AUCTION_MAX_WEALTH_RATIO));
-                  const mem = memories.get(p.id)!;
-                  decisionsOnCard.set(p.id, (decisionsOnCard.get(p.id) ?? 0) + 1);
-                  try {
-                    const res = await askAgentWithValidation<{
-                      action: "bid" | "pass" | "force_buy";
-                      amount?: number;
-                      reasoning: string;
-                    }>({
-                      game,
-                      player: p,
-                      manifest,
-                      sharedConfig,
-                      label: `auction-${focus}`,
-                      userPrompt: buildLabAuctionPrompt(obs, focus, maxBid, mem.digest()),
-                      validate: (data) => {
-                        if (!data || typeof data !== "object") return null;
-                        const a = (data as { action?: unknown }).action;
-                        if (a !== "bid" && a !== "pass" && a !== "force_buy") return null;
-                        return {
-                          action: a,
-                          amount: int((data as { amount?: unknown }).amount) ?? undefined,
-                          reasoning: String((data as { reasoning?: unknown }).reasoning ?? ""),
-                        };
-                      },
-                      signal,
-                      callSignal: lotAbort.signal,
-                      budgetKind: "auction",
-                      io,
-                    });
-                    return {
-                      player: p,
-                      decision: res.value,
-                      rawThinking: res.rawThinking,
-                      usage: res.usage,
-                      latencyMs: res.latencyMs,
-                    };
-                  } catch (err) {
-                    if (err instanceof LabCallExpiredError) {
+              const waveLimitMs = Math.min(
+                Math.max(2_000, remainingLotMs - 1_500),
+                manifest.thinkingMode === "fast" ? 18_000 : 34_000
+              );
+              const waveAbort = new AbortController();
+              const onLotAbortForWave = () => waveAbort.abort();
+              if (lotAbort.signal.aborted) waveAbort.abort();
+              lotAbort.signal.addEventListener("abort", onLotAbortForWave, { once: true });
+              const waveTimer = setTimeout(() => waveAbort.abort(), waveLimitMs);
+              game.autoHostNextActionAt = Math.min(lotHardDeadline, Date.now() + waveLimitMs);
+              if (io) broadcastUpdate(io, game);
+
+              let rawResults: Array<LabAuctionBidResult | null> = [];
+              try {
+                rawResults = await Promise.all(
+                  candidates.map(async (p): Promise<LabAuctionBidResult | null> => {
+                    const obs = buildLabObservation(game, p.id);
+                    const avail = playerAvailableWealth(game, p);
+                    const maxBid = Math.max(0, Math.floor(avail * AUCTION_MAX_WEALTH_RATIO));
+                    const mem = memories.get(p.id)!;
+                    decisionsOnCard.set(p.id, (decisionsOnCard.get(p.id) ?? 0) + 1);
+                    try {
+                      const res = await askAgentWithValidation<{
+                        action: "bid" | "pass" | "force_buy";
+                        amount?: number;
+                        reasoning: string;
+                      }>({
+                        game,
+                        player: p,
+                        manifest,
+                        sharedConfig,
+                        label: `auction-${focus}`,
+                        userPrompt: buildLabAuctionPrompt(obs, focus, maxBid, mem.digest()),
+                        validate: (data) => {
+                          if (!data || typeof data !== "object") return null;
+                          const a = (data as { action?: unknown }).action;
+                          if (a !== "bid" && a !== "pass" && a !== "force_buy") return null;
+                          return {
+                            action: a,
+                            amount: int((data as { amount?: unknown }).amount) ?? undefined,
+                            reasoning: String((data as { reasoning?: unknown }).reasoning ?? ""),
+                          };
+                        },
+                        signal,
+                        callSignal: waveAbort.signal,
+                        budgetKind: "auction",
+                        io,
+                      });
+                      return {
+                        player: p,
+                        decision: res.value,
+                        rawThinking: res.rawThinking,
+                        usage: res.usage,
+                        latencyMs: res.latencyMs,
+                      };
+                    } catch (err) {
+                      if (err instanceof LabStoppedError || err instanceof LabBudgetExceededError) {
+                        throw err;
+                      }
+                      if (err instanceof LabCallExpiredError) {
+                        game.logs.push(`⏱️ 拍卖 [${focus}] ${p.name} 本波次超时，保留其余出价`);
+                        if (lotHardDeadline - Date.now() < 12_000) {
+                          passedOnCard.add(p.id);
+                        }
+                        return null;
+                      }
+                      const errMsg = err instanceof Error ? err.message : String(err);
+                      passedOnCard.add(p.id);
+                      game.logs.push(
+                        `⚠️ 拍卖 [${focus}] ${p.name} 模型响应异常已本拍弃权：${oneLine(errMsg, 120)}`
+                      );
+                      recordLabDecision(
+                        game,
+                        p,
+                        "auction",
+                        `模型异常自动弃权：${oneLine(errMsg, 120)}`,
+                        { cardId: focus, action: "pass", degraded: true }
+                      );
                       return null;
                     }
-                    throw err;
-                  }
-                })
-              );
+                  })
+                );
+              } finally {
+                clearTimeout(waveTimer);
+                lotAbort.signal.removeEventListener("abort", onLotAbortForWave);
+              }
 
               const bidResults = rawResults.filter((r): r is LabAuctionBidResult => r !== null);
               const wave = applyLabAuctionWave({

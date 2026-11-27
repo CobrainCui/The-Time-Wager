@@ -165,10 +165,12 @@ function voidPlayRecord(game: GameState, play: RoundBuffPlayRecord): {
     game.pendingLotteryOffers = (game.pendingLotteryOffers ?? []).filter(
       (o) => o.playerId !== play.ownerId
     );
-    // 即使奖金为 0，也要撤掉已开奖记录，避免导出留下一条已被作废的彩票
-    game.lotteryCompletedDeals = (game.lotteryCompletedDeals ?? []).filter(
-      (d) => d.playerId !== play.ownerId
-    );
+    // 即使奖金为 0，也要撤掉对应本张已被作废的彩票（保留跨轮历史）
+    game.lotteryCompletedDeals = (game.lotteryCompletedDeals ?? []).filter((d) => {
+      if (d.playerId !== play.ownerId) return true;
+      if (d.playId) return d.playId !== play.playId;
+      return d.globalRound != null && d.globalRound !== game.globalRound;
+    });
   }
   return { energyRefund, wealthRefund };
 }

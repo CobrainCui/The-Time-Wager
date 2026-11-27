@@ -181,6 +181,10 @@ export interface WealthAdjustOffer {
 /** 已确认开奖记录（主持可撤回） */
 export interface LotteryCompletedDeal {
   playerId: string;
+  /** 本次打出的彩票实例 ID（区分跨轮多张彩票） */
+  playId?: string;
+  /** 开奖所属全局轮次 */
+  globalRound?: number;
   /** 实际入账财富（可能已点石成金） */
   amount: number;
   /** 主持填入 / 随机抽出的原额；旧档可能缺省 */

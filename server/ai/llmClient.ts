@@ -14,21 +14,30 @@ import {
  * - 不抛异常给玩家流程：AI 出错最多是「这轮打得普通」，不会让房间卡住。
  */
 
-let client: OpenAI | null = null;
-let clientSignature = "";
+const CLIENT_CACHE = new Map<string, OpenAI>();
+const MAX_CLIENT_CACHE_SIZE = 16;
 
 function getClient(cfg: AiModelConfig): OpenAI {
   // Key 参与签名（只在内存里比较）：不同座位即使前缀/长度相同，也不会复用错客户端。
   const signature = `${cfg.baseURL ?? "default"}|${cfg.apiKey}`;
-  if (!client || signature !== clientSignature) {
-    client = new OpenAI({
-      apiKey: cfg.apiKey,
-      ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
-      maxRetries: 0,
-    });
-    clientSignature = signature;
+  const existing = CLIENT_CACHE.get(signature);
+  if (existing) {
+    // LRU 刷新：移到末尾
+    CLIENT_CACHE.delete(signature);
+    CLIENT_CACHE.set(signature, existing);
+    return existing;
   }
-  return client;
+  const created = new OpenAI({
+    apiKey: cfg.apiKey,
+    ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
+    maxRetries: 0,
+  });
+  CLIENT_CACHE.set(signature, created);
+  if (CLIENT_CACHE.size > MAX_CLIENT_CACHE_SIZE) {
+    const oldestKey = CLIENT_CACHE.keys().next().value;
+    if (oldestKey !== undefined) CLIENT_CACHE.delete(oldestKey);
+  }
+  return created;
 }
 
 export interface AiLlmUsage {
@@ -91,14 +100,27 @@ export function isReasoningModel(cfg: AiModelConfig): boolean {
 /** 从文本正文中提取 `<think>...</think>` 段落，避免干扰 JSON 解析同时保留原始思考原文。 */
 export function extractThinkTags(text: string): { content: string; think: string } {
   const thinkParts: string[] = [];
-  const cleaned = text
-    .replace(/<think>([\s\S]*?)<\/think>/gi, (_m, inner: string) => {
-      const t = inner.trim();
-      if (t) thinkParts.push(t);
-      return "";
-    })
-    .trim();
-  return { content: cleaned, think: thinkParts.join("\n\n").trim() };
+  let cleaned = text.replace(/<think>([\s\S]*?)<\/think>/gi, (_m, inner: string) => {
+    const t = inner.trim();
+    if (t) thinkParts.push(t);
+    return "";
+  });
+  // 处理未闭合的 <think> 标签（若后方含 JSON 对象则保留 JSON 并剥离前段思考，避免阻塞解析）
+  const unclosedIdx = cleaned.search(/<think>/i);
+  if (unclosedIdx >= 0) {
+    const afterTag = cleaned.slice(unclosedIdx + "<think>".length);
+    const jsonStart = afterTag.indexOf("{");
+    if (jsonStart >= 0 && afterTag.lastIndexOf("}") > jsonStart) {
+      const thinkHead = afterTag.slice(0, jsonStart).trim();
+      if (thinkHead) thinkParts.push(thinkHead);
+      cleaned = `${cleaned.slice(0, unclosedIdx)} ${afterTag.slice(jsonStart)}`;
+    } else {
+      const restThink = afterTag.trim();
+      if (restThink) thinkParts.push(restThink);
+      cleaned = cleaned.slice(0, unclosedIdx);
+    }
+  }
+  return { content: cleaned.trim(), think: thinkParts.join("\n\n").trim() };
 }
 
 function stripJsonFence(text: string): string {
@@ -146,15 +168,50 @@ function escapeControlCharsInStrings(text: string): string {
   return out;
 }
 
-function parseJson(text: string): unknown | null {
-  const base = stripJsonFence(text);
-  const noTrailingCommas = base.replace(/,\s*([}\]])/g, "$1");
+function extractBalancedJsonObjects(text: string): string[] {
+  const objects: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (ch === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return objects;
+}
+
+function tryParseJsonCandidates(slice: string): unknown | null {
+  const noTrailingCommas = slice.replace(/,\s*([}\]])/g, "$1");
   const candidates = [
-    base,
-    escapeControlCharsInStrings(base),
+    slice,
+    escapeControlCharsInStrings(slice),
     noTrailingCommas,
     escapeControlCharsInStrings(noTrailingCommas),
-    base.replace(/[“”]/g, '"').replace(/[‘’]/g, "'"),
+    slice.replace(/[“”]/g, '"').replace(/[‘’]/g, "'"),
   ];
   for (const candidate of candidates) {
     try {
@@ -162,6 +219,20 @@ function parseJson(text: string): unknown | null {
     } catch {
       /* try next */
     }
+  }
+  return null;
+}
+
+function parseJson(text: string): unknown | null {
+  const base = stripJsonFence(text);
+  const direct = tryParseJsonCandidates(base);
+  if (direct !== null) return direct;
+
+  // 若前后带了额外花括号/说明文字，从后往前扫描完整顶层 {...} 并解析最后一个合法对象
+  const objects = extractBalancedJsonObjects(text);
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const parsed = tryParseJsonCandidates(objects[i]);
+    if (parsed !== null) return parsed;
   }
   return null;
 }
@@ -404,10 +475,13 @@ export async function askAiJson(
       break;
     }
     const useJsonMode = attempt === 0 && !omitJsonMode;
+    const effectiveMaxTokens = omitSiliconFlowThinkingParams
+      ? Math.max(maxOutputTokens, 2400)
+      : maxOutputTokens;
     try {
       const { raw, rawThinking, usage } = await requestOnce(cfg, system, user, {
         timeoutMs,
-        maxOutputTokens,
+        maxOutputTokens: effectiveMaxTokens,
         useJsonMode,
         disableThinking,
         thinkingBudget: clampedThinkingBudget,

@@ -1,4 +1,5 @@
 import type { ActiveProject, GameState, Player } from "../state/gameState.js";
+import { buffCards } from "../data/game_data.js";
 import { COFFEE_ENERGY_GAIN, COFFEE_WEALTH_COST } from "../logic/coffeeLogic.js";
 import { spendableEnergy } from "../logic/investmentLogic.js";
 import { sanitizeLongContribution } from "../logic/longTermLogic.js";
@@ -486,6 +487,28 @@ export function buildFallbackInvestmentPlan(
   };
 }
 
+const RETIRED_CARD_IDS = new Set(["buff_spirit", "buff_rebound"]);
+
+function resolvePolicyPlayerId(game: GameState, raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const byId = game.players.find((p) => p.id === trimmed);
+  if (byId) return byId.id;
+  const byName = game.players.find((p) => p.name.trim() === trimmed);
+  return byName?.id;
+}
+
+function resolvePolicyCardId(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const byId = buffCards.find((c) => c.id === trimmed);
+  if (byId) return byId.id;
+  const byName = buffCards.find((c) => c.name.trim() === trimmed);
+  return byName?.id;
+}
+
 /**
  * 裁剪模型或策略给出的方案，保证：
  * - 投资只用当前牌桌上的项目，且不超过精力预算；
@@ -520,33 +543,33 @@ export function sanitizeInvestmentPlan(
   const alreadyHasWorkRest = (ai.activeBuffs ?? []).some((b) => b.cardId === "buff_work_rest");
   const hasWorkRestPlanned = () =>
     alreadyHasWorkRest ||
-    rawCards.some(
-      (c) =>
-        c?.cardId === "buff_work_rest" &&
-        (c?.targetPlayerId == null || c?.targetPlayerId === ai.id)
-    );
+    rawCards.some((c) => {
+      if (resolvePolicyCardId(c?.cardId) !== "buff_work_rest") return false;
+      const tid = resolvePolicyPlayerId(game, c?.targetPlayerId) ?? ai.id;
+      return tid === ai.id;
+    });
 
   const useCards: AiBuffPlan[] = [];
   for (const rawCard of rawCards) {
     if (!rawCard || typeof rawCard.cardId !== "string") continue;
-    const cardId = rawCard.cardId;
+    const cardId = resolvePolicyCardId(rawCard.cardId);
+    if (!cardId || RETIRED_CARD_IDS.has(cardId)) continue;
     const stock = stockByCard.get(cardId) ?? 0;
     if (stock <= 0) continue;
     const resolvedTargetId =
-      typeof rawCard.targetPlayerId === "string" &&
-      game.players.some((p) => p.id === rawCard.targetPlayerId)
-        ? rawCard.targetPlayerId
-        : cardId === "buff_work_rest"
-          ? ai.id
-          : undefined;
+      resolvePolicyPlayerId(game, rawCard.targetPlayerId) ??
+      (cardId === "buff_work_rest" ? ai.id : undefined);
     const targetPlayerId = resolvedTargetId;
     const targetProjectId =
       Number.isSafeInteger(Number(rawCard.targetProjectId)) &&
       game.activeProjects.some((p) => p.id === Number(rawCard.targetProjectId))
         ? Number(rawCard.targetProjectId)
         : undefined;
+    const resolvedBurn = resolvePolicyCardId(rawCard.burnCardId);
     const burnCardId =
-      typeof rawCard.burnCardId === "string" ? rawCard.burnCardId : undefined;
+      resolvedBurn && resolvedBurn !== "buff_lighter" && !RETIRED_CARD_IDS.has(resolvedBurn)
+        ? resolvedBurn
+        : undefined;
     const visibility =
       cardId === "buff_lottery"
         ? rawCard.visibility === "private"
@@ -658,7 +681,8 @@ export function sanitizeInvestmentPlan(
   let transfer: AiTransferPlan | null = null;
   const rawTx = raw?.transfer;
   if (rawTx && typeof rawTx.toPlayerId === "string") {
-    const target = game.players.find((p) => p.id === rawTx.toPlayerId);
+    const targetId = resolvePolicyPlayerId(game, rawTx.toPlayerId);
+    const target = targetId ? game.players.find((p) => p.id === targetId) : undefined;
     const amount = Math.floor(Number(rawTx.amount) || 0);
     const note = String(rawTx.note ?? "").trim().slice(0, 60);
     if (
@@ -705,12 +729,9 @@ export function sanitizeInvestmentPlan(
   if (rawGroup && typeof rawGroup === "object" && Array.isArray(rawGroup.memberIds)) {
     const validIds = [
       ...new Set(
-        rawGroup.memberIds.filter(
-          (id): id is string =>
-            typeof id === "string" &&
-            id !== ai.id &&
-            game.players.some((p) => p.id === id)
-        )
+        rawGroup.memberIds
+          .map((id) => resolvePolicyPlayerId(game, id))
+          .filter((id): id is string => Boolean(id && id !== ai.id))
       ),
     ].slice(0, 5);
     if (validIds.length >= 2) {

@@ -8,6 +8,24 @@ export function playerHasLotteryBuff(player: Player | undefined): boolean {
   return Boolean(player?.activeBuffs?.some((b) => b.cardId === LOTTERY_CARD_ID));
 }
 
+export function isCurrentLotteryAlreadySettled(
+  game: GameState,
+  player: Player | undefined
+): boolean {
+  if (!player) return false;
+  const lotteryBuff = player.activeBuffs?.find((b) => b.cardId === LOTTERY_CARD_ID);
+  if (!lotteryBuff) return false;
+  const deals = game.lotteryCompletedDeals ?? [];
+  return deals.some((d) => {
+    if (d.playerId !== player.id) return false;
+    if (lotteryBuff.instanceId) {
+      if (d.playId) return d.playId === lotteryBuff.instanceId;
+      return d.globalRound == null || d.globalRound === game.globalRound;
+    }
+    return d.globalRound == null || d.globalRound === game.globalRound;
+  });
+}
+
 export function isValidLotteryAmount(amount: unknown): amount is number {
   // 彩票只发奖，不用于扣款；负财富调整请走 wealthAdjust（需要玩家确认）
   return typeof amount === "number" && Number.isSafeInteger(amount) && amount >= 0;
@@ -123,15 +141,28 @@ export function recordLotteryCompletedDeal(
   enteredAmount?: number,
   goldApplied?: boolean,
   meta?: {
+    playId?: string;
+    globalRound?: number;
     roll?: number;
     source?: "random.org" | "server" | "manual";
     visibility?: LotteryVisibility;
   }
 ): void {
   if (!game.lotteryCompletedDeals) game.lotteryCompletedDeals = [];
-  game.lotteryCompletedDeals = game.lotteryCompletedDeals.filter((d) => d.playerId !== playerId);
+  game.lotteryCompletedDeals = game.lotteryCompletedDeals.filter((d) => {
+    if (d.playerId !== playerId) return true;
+    if (meta?.playId && d.playId) return d.playId !== meta.playId;
+    if (!meta?.playId && !d.playId) {
+      return meta?.globalRound != null && d.globalRound != null
+        ? d.globalRound !== meta.globalRound
+        : false;
+    }
+    return true;
+  });
   game.lotteryCompletedDeals.push({
     playerId,
+    ...(meta?.playId ? { playId: meta.playId } : {}),
+    ...(meta?.globalRound != null ? { globalRound: meta.globalRound } : {}),
     amount,
     ...(enteredAmount != null ? { enteredAmount } : {}),
     ...(goldApplied != null ? { goldApplied } : {}),
@@ -165,6 +196,8 @@ export function applyLotteryAccept(
   removeLotteryBuff(player);
   recordLotteryCompletedDeal(game, player.id, credited, amount, goldApplied, {
     ...meta,
+    playId,
+    globalRound: game.globalRound,
     visibility,
   });
   return { enteredAmount: amount, creditedAmount: credited, goldApplied, visibility };
@@ -176,7 +209,15 @@ export type RevokeLotteryResult =
   | { ok: false; message: string };
 
 function revokeCompletedLottery(game: GameState, playerId: string): RevokeLotteryResult {
-  const deal = (game.lotteryCompletedDeals ?? []).find((d) => d.playerId === playerId);
+  const deals = game.lotteryCompletedDeals ?? [];
+  let dealIndex = -1;
+  for (let i = deals.length - 1; i >= 0; i--) {
+    if (deals[i].playerId === playerId) {
+      dealIndex = i;
+      break;
+    }
+  }
+  const deal = dealIndex >= 0 ? deals[dealIndex] : undefined;
   if (!deal) {
     return { ok: false, message: "没有待确认或已开奖的彩票" };
   }
@@ -186,7 +227,7 @@ function revokeCompletedLottery(game: GameState, playerId: string): RevokeLotter
   }
   player.wealth -= deal.amount;
   restoreLotteryBuff(player);
-  game.lotteryCompletedDeals = (game.lotteryCompletedDeals ?? []).filter((d) => d.playerId !== playerId);
+  game.lotteryCompletedDeals = deals.filter((_, idx) => idx !== dealIndex);
   game.pendingLotteryOffers = (game.pendingLotteryOffers ?? []).filter((o) => o.playerId !== playerId);
   return { ok: true, kind: "completed", playerId: deal.playerId, amount: deal.amount };
 }
@@ -219,7 +260,7 @@ export function proposeLotterySettle(
   if (!player) {
     return { ok: false, message: "开奖对象无效" };
   }
-  if ((game.lotteryCompletedDeals ?? []).some((d) => d.playerId === playerId)) {
+  if (isCurrentLotteryAlreadySettled(game, player)) {
     return { ok: false, message: "该玩家彩票已开奖，请先撤回" };
   }
   if (!playerHasLotteryBuff(player)) {

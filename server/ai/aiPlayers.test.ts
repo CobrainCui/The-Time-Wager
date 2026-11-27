@@ -715,9 +715,9 @@ test("fillAiPlayers on SiliconFlow assigns 5 verified domestic models by default
       g1.players.map((p) => p.aiModelOverride),
       [
         "deepseek-ai/DeepSeek-V4.1-Flash",
-        "Qwen/Qwen3.8-27B",
-        "zai-org/GLM-5.3",
-        "moonshotai/Kimi-K2.7-Code",
+        "Qwen/Qwen3.6-35B-A3B",
+        "zai-org/GLM-5.2",
+        "Pro/moonshotai/Kimi-K2.6",
         "tencent/Hy4-preview",
       ]
     );
@@ -906,4 +906,63 @@ test("buildOpeningChatPrompt formats opening negotiation prompt with memory bloc
   assert.ok(prompt.includes(game.activeProjects[0]!.name));
   assert.ok(prompt.includes("第1轮记忆：观察各玩家资金节奏"));
   assert.ok(prompt.includes('"silent":false,"reply"'));
+});
+
+test("sanitizeInvestmentPlan resolves player names and Chinese card names and blocks lighter self/lighter burn", () => {
+  const { game, human, ai } = makeGame();
+  ai.inventory = ["buff_slack", "buff_lighter"];
+  const plan = sanitizeInvestmentPlan(
+    game,
+    ai,
+    {
+      useCards: [
+        { cardId: "摸鱼传染" as unknown as string, targetPlayerId: human.name },
+        { cardId: "打火机" as unknown as string, targetPlayerId: human.name, burnCardId: "点石成金" },
+      ],
+      transfer: { toPlayerId: human.name, amount: 5, note: "测试" },
+      investment: { [game.activeProjects[0]!.id]: 5 },
+    },
+    profileForPlayer(ai),
+  );
+  assert.equal(plan.useCards?.length, 2);
+  assert.equal(plan.useCards?.[0]?.cardId, "buff_slack");
+  assert.equal(plan.useCards?.[0]?.targetPlayerId, human.id);
+  assert.equal(plan.useCards?.[1]?.cardId, "buff_lighter");
+  assert.equal(plan.useCards?.[1]?.burnCardId, "buff_gold");
+  assert.equal(plan.transfer?.toPlayerId, human.id);
+
+  // 禁止打火机指定烧毁 buff_lighter
+  const badLighter = sanitizeInvestmentPlan(
+    game,
+    ai,
+    {
+      useCards: [{ cardId: "buff_lighter", targetPlayerId: human.id, burnCardId: "buff_lighter" }],
+      investment: {},
+    },
+    profileForPlayer(ai),
+  );
+  assert.equal(badLighter.useCards?.length, 0);
+});
+
+test("askProductAiWithFallback stops before fast retry when external signal is aborted", async () => {
+  const ctrl = new AbortController();
+  let calls = 0;
+  const res = await askProductAiWithFallback(
+    "sys",
+    "usr",
+    {
+      config: { apiKey: "sk-x", model: "Qwen/Qwen3.8-27B", provider: "siliconflow", source: "shared" },
+      label: "auction-abort",
+      signal: ctrl.signal,
+      thinking: { thinkingBudget: 384, reasoningEffort: "low", timeoutMs: 12_000, maxOutputTokens: 2400 },
+      fast: { timeoutMs: 12_000, maxRetries: 0, maxOutputTokens: 2048 },
+    },
+    async () => {
+      calls += 1;
+      ctrl.abort();
+      return { ok: false, data: null, raw: "", latencyMs: 100, error: "aborted" };
+    }
+  );
+  assert.equal(calls, 1);
+  assert.equal(res.ok, false);
 });
